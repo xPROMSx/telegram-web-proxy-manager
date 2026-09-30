@@ -316,6 +316,8 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme")
     streams, https = exact(nodes, "stream"), exact(nodes, "http")
     require(len(streams) == len(https) == 1)
     stream, http = streams[0], https[0]
+    require(all(n.args[0] in ("map", "upstream", "server") for n in expand(stream.children)),
+            "unknown stream context directive")
     maps = exact(stream.children, "map")
     routers = exact(stream.children, "server")
     require(len(maps) == len(routers) == 1)
@@ -354,6 +356,17 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme")
             domain(n.args[0]) # Exact names only, even with the hostnames flag.
         require(re.fullmatch(r"[A-Za-z0-9_.:-]+", n.args[1]))
     upstreams = exact(stream.children, "upstream")
+    require(all(len(n.args) == 2 and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", n.args[1]) for n in upstreams))
+    require(len({n.args[1] for n in upstreams}) == len(upstreams))
+    for upstream in upstreams:
+        members = list(expand(upstream.children))
+        require(len(members) == 1 and members[0].children is None
+                and len(members[0].args) == 2 and members[0].args[0] == "server"
+                and re.fullmatch(r"127\.0\.0\.1:[0-9]{1,5}", members[0].args[1])
+                and 0 < int(members[0].args[1].rsplit(":", 1)[1]) < 65536,
+                "unknown stream upstream contract")
+    require(all(n.args[1] in {u.args[1] for u in upstreams} for n in entries),
+            "map target is not a recognized upstream")
     owned = [n for n in upstreams if n.args == ["upstream", "twm_frontend"]]
     existing = [n for n in entries if n.args[0] == host]
     vhost = parser.root / "conf.d" / "telemt-web-manager.conf"

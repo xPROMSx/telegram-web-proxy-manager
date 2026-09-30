@@ -167,6 +167,8 @@ class ThreeXTopologyTests(unittest.TestCase):
             ('proxy_protocol on;', 'proxy_protocol on; proxy_protocol off;'),
             ('ssl_preread on;', 'ssl_preread on; ssl_preread off;'),
             ('ssl_preread on;', 'ssl_preread on; resolver 127.0.0.1;'),
+            ('upstream xray {', 'resolver 127.0.0.1; upstream xray {'),
+            ('server 127.0.0.1:8443;', 'server 127.0.0.1:8443; least_conn;'),
             ('proxy_pass $sni_name;', 'proxy_pass $unknown;'),
             ('listen     443;', r'listen \443;'),
         )

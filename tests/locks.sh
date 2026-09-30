@@ -15,13 +15,13 @@ for mode in shared exclusive; do
     rm -f "$LOCK"
     # SC2016: child shell must expand these exported paths.
     # shellcheck disable=SC2016
-    timeout 15 bash -c 'source "$ROOT/telemt-web-manager.sh"; take_lock "$1"; printf ready >"$READY"; read -r _ <"$RELEASE_FIFO"' _ "$mode" &
+    timeout 15 bash -c 'lock_path=$LOCK; source "$ROOT/telemt-web-manager.sh"; LOCK=$lock_path; take_lock "$1"; printf ready >"$READY"; read -r _ <"$RELEASE_FIFO"' _ "$mode" &
     holder=$!
     read -r _ <"$READY" || true # writer closes without a newline
     [[ -f $LOCK ]]
     # SC2016: child shell must expand its paths.
     # shellcheck disable=SC2016
-    if bash -c 'source "$ROOT/telemt-web-manager.sh"; take_lock' >"$sandbox/exclusive.log" 2>&1; then exit 1; fi
+    if bash -c 'lock_path=$LOCK; source "$ROOT/telemt-web-manager.sh"; LOCK=$lock_path; take_lock' >"$sandbox/exclusive.log" 2>&1; then exit 1; fi
     if [[ $mode == shared ]]; then
         (take_lock shared)
     else
