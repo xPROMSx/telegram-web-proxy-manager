@@ -440,7 +440,9 @@ ensure_certificate() {
             certbot certonly --standalone --non-interactive --agree-tos --email "$EMAIL" -d "$DOMAIN" \
                 --cert-name "$DOMAIN" >"$TMP/certbot.log" 2>&1 || die 'Certbot failed; see Certbot own logs'
         else
-            nginx_runtime_identity && nginx_port_owned 80 || die 'Port 80 owner is not the recognized Nginx service'
+            if ! nginx_runtime_identity || ! nginx_port_owned 80; then
+                die 'Port 80 owner is not the recognized Nginx service'
+            fi
             issue_webroot_certificate
             # Issuance committed a persistent renewal vhost. Replan WEB changes.
             nginx_plan
@@ -495,7 +497,9 @@ issue_webroot_certificate() (
     # a later Telemt installation fails. Failure restores only ACME mutations.
     CERT_ONLY=1 INSTALLING=1 PLAN_MODE=acme
     CHANGED=() ORIGINAL=()
-    TMP=$(mktemp -d "$TMP/acme.XXXXXXXX")
+    local parent_tmp=$TMP
+    local TMP
+    TMP=$(mktemp -d "$parent_tmp/acme.XXXXXXXX")
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
@@ -605,7 +609,7 @@ install_manager() {
     track_file "$STATE/manifest.json"
     jq -n --arg domain "$DOMAIN" --arg unit "$(sha256sum "$UNIT" | cut -d' ' -f1)" \
         --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
-        --arg acme "$([[ -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]] && printf '%s' "$ACME_ROOT" || true)" \
+        --arg acme "$(if [[ -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]]; then printf '%s' "$ACME_ROOT"; fi)" \
         '{schema:1,domain:$domain,unit_sha256:$unit,nginx_sha256:$nginx,acme_webroot:$acme}' >"$STATE/manifest.json"
     ARMED=0
     say "Private WEB link: $STATE/web-link.txt (0600)"

@@ -16,6 +16,8 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot; do
     mkdir "$TMP"; cp -r "$fixture" "$NGINX_ROOT"; mkdir -p "$NGINX_ROOT/conf.d"
     DOMAIN=proxy.example.com EMAIL=operator@example.com AGREE_TOS=1
     if [[ $scenario == conflict ]]; then
+        # SC2016: retain literal Nginx variables, not shell expansions.
+        # shellcheck disable=SC2016
         printf 'server { listen 80; server_name proxy.example.com; return 301 https://$host$request_uri; }\n' >"$NGINX_ROOT/sites-enabled/conflict.conf"
     fi
     cp -r "$NGINX_ROOT" "$case_dir/original"
