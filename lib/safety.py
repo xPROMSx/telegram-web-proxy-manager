@@ -5,6 +5,9 @@ import glob
 import hashlib
 import ipaddress
 import json
+import os
+import stat
+import tarfile
 import re
 import sys
 import tomllib
@@ -15,6 +18,110 @@ from pathlib import Path
 def require(ok, message="automatic nginx integration not possible"):
     if not ok:
         raise ValueError(message)
+
+
+def safe_path(path):
+    """Check writable destinations and their ancestors, without resolving links.
+
+    Root-owned sticky directories such as /tmp are safe ancestors of private
+    staging directories. Production EUID is root; fixtures use the CI EUID.
+    """
+    path = Path(os.path.abspath(path))
+    for item in (path, *path.parents):
+        try:
+            info = item.lstat()
+        except FileNotFoundError:
+            continue
+        require(not stat.S_ISLNK(info.st_mode), "symlink path requires manual review")
+        if os.name == "posix":
+            require(info.st_uid in (0, os.geteuid()), "unexpected path owner")
+            require(not info.st_mode & 0o022 or
+                    (stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_mode & stat.S_ISVTX),
+                    "unsafe writable path")
+        require(stat.S_ISDIR(info.st_mode) if item != path else
+                stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode), "unexpected path type")
+
+
+def lock_path(path):
+    safe_path(Path(path).parent)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600, "unsafe lock file")
+        print(f"{info.st_dev}:{info.st_ino}")
+    finally:
+        os.close(fd)
+
+
+def certificate_paths(root, host):
+    domain(host)
+    root = Path(root)
+    safe_path(root)
+    for name in ("fullchain", "privkey"):
+        target = root / "live" / host / f"{name}.pem"
+        safe_path(target.parent)
+        actual = target.resolve(strict=True)
+        require(actual.is_relative_to(root.resolve() / "archive" / host) or actual == target)
+        safe_path(actual)
+        require(actual.is_file())
+        if name == "privkey":
+            require(stat.S_IMODE(actual.stat().st_mode) & 0o077 == 0, "certificate key is not private")
+
+
+def socks_address(value):
+    host, port = value.rsplit(":", 1)
+    require(port.isascii() and port.isdigit() and 0 < int(port) < 65536)
+    if re.fullmatch(r"[0-9.]+", host):
+        ipv4(host)
+    elif host != "localhost":
+        domain(host.lower())
+
+
+def extract_binary(archive, output):
+    # Never extract archive paths. Bound both member count and payload size;
+    # reject hardlinks, symlinks, metadata-driven names and duplicate members.
+    with tarfile.open(archive, "r:gz") as tar:
+        first = tar.next()
+        require(first is not None and first.name in ("telemt", "./telemt")
+                and first.isfile() and 0 < first.size <= 128 * 1024 * 1024,
+                "unsafe binary archive")
+        require(tar.next() is None, "multiple archive members")
+        with tar.extractfile(first) as source:
+            fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
+            with os.fdopen(fd, "wb") as target:
+                while block := source.read(1024 * 1024):
+                    target.write(block)
+
+
+def runtime_contract(path, data):
+    c = tomllib.loads(Path(path).read_text())
+    general = c.get("general", {})
+    require(general.get("use_middle_proxy") is False, "middle proxy requires runtime review")
+    require(c.get("censorship", {}).get("tls_emulation") is False)
+    require(c.get("logging", {}).get("destination", "stderr") == "stderr")
+    require(general.get("data_path", data) == data)
+    state = Path(data) / "state"
+    paths = [general.get("quota_state_path", "telemt.limit.json")]
+    if general.get("beobachten", True):
+        paths.append(general.get("beobachten_file", "cache/beobachten.txt"))
+    if general.get("unknown_dc_file_log_enabled", False):
+        paths.append(general.get("unknown_dc_log_path", "unknown-dc.txt"))
+    for value in paths:
+        p = Path(value)
+        require(p.is_absolute() and p.is_relative_to(state) and ".." not in p.parts,
+                "active state path escapes systemd sandbox; manual review required")
+
+
+def renewal_contract(root, host, webroot):
+    path = Path(root) / "renewal" / f"{domain(host)}.conf"
+    safe_path(path)
+    text = path.read_text()
+    require(re.search(r"(?m)^authenticator\s*=\s*webroot\s*$", text))
+    pattern = re.escape(str(webroot))
+    require(re.search(rf"(?m)^webroot_path\s*=\s*{pattern},?\s*$", text))
+    maps = re.findall(rf"(?m)^{re.escape(host)}\s*=\s*(.+)$", text)
+    require(not maps or maps == [str(webroot)])
 
 
 def domain(value):
@@ -53,6 +160,7 @@ class Node:
 
 class Nginx:
     def __init__(self, root):
+        safe_path(root)
         self.root = Path(root).resolve()
         self.sources = {}
         self.stack = []
@@ -63,6 +171,7 @@ class Nginx:
         require(not any(c in str(path) for c in "\t\r\n"), "unsupported Nginx filename")
         external_module = path.is_relative_to(Path("/usr/share/nginx/modules-available"))
         require(path.is_relative_to(self.root) or external_module, "Nginx include escapes config directory")
+        safe_path(path)
         # A shared HTTP snippet can be included by several vhosts. Only an
         # active recursion is a cycle; each inclusion gets its own AST nodes.
         self.reads += 1
@@ -200,7 +309,7 @@ def nginx_tokens(source):
     return tokens
 
 
-def nginx_plan(root, host, output):
+def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme"):
     domain(host)
     parser = Nginx(root)
     nodes = parser.read(Path(root) / "nginx.conf")
@@ -248,13 +357,19 @@ def nginx_plan(root, host, output):
     owned = [n for n in upstreams if n.args == ["upstream", "twm_frontend"]]
     existing = [n for n in entries if n.args[0] == host]
     vhost = parser.root / "conf.d" / "telemt-web-manager.conf"
+    safe_path(vhost)
+    acme = parser.root / "conf.d" / "telemt-web-manager-acme.conf"
+    if acme.exists() or acme.is_symlink():
+        safe_path(acme)
+        require(acme.read_text() == render_acme(host, acme_root), "changed ACME vhost")
+        require(sum(n.path == acme and n.args[0] == "server" for n in walk(nodes)) == 1)
     # Only an actual top-level http include proves where the new vhost is loaded.
     includes = [n for n in http.children if n.args[0] == "include"]
     require(any(str((parser.root / n.args[1]).resolve()) ==
                 str(parser.root / "conf.d" / "*.conf") for n in includes))
     # No competing HTTPS socket, domain, managed symbol or internal port anywhere.
     for n in walk(nodes):
-        if n.path == vhost:
+        if n.path in (vhost, acme):
             continue
         if n.args[0] == "server_name":
             require(host not in n.args[1:])
@@ -285,6 +400,69 @@ def nginx_plan(root, host, output):
             "old": base64.b64encode(p.read_bytes()).decode() if p.exists() else None}
             for p, s in edits.items()]}
     Path(output).write_text(json.dumps(plan))
+
+
+def render_acme(host, webroot):
+    domain(host)
+    require(re.fullmatch(r"/[A-Za-z0-9_./-]+", str(webroot)) and ".." not in Path(webroot).parts)
+    return f'''# Managed by telemt-web-manager v1. Persistent ACME webroot.
+server {{
+    listen 80;
+    server_name {host};
+    access_log off;
+    error_log /dev/null crit;
+    location ^~ /.well-known/acme-challenge/ {{
+        root {webroot};
+        default_type text/plain;
+        try_files $uri =404;
+    }}
+    location / {{ return 404; }}
+}}
+'''
+
+
+def acme_plan(root, host, output, webroot):
+    # Reuse the WEB contract before permitting any HTTP mutation.
+    nginx_plan(root, host, output, webroot)
+    parser = Nginx(root)
+    nodes = parser.read(parser.root / "nginx.conf")
+    http = exact(nodes, "http")[0]
+    acme = parser.root / "conf.d/telemt-web-manager-acme.conf"
+    port80 = set()
+    for server in exact(http.children, "server"):
+        if server.path == acme:
+            continue
+        directives = list(expand(server.children))
+        names = exact(server.children, "server_name")
+        require(len(names) == 1)
+        for name in names[0].args[1:]:
+            if name != "_":
+                domain(name) # No wildcard/regex/escaped/dynamic name precedence.
+            require(name != host or server.path.name == "telemt-web-manager.conf")
+        listens = exact(server.children, "listen")
+        if not any(n.args[1] in ("80", "0.0.0.0:80", "[::]:80") for n in listens):
+            continue
+        require(all(n.children is None for n in directives))
+        require(len(directives) == len(listens) + 2)
+        require(len(listens) in (1, 2)
+                and sum(n.args in (["listen", "80"], ["listen", "0.0.0.0:80"]) for n in listens) == 1)
+        require(len({tuple(n.args) for n in listens}) == len(listens)
+                and all(n.args in (["listen", "80"], ["listen", "0.0.0.0:80"],
+                                   ["listen", "[::]:80"]) for n in listens))
+        require([n.args for n in directives if n.args[0] == "return"]
+                == [["return", "301", "https://$host$request_uri"]])
+        port80.update(id(n) for n in listens)
+    for n in walk(nodes):
+        if n.args[0] == "listen" and n.path != acme:
+            if n.args[1].rsplit(":", 1)[-1].isdigit() and int(n.args[1].rsplit(":", 1)[-1]) == 80:
+                require(id(n) in port80, "unrecognized port 80 topology")
+    edits = []
+    if not acme.exists():
+        safe_path(acme)
+        edits = [{"path": str(acme), "content": render_acme(host, webroot), "old": None}]
+    Path(output).write_text(json.dumps({
+        "snapshot": {str(p): hashlib.sha256(s.encode()).hexdigest() for p, s in parser.sources.items()},
+        "edits": edits}))
 
 
 def render_vhost(host):
@@ -347,8 +525,7 @@ def config_info(path):
     require(kind in ("direct", "socks5"), "unsupported upstream")
     address = upstream.get("address", "")
     if kind == "socks5":
-        require(re.fullmatch(r"[a-zA-Z0-9.-]+:[0-9]{1,5}", address)
-                and 0 < int(address.rsplit(":", 1)[1]) < 65536, "invalid SOCKS address")
+        socks_address(address)
         require(not upstream.get("username") and not upstream.get("password"), "SOCKS auth needs manual review")
     print(host)
     print(address if kind == "socks5" else "direct")
@@ -387,6 +564,8 @@ def main():
     command, *args = sys.argv[1:]
     if command == "nginx-plan":
         nginx_plan(*args)
+    elif command == "acme-plan":
+        acme_plan(*args)
     elif command == "config-info":
         config_info(*args)
     elif command == "dns":
@@ -395,6 +574,20 @@ def main():
         domain(args[0])
     elif command == "ipv4":
         ipv4(args[0])
+    elif command == "safe-path":
+        safe_path(args[0])
+    elif command == "lock-path":
+        lock_path(args[0])
+    elif command == "certificate-paths":
+        certificate_paths(*args)
+    elif command == "socks-address":
+        socks_address(args[0])
+    elif command == "extract-binary":
+        extract_binary(*args)
+    elif command == "runtime-contract":
+        runtime_contract(*args)
+    elif command == "renewal-contract":
+        renewal_contract(*args)
     elif command == "classify":
         return classify(*args[:3], sys.stdin.read())
     else:
@@ -405,7 +598,7 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (ValueError, OSError, KeyError, TypeError, IndexError):
+    except (ValueError, OSError, KeyError, TypeError, IndexError, tarfile.TarError):
         # Config parse errors may contain credentials. Never echo exception text.
         print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
         sys.exit(1)

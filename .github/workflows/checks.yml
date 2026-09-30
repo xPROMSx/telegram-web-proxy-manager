@@ -22,6 +22,12 @@ jobs:
         run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh
       - name: Published Telemt configuration contract (SHA256 verified)
         run: bash tests/upstream.sh
+      - name: Writable state and systemd contract
+        run: bash tests/contracts.sh
+      - name: Shared check lock and exclusive mutation races
+        run: bash tests/locks.sh
+      - name: Certbot and Nginx webroot transactions
+        run: bash tests/acme.sh
       - name: Real Nginx stream and TLS fixture
         run: bash tests/nginx.sh
       - name: Current reviewed 3x-ui-pro installer and patcher topologies

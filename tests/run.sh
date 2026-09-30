@@ -74,6 +74,37 @@ set -e
 [[ $rc != 0 && $(cat "$BIN") == old && $(cat "$CONFIG") == original ]]
 '
 
+# SC2016: this literal is executed by the child Bash.
+# shellcheck disable=SC2016
+run_case 'concurrent config edit during candidate validation refuses before binary replacement' bash -c '
+source "$ROOT/telemt-web-manager.sh"
+BIN="$SANDBOX/concurrent-bin" CONFIG="$SANDBOX/concurrent-config"
+printf old >"$BIN"; printf original >"$CONFIG"
+RELEASE=3.6.0 CANDIDATE="$SANDBOX/candidate"
+candidate_healthcheck() { printf edited >"$CONFIG"; }
+backup_begin() { exit 56; }
+set +e
+(update_transaction 3.5.9) >"$SANDBOX/concurrent.log" 2>&1
+rc=$?
+set -e
+[[ $rc != 0 && $rc != 56 && $(cat "$BIN") == old && $(cat "$CONFIG") == edited ]]
+'
+
+# SC2016: child shell expands paths.
+# shellcheck disable=SC2016
+run_case 'future runtime contract is not automatically adopted' bash -c '
+source "$ROOT/telemt-web-manager.sh"
+load_installation() { return 0; }
+binary_version() { printf 3.5.9; }
+fetch_release() { RELEASE=3.6.0; }
+download_candidate() { exit 57; }
+set +e
+(update_manager) >"$SANDBOX/future.log" 2>&1
+rc=$?
+set -e
+[[ $rc != 0 && $rc != 57 ]]
+'
+
 # SC2016: this literal is executed by the child Bash, which must expand its variables.
 # shellcheck disable=SC2016
 run_case 'readiness handles 18-second cold start and bounded timeout' bash -c '

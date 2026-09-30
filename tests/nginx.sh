@@ -13,7 +13,15 @@ finish() {
 trap finish EXIT
 cp -r "${1:-tests/fixtures/nginx}" "$test_dir/nginx"
 mkdir -p "$test_dir/nginx/conf.d" "$test_dir/logs"
-python3 lib/safety.py nginx-plan "$test_dir/nginx" proxy.example.com "$test_dir/plan.json"
+mkdir -p "$test_dir/acme/.well-known/acme-challenge"
+printf challenge-fixture >"$test_dir/acme/.well-known/acme-challenge/probe"
+python3 lib/safety.py acme-plan "$test_dir/nginx" proxy.example.com "$test_dir/acme-plan.json" "$test_dir/acme"
+python3 - "$test_dir/acme-plan.json" <<'PY'
+import json, pathlib, sys
+for edit in json.loads(pathlib.Path(sys.argv[1]).read_text())['edits']:
+    pathlib.Path(edit['path']).write_text(edit['content'])
+PY
+python3 lib/safety.py nginx-plan "$test_dir/nginx" proxy.example.com "$test_dir/plan.json" "$test_dir/acme"
 python3 - "$test_dir/plan.json" <<'PY'
 import json, pathlib, sys
 for edit in json.loads(pathlib.Path(sys.argv[1]).read_text())['edits']:
@@ -57,6 +65,15 @@ for (( attempt=0; attempt<50; attempt++ )); do
     sleep 0.1
 done
 [[ $ready == 1 ]]
+curl --noproxy '*' -fsS --max-time 5 --resolve proxy.example.com:18082:127.0.0.1 \
+    http://proxy.example.com:18082/.well-known/acme-challenge/probe -o "$test_dir/challenge"
+[[ $(cat "$test_dir/challenge") == challenge-fixture ]]
+[[ $(curl --noproxy '*' -s --max-time 5 -o /dev/null -w '%{http_code}' \
+    --resolve proxy.example.com:18082:127.0.0.1 http://proxy.example.com:18082/other) == 404 ]]
+if [[ -f $test_dir/nginx/sites-enabled/80.conf ]]; then
+    [[ $(curl --noproxy '*' -s --max-time 5 -o /dev/null -w '%{http_code}' \
+        --resolve panel.example.com:18082:127.0.0.1 http://panel.example.com:18082/) == 301 ]]
+fi
 if grep -q '\[::1\]:14443' "$test_dir/nginx/stream-enabled/stream.conf" 2>/dev/null; then
     curl --noproxy '*' -fsS --max-time 5 --cacert "$test_dir/cert.pem" \
         --resolve 'proxy.example.com:14443:[::1]' \
@@ -64,4 +81,4 @@ if grep -q '\[::1\]:14443' "$test_dir/nginx/stream-enabled/stream.conf" 2>/dev/n
         https://proxy.example.com:14443/ -o "$test_dir/ipv6-body"
     grep -qx canonical "$test_dir/ipv6-body"
 fi
-printf 'ok - real Nginx stream/PROXY/TLS/HTTP1.1 and canonical X-Forwarded-For\n'
+printf 'ok - real Nginx stream/PROXY/TLS/HTTP1.1, canonical XFF and persistent ACME webroot\n'

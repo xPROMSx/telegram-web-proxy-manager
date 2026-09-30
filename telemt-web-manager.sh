@@ -12,6 +12,8 @@ CONFIG=/etc/telemt/telemt.toml
 UNIT=/etc/systemd/system/telemt.service
 STATE=/var/lib/telemt-web-manager
 DATA=/var/lib/telemt
+ACME_ROOT=/var/lib/telemt-web-manager-acme
+CERT_ROOT=/etc/letsencrypt
 CONFIG_DIR=/etc/telemt
 RENEW_HOOK=/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager
 NGINX_ROOT=/etc/nginx
@@ -19,6 +21,7 @@ BACKUP_ROOT=/root/telemt-backups
 LOCK=/run/lock/telemt-web-manager.lock
 TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' RELEASE='' CANDIDATE=''
 ARMED=0 INSTALLING=0 NGINX_CHANGED=0
+CERT_ONLY=0 PLAN_MODE=web
 declare -a CHANGED=() ORIGINAL=()
 
 say() { printf '%s\n' "$*"; }
@@ -33,15 +36,13 @@ now() { date +%s; }
 pause() { sleep 1; }
 
 nginx_runtime_identity() {
-    local pid command sockets
+    local pid command
     pid=$(systemctl show nginx.service -p MainPID --value)
     [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/cmdline ]] || return 1
     command=$(tr '\0' ' ' <"/proc/$pid/cmdline")
     [[ $command == 'nginx: master process '* && $command != *' -c'* && $command != *' -p'* ]] || return 1
     nginx -V 2>&1 | grep -q -- '--conf-path=/etc/nginx/nginx.conf' || return 1
-    sockets=$(ss -H -ltnp 'sport = :443') || return 1
-    [[ -n $sockets && $sockets == *'"nginx"'* ]] || return 1
-    [[ -z $(printf '%s\n' "$sockets" | grep -v '"nginx"' || true) ]]
+    nginx_port_owned 443
 }
 
 process_identity() {
@@ -65,12 +66,13 @@ managed_permissions() {
     done
     mode=$(stat -c %a "$CONFIG")
     (( (8#$mode & 0007) == 0 )) || return 1
+    [[ -d $DATA/state && ! -L $DATA/state && $(stat -c %u "$DATA/state") == "$(id -u telemt)" && $(stat -c %a "$DATA/state") == 750 ]] || return 1
     [[ $(stat -c %a "$STATE") == 700 ]]
 }
 
 atomic_copy() {
     local source=$1 destination=$2 stage
-    [[ ! -L $destination ]] || return 1
+    helper safe-path "$destination" || return 1
     stage=$(mktemp "${destination}.twm.XXXXXX") || return 1
     if cp --preserve=mode,ownership,timestamps -- "$source" "$stage" && mv -fT -- "$stage" "$destination"; then
         return 0
@@ -80,6 +82,7 @@ atomic_copy() {
 }
 
 backup_begin() {
+    helper safe-path "$BACKUP_ROOT" || die 'Unsafe backup path'
     install -d -m 0700 "$BACKUP_ROOT"
     BACKUP=$(mktemp -d "$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")
     say "Backup: $BACKUP"
@@ -96,7 +99,7 @@ backup_nginx_context() {
 
 track_file() {
     local destination=$1 index=${#CHANGED[@]}
-    [[ ! -L $destination ]] || die "Refusing symlink destination"
+    helper safe-path "$destination" || die "Unsafe destination path"
     if [[ -e $destination ]]; then
         [[ -f $destination ]] || die "Destination is not a regular file"
         cp -a -- "$destination" "$BACKUP/$index"
@@ -111,7 +114,7 @@ track_file() {
 rollback() {
     local index failed=0
     say 'Rolling back managed changes.' >&2
-    if (( INSTALLING )); then systemctl disable --now telemt.service >/dev/null 2>&1 || true; fi
+    if (( INSTALLING && ! CERT_ONLY )); then systemctl disable --now telemt.service >/dev/null 2>&1 || true; fi
     for ((index=${#CHANGED[@]}-1; index>=0; index--)); do
         if [[ -n ${ORIGINAL[index]} ]]; then
             atomic_copy "${ORIGINAL[index]}" "${CHANGED[index]}" || failed=1
@@ -119,7 +122,9 @@ rollback() {
             rm -f -- "${CHANGED[index]}" || failed=1
         fi
     done
-    if (( INSTALLING )); then
+    if (( CERT_ONLY )); then
+        :
+    elif (( INSTALLING )); then
         systemctl daemon-reload || failed=1
     else
         restart_service && wait_ready 90 || failed=1
@@ -138,9 +143,15 @@ cleanup() {
 }
 
 take_lock() {
-    [[ ! -L $LOCK ]] || die 'Unsafe lock path'
-    exec 9>"$LOCK"
-    flock -n 9 || die 'Another manager invocation holds the lock'
+    local identity mode=${1:-exclusive}
+    identity=$(helper lock-path "$LOCK") || die 'Unsafe lock path'
+    exec 9<>"$LOCK"
+    [[ $(stat -Lc '%d:%i' /proc/self/fd/9) == "$identity" && ! -L $LOCK ]] || die 'Lock path changed'
+    if [[ $mode == shared ]]; then
+        flock -sn 9 || die 'Manager mutation in progress'
+    else
+        flock -n 9 || die 'Another manager invocation holds the lock'
+    fi
 }
 
 preflight() {
@@ -164,25 +175,22 @@ fetch_release() {
 }
 
 download_candidate() {
-    local arch asset url digest actual members
+    local arch asset url digest actual
     arch=$(uname -m); [[ $arch != arm64 ]] || arch=aarch64
     asset="telemt-$arch-linux-gnu.tar.gz"
     jq -e --arg name "$asset" '[.assets[] | select(.name == $name)] | length == 1' "$TMP/release.json" >/dev/null || die 'Ambiguous/missing release asset'
     url=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' "$TMP/release.json")
     digest=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' "$TMP/release.json")
     [[ $url == "https://github.com/telemt/telemt/releases/download/$RELEASE/$asset" && $digest =~ ^sha256:[a-f0-9]{64}$ ]] || die 'Official SHA256 digest/asset URL unavailable'
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --retry 2 "$url" -o "$TMP/asset.tar.gz"
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --max-filesize 134217728 --retry 2 "$url" -o "$TMP/asset.tar.gz"
     actual=$(sha256sum "$TMP/asset.tar.gz"); actual=${actual%% *}
     [[ sha256:$actual == "$digest" ]] || die 'SHA256 mismatch; candidate will not execute'
-    # Extract bytes from one named regular member, never archive paths or symlinks.
-    members=$(tar -tzf "$TMP/asset.tar.gz")
-    [[ $members == telemt || $members == ./telemt ]] || die 'Unknown archive layout'
-    [[ $(tar -tvzf "$TMP/asset.tar.gz") == -* ]] || die 'Asset member is not a regular file'
-    tar -xOzf "$TMP/asset.tar.gz" "$members" >"$TMP/telemt"
+    timeout 60 python3 "$HELPER" extract-binary "$TMP/asset.tar.gz" "$TMP/telemt" || die 'Unknown/unsafe/oversized archive layout'
     chmod 0755 "$TMP/telemt"
     CANDIDATE="$TMP/telemt"
     [[ $(binary_version "$CANDIDATE") == "$RELEASE" ]] || die 'Candidate version mismatch'
 }
+
 
 binary_version() {
     local version
@@ -206,7 +214,7 @@ dns_preflight() {
 
 socks_probe() {
     [[ -z $SOCKS || $SOCKS == direct ]] && return 0
-    [[ $SOCKS =~ ^[a-zA-Z0-9.-]+:[0-9]{1,5}$ ]] || return 1
+    helper socks-address "$SOCKS" || return 1
     # SOCKS handshake plus verified Telegram TLS tests actual Telegram egress.
     curl --noproxy '' --proxy "socks5h://$SOCKS" --proto '=https' -fsS \
         --connect-timeout 10 --max-time 30 https://api.telegram.org/ -o /dev/null
@@ -217,9 +225,17 @@ generate_config() {
     cat <<EOF
 # Managed initial configuration; updates preserve these bytes.
 [general]
+config_strict = true
+data_path = "$DATA"
 use_middle_proxy = false
 log_level = "normal"
 beobachten_file = "$DATA/state/beobachten.txt"
+quota_state_path = "$DATA/state/telemt.limit.json"
+unknown_dc_file_log_enabled = false
+unknown_dc_log_path = "$DATA/state/unknown-dc.txt"
+proxy_secret_path = "$DATA/state/proxy-secret"
+proxy_config_v4_cache_path = "$DATA/state/proxy-config-v4.txt"
+proxy_config_v6_cache_path = "$DATA/state/proxy-config-v6.txt"
 [general.modes]
 classic = false
 secure = true
@@ -227,10 +243,14 @@ tls = false
 [censorship]
 mask = false
 tls_emulation = false
+tls_front_dir = "$DATA/state/tls-front"
+[logging]
+destination = "stderr"
 [network]
 ipv4 = true
 ipv6 = false
 prefer = 4
+cache_public_ip_path = "$DATA/state/public_ip.txt"
 [server]
 port = 18080
 proxy_protocol = false
@@ -290,7 +310,7 @@ WorkingDirectory=/var/lib/telemt
 ExecStart=/usr/local/bin/telemt /etc/telemt/telemt.toml
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=45
+TimeoutStopSec=180
 UMask=0027
 CapabilityBoundingSet=CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN
@@ -324,7 +344,7 @@ listener_ready() {
     [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
     listeners=$(ss -H -ltnp 'sport = :18080') || return 1
     [[ $(printf '%s\n' "$listeners" | wc -l) == 1 && $listeners == *"127.0.0.1:18080 "* && $listeners == *"pid=$pid,"* ]] || return 1
-    [[ $(ss -H -ltnp | grep -c "pid=$pid,") == 1 ]]
+    [[ $(ss -H -ltnp | grep -c "pid=$pid,") == 1 && $(systemctl show telemt.service -p MainPID --value) == "$pid" ]]
 }
 
 wait_ready() {
@@ -367,12 +387,20 @@ recent_logs() {
 }
 
 nginx_plan() {
-    helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$TMP/nginx-plan.json" || die 'automatic nginx integration not possible'
+    build_nginx_plan "$TMP/nginx-plan.json" || die 'automatic nginx integration not possible'
+}
+
+build_nginx_plan() {
+    if [[ $PLAN_MODE == acme ]]; then
+        helper acme-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
+    else
+        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
+    fi
 }
 
 apply_nginx() {
     local path index=0 expected actual
-    helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$TMP/nginx-plan-current.json"
+    build_nginx_plan "$TMP/nginx-plan-current.json"
     cmp -s "$TMP/nginx-plan.json" "$TMP/nginx-plan-current.json" || die 'Nginx include set changed during preflight'
     while IFS=$'\t' read -r path expected; do
         actual=$(sha256sum "$path"); actual=${actual%% *}
@@ -382,6 +410,10 @@ apply_nginx() {
         track_file "$path"
         jq -rj --argjson i "$index" '.edits[$i].content' "$TMP/nginx-plan.json" >"$TMP/nginx-stage"
         chmod 0644 "$TMP/nginx-stage"
+        if [[ -e $path ]]; then
+            chmod --reference="$path" "$TMP/nginx-stage"
+            chown --reference="$path" "$TMP/nginx-stage"
+        fi
         NGINX_CHANGED=1
         atomic_copy "$TMP/nginx-stage" "$path"
         index=$((index+1))
@@ -391,9 +423,9 @@ apply_nginx() {
 }
 
 ensure_certificate() {
-    local cert="/etc/letsencrypt/live/$DOMAIN/fullchain.pem" key="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+    local cert="$CERT_ROOT/live/$DOMAIN/fullchain.pem" key="$CERT_ROOT/live/$DOMAIN/privkey.pem" sockets
     if [[ ! -e $cert || ! -e $key ]]; then
-        [[ ! -d /etc/letsencrypt/live/$DOMAIN ]] || die 'Incomplete existing certificate; manual repair required'
+        [[ ! -e $CERT_ROOT/live/$DOMAIN && ! -L $CERT_ROOT/live/$DOMAIN ]] || die 'Incomplete existing certificate; manual repair required'
         if [[ -t 0 && -z ${EMAIL:-} ]]; then read -r -p 'ACME registration email: ' EMAIL; fi
         if [[ -t 0 && ${AGREE_TOS:-0} != 1 ]]; then
             local consent
@@ -402,18 +434,96 @@ ensure_certificate() {
         fi
         [[ -n ${EMAIL:-} ]] || die 'New certificate needs --email and --agree-tos'
         [[ ${AGREE_TOS:-0} == 1 ]] || die 'Use --agree-tos to accept ACME subscriber terms'
-        [[ -z $(ss -H -ltn 'sport = :80') ]] || die 'Port 80 occupied; provision certificate using DNS-01 or existing webroot first'
-        say 'Requesting standalone HTTP-01 certificate on free port 80. Nginx stays running.'
-        certbot certonly --standalone --non-interactive --agree-tos --email "$EMAIL" -d "$DOMAIN" \
-            --cert-name "$DOMAIN" >"$TMP/certbot.log" 2>&1 || die 'Certbot failed; see Certbot own logs'
+        sockets=$(ss -H -ltn 'sport = :80') || die 'Port 80 inspection failed'
+        if [[ -z $sockets ]]; then
+            say 'Requesting standalone HTTP-01 certificate on free port 80. Nginx stays running.'
+            certbot certonly --standalone --non-interactive --agree-tos --email "$EMAIL" -d "$DOMAIN" \
+                --cert-name "$DOMAIN" >"$TMP/certbot.log" 2>&1 || die 'Certbot failed; see Certbot own logs'
+        else
+            nginx_runtime_identity && nginx_port_owned 80 || die 'Port 80 owner is not the recognized Nginx service'
+            issue_webroot_certificate
+            # Issuance committed a persistent renewal vhost. Replan WEB changes.
+            nginx_plan
+        fi
     fi
-    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || die 'Certificate expires within 7 days'
-    openssl x509 -in "$cert" -noout -checkhost "$DOMAIN" | grep -q 'does match certificate' || die 'Certificate hostname mismatch'
-    [[ -r $key ]] || die 'Certificate key unreadable'
+    validate_certificate
     if ! systemctl is-enabled --quiet certbot.timer && ! systemctl is-enabled --quiet snap.certbot.renew.timer; then
         say 'WARNING: renewal timer not detected; verify existing cron/renewal scheduling manually.'
     fi
 }
+
+validate_certificate() {
+    local cert="$CERT_ROOT/live/$DOMAIN/fullchain.pem" key="$CERT_ROOT/live/$DOMAIN/privkey.pem"
+    helper certificate-paths "$CERT_ROOT" "$DOMAIN" || die 'Unsafe certificate ownership/paths'
+    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || die 'Certificate expires within 7 days'
+    openssl x509 -in "$cert" -noout -checkhost "$DOMAIN" | grep -q 'does match certificate' || die 'Certificate hostname mismatch'
+    [[ -r $key ]] || die 'Certificate key unreadable'
+    [[ $(openssl x509 -in "$cert" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum) == \
+       "$(openssl pkey -in "$key" -pubout -outform DER 2>/dev/null | sha256sum)" ]] || die 'Certificate/private key mismatch'
+}
+
+nginx_port_owned() {
+    local port=$1 sockets master pid parent executable
+    master=$(systemctl show nginx.service -p MainPID --value)
+    [[ $master =~ ^[1-9][0-9]*$ ]] || return 1
+    executable=$(readlink -e "/proc/$master/exe") || return 1
+    sockets=$(ss -H -ltnp "sport = :$port") || return 1
+    [[ -n $sockets && -z $(printf '%s\n' "$sockets" | grep -v '"nginx"' || true) ]] || return 1
+    while read -r pid; do
+        [[ $pid == "$master" ]] && continue
+        parent=$(awk '/^PPid:/ {print $2}' "/proc/$pid/status") || return 1
+        [[ $parent == "$master" && $(readlink -e "/proc/$pid/exe") == "$executable" ]] || return 1
+    done < <(printf '%s\n' "$sockets" | grep -oE 'pid=[0-9]+' | cut -d= -f2)
+    [[ $sockets == *pid=* ]]
+}
+
+acme_probe() {
+    local token file content code=0
+    token=$(openssl rand -hex 16)
+    file="$ACME_ROOT/.well-known/acme-challenge/twm-$token"
+    helper safe-path "$file" || return 1
+    printf '%s' "$token" >"$file"; chmod 0644 "$file"
+    content=$(curl --noproxy '*' --proto '=http' -fsS --connect-timeout 5 --max-time 15 \
+        --resolve "$DOMAIN:80:127.0.0.1" "http://$DOMAIN/.well-known/acme-challenge/twm-$token") || code=1
+    [[ $content == "$token" ]] || code=1
+    rm -f -- "$file"
+    return "$code"
+}
+
+issue_webroot_certificate() (
+    # Separate transaction: successful issuance keeps the renewal vhost even if
+    # a later Telemt installation fails. Failure restores only ACME mutations.
+    CERT_ONLY=1 INSTALLING=1 PLAN_MODE=acme
+    CHANGED=() ORIGINAL=()
+    TMP=$(mktemp -d "$TMP/acme.XXXXXXXX")
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    nginx_plan
+    helper safe-path "$ACME_ROOT" || die 'Unsafe ACME webroot'
+    if [[ -e $ACME_ROOT ]]; then
+        [[ -f $ACME_ROOT/.telemt-web-manager && $(cat "$ACME_ROOT/.telemt-web-manager") == "$DOMAIN" ]] || die 'Unmanaged ACME webroot'
+        helper safe-path "$ACME_ROOT/.telemt-web-manager" || die 'Unsafe ACME marker'
+    fi
+    backup_begin
+    backup_nginx_context
+    ARMED=1
+    helper safe-path "$ACME_ROOT/.well-known/acme-challenge" || die 'Unsafe ACME challenge path'
+    install -d -m 0755 "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge"
+    if [[ ! -e $ACME_ROOT/.telemt-web-manager ]]; then
+        track_file "$ACME_ROOT/.telemt-web-manager"
+        printf '%s\n' "$DOMAIN" >"$ACME_ROOT/.telemt-web-manager"
+        chmod 0644 "$ACME_ROOT/.telemt-web-manager"
+    fi
+    apply_nginx
+    acme_probe || die 'ACME webroot is not served correctly by local Nginx'
+    say 'Requesting webroot HTTP-01 certificate. Nginx stays running.'
+    certbot certonly --webroot --webroot-path "$ACME_ROOT" --non-interactive --agree-tos \
+        --email "$EMAIL" -d "$DOMAIN" --cert-name "$DOMAIN" >"$TMP/certbot.log" 2>&1 || die 'Certbot failed; ACME changes will roll back'
+    validate_certificate
+    helper renewal-contract "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT" || die 'Certbot renewal webroot was not recorded as expected'
+    ARMED=0
+)
 
 prompt_install() {
     [[ -t 0 ]] || die 'Non-interactive install requires --domain and --public-ip (see --help)'
@@ -440,6 +550,7 @@ install_manager() {
     [[ -n $DOMAIN && -n $PUBLIC_IP ]] || prompt_install
     local path secret since
     for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$STATE" "$RENEW_HOOK"; do
+        helper safe-path "$path" || die 'Unsafe install path'
         [[ ! -e $path && ! -L $path ]] || die 'Existing Telemt files found; automatic adoption not possible; manual review required'
     done
     [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || die 'Existing Telemt unit found'
@@ -494,7 +605,8 @@ install_manager() {
     track_file "$STATE/manifest.json"
     jq -n --arg domain "$DOMAIN" --arg unit "$(sha256sum "$UNIT" | cut -d' ' -f1)" \
         --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
-        '{schema:1,domain:$domain,unit_sha256:$unit,nginx_sha256:$nginx}' >"$STATE/manifest.json"
+        --arg acme "$([[ -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]] && printf '%s' "$ACME_ROOT" || true)" \
+        '{schema:1,domain:$domain,unit_sha256:$unit,nginx_sha256:$nginx,acme_webroot:$acme}' >"$STATE/manifest.json"
     ARMED=0
     say "Private WEB link: $STATE/web-link.txt (0600)"
     say 'Installed. WEB link is generated by Telemt in its journal; treat it as a secret.'
@@ -514,23 +626,32 @@ load_installation() {
     actual=$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf"); expected=$(jq -er .nginx_sha256 "$STATE/manifest.json")
     [[ ${actual%% *} == "$expected" ]] || die 'Nginx vhost changed; manual review required'
     helper config-info "$CONFIG" >"$TMP/config-info" || die 'automatic update/migration not possible; manual review required'
+    helper runtime-contract "$CONFIG" "$DATA" || die 'Runtime/write paths require manual review; existing TOML was not changed'
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}
     [[ $DOMAIN == "$(jq -er .domain "$STATE/manifest.json")" ]] || die 'Domain changed; manual review required'
     nginx_plan
     [[ $(jq '.edits | length' "$TMP/nginx-plan.json") == 0 ]] || die 'Nginx integration incomplete; manual review required'
+    if [[ -n $(jq -r '.acme_webroot // ""' "$STATE/manifest.json") ]]; then
+        [[ $(jq -r .acme_webroot "$STATE/manifest.json") == "$ACME_ROOT" && -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]] || die 'ACME renewal vhost missing or changed'
+        helper safe-path "$ACME_ROOT/.telemt-web-manager"
+        [[ $(cat "$ACME_ROOT/.telemt-web-manager") == "$DOMAIN" ]] || die 'ACME webroot ownership marker changed'
+        helper renewal-contract "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT" || die 'ACME renewal configuration needs manual review'
+    fi
 }
 
 update_transaction() {
     local current=$1 since config_hash
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; return 0; fi
-    candidate_healthcheck "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
     config_hash=$(sha256sum "$CONFIG")
+    candidate_healthcheck "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
+    [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed during candidate validation'
     backup_begin
     cp -a "$CONFIG" "$BACKUP/config.toml"
     cp -a "$UNIT" "$BACKUP/telemt.service"
     backup_nginx_context
     track_file "$BIN"
+    [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed before activation'
     ARMED=1
     atomic_copy "$CANDIDATE" "$BIN"
     since=$(now)
@@ -548,6 +669,7 @@ update_manager() {
     current=$(binary_version "$BIN") || die 'Unknown installed binary version'
     fetch_release || die 'Latest stable release unavailable'
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; path_health; return; fi
+    [[ $RELEASE == 3.5.9 ]] || die 'Unaudited upstream runtime/write-path contract; manual review required'
     [[ $(printf '%s\n%s\n' "$current" "$RELEASE" | sort -V | head -n1) == "$current" ]] || die 'Installed version is newer; automatic downgrade refused'
     path_health || die 'Existing installation unhealthy; update refused'
     download_candidate
@@ -626,7 +748,7 @@ main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
     if [[ $action == --check ]]; then
-        if [[ -f $LOCK && ! -L $LOCK ]]; then exec 9<"$LOCK"; flock -sn 9 || die 'Manager mutation in progress'; fi
+        take_lock shared
     else take_lock; fi
     case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; esac
 }

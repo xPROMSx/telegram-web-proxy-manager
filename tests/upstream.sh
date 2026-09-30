@@ -17,5 +17,9 @@ for SOCKS in direct 127.0.0.1:1080; do
     generate_config "$secret" >"$TMP/config.toml"
     unset secret
     candidate_healthcheck "$CANDIDATE" "$TMP/config.toml"
+    sed '/^config_strict = true/a manager_unknown_key = true' "$TMP/config.toml" >"$TMP/unknown.toml"
+    if candidate_healthcheck "$CANDIDATE" "$TMP/unknown.toml"; then
+        printf 'FAIL - strict configuration accepted an unknown key\n' >&2; exit 1
+    fi
 done
-printf 'ok - verified Telemt 3.5.9 accepts generated direct and SOCKS configurations\n'
+printf 'ok - verified Telemt 3.5.9 accepts strict direct/SOCKS configs and rejects unknown keys\n'
