@@ -39,7 +39,7 @@ for p in (t/'nginx').rglob('*'):
 p = t/'nginx/nginx.conf'
 p.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'
              + f'pid {t}/nginx.pid;\nerror_log {t}/logs/error.log;\n'
-             + p.read_text())
+             + p.read_text().replace('http {', f'http {{\naccess_log {t}/logs/access.log;'))
 PY
 /usr/sbin/nginx -t -p "$test_dir/" -c "$test_dir/nginx/nginx.conf"
 python3 "$root/tests/origin.py" >"$test_dir/origin.log" 2>&1 &
