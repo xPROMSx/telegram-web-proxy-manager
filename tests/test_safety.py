@@ -1,6 +1,7 @@
 import contextlib
 import importlib.util
 import io
+import gzip
 import json
 import os
 import tarfile
@@ -276,6 +277,30 @@ class SecurityTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     s.extract_binary(archive, output)
                 self.assertFalse(output.exists())
+            member = tarfile.TarInfo('telemt')
+            member.size = 128 * 1024 * 1024 + 1
+            with gzip.open(archive, 'wb') as compressed:
+                compressed.write(member.tobuf() + b'\0' * 1024)
+            with self.assertRaises(ValueError):
+                s.extract_binary(archive, output)
+            self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix flags checked on Linux CI')
+    def test_archive_output_symlink_does_not_overwrite_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root/'target'
+            target.write_bytes(b'unchanged')
+            output = root/'binary'
+            output.symlink_to(target)
+            archive = root/'asset.tar.gz'
+            with tarfile.open(archive, 'w:gz') as tar:
+                member = tarfile.TarInfo('telemt')
+                member.size = 7
+                tar.addfile(member, io.BytesIO(b'fixture'))
+            with self.assertRaises(OSError):
+                s.extract_binary(archive, output)
+            self.assertEqual(target.read_bytes(), b'unchanged')
 
     @unittest.skipUnless(os.name == 'posix', 'Unix permissions checked on Linux CI')
     def test_symlink_and_writable_ancestor_refused(self):

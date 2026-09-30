@@ -24,6 +24,14 @@ result=$?
 set -e
 [[ $result != 0 && ! -e $SANDBOX/executed ]]
 metadata "$(sha256sum "$SANDBOX/source.tar.gz" | cut -d' ' -f1)"
+jq '.assets += .assets' "$TMP/release.json" >"$TMP/duplicate.json"
+mv "$TMP/duplicate.json" "$TMP/release.json"
+set +e
+(download_candidate) >"$SANDBOX/duplicate.log" 2>&1
+result=$?
+set -e
+[[ $result != 0 && ! -e $SANDBOX/executed ]]
+metadata "$(sha256sum "$SANDBOX/source.tar.gz" | cut -d' ' -f1)"
 download_candidate
 [[ -e $SANDBOX/executed ]]
 rm "$SANDBOX/executed" "$SANDBOX/archive/telemt"
@@ -35,7 +43,7 @@ set +e
 result=$?
 set -e
 [[ $result != 0 && ! -e $SANDBOX/executed ]]
-printf 'ok - digest mismatch and symlink archive never execute; valid digest passes\n'
+printf 'ok - digest mismatch, ambiguous asset and symlink archive never execute; valid digest passes\n'
 
 # SC2016: preserve positional arguments for the generated candidate stub.
 # shellcheck disable=SC2016

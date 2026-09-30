@@ -54,7 +54,7 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
             "$ACME_ROOT" "$DOMAIN" "$ACME_ROOT" >"$CERT_ROOT/renewal/$DOMAIN.conf"
     }
     set +e
-    (ensure_certificate) >"$case_dir/manager.log" 2>&1
+    (set -Eeuo pipefail; ensure_certificate) >"$case_dir/manager.log" 2>&1
     result=$?
     set -e
     if [[ ( $scenario == free || $scenario == webroot ) && $result != 0 ]]; then
