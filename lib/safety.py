@@ -478,6 +478,14 @@ def acme_plan(root, host, output, webroot):
         "edits": edits}))
 
 
+def port80_config(root):
+    parser = Nginx(root)
+    nodes = parser.read(parser.root / "nginx.conf")
+    print(int(any(n.args[0] == "listen" and len(n.args) >= 2
+                  and n.args[1].rsplit(":", 1)[-1].isdigit()
+                  and int(n.args[1].rsplit(":", 1)[-1]) == 80 for n in walk(nodes))))
+
+
 def render_vhost(host):
     return f'''# Managed by telemt-web-manager v1. Manual changes require review.
 server {{
@@ -579,6 +587,8 @@ def main():
         nginx_plan(*args)
     elif command == "acme-plan":
         acme_plan(*args)
+    elif command == "port80-config":
+        port80_config(args[0])
     elif command == "config-info":
         config_info(*args)
     elif command == "dns":

@@ -9,11 +9,17 @@ trap 'rm -rf -- "$sandbox"' EXIT
 fixture=${1:-tests/fixtures/nginx-3x-ui}
 openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj /CN=proxy.example.com \
     -addext subjectAltName=DNS:proxy.example.com -keyout "$sandbox/key" -out "$sandbox/cert" >/dev/null 2>&1
-for scenario in free webroot foreign conflict invalid-nginx failed-certbot; do
+for scenario in free webroot foreign conflict invalid-nginx failed-certbot interrupted-certbot pending-config; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     TMP="$case_dir/tmp" NGINX_ROOT="$case_dir/nginx" ACME_ROOT="$case_dir/acme"
     CERT_ROOT="$case_dir/certs" BACKUP_ROOT="$case_dir/backups"
-    mkdir "$TMP"; cp -r "$fixture" "$NGINX_ROOT"; mkdir -p "$NGINX_ROOT/conf.d"
+    mkdir "$TMP"
+    if [[ $scenario == free ]]; then
+        cp -r tests/fixtures/nginx "$NGINX_ROOT"
+    else
+        cp -r "$fixture" "$NGINX_ROOT"
+    fi
+    mkdir -p "$NGINX_ROOT/conf.d"
     DOMAIN=proxy.example.com EMAIL=operator@example.com AGREE_TOS=1
     if [[ $scenario == conflict ]]; then
         # SC2016: retain literal Nginx variables, not shell expansions.
@@ -21,12 +27,15 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot; do
         printf 'server { listen 80; server_name proxy.example.com; return 301 https://$host$request_uri; }\n' >"$NGINX_ROOT/sites-enabled/conflict.conf"
     fi
     cp -r "$NGINX_ROOT" "$case_dir/original"
-    ss() { if [[ $scenario != free ]]; then printf occupied; fi; }
+    ss() { if [[ $scenario != free && $scenario != pending-config ]]; then printf occupied; fi; }
     nginx_runtime_identity() { return 0; }
     nginx_port_owned() { [[ $scenario != foreign ]]; }
     nginx_test() { [[ $scenario != invalid-nginx || ! -e $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]]; }
     nginx_reload() { printf reload >>"$case_dir/reloads"; }
-    systemctl() { return 0; }
+    systemctl() {
+        case $1 in stop|disable|restart) printf forbidden >"$case_dir/forbidden-service-mutation"; return 1;; esac
+        return 0
+    }
     acme_probe() { [[ -d $ACME_ROOT/.well-known/acme-challenge ]]; }
     certbot() {
         [[ $* == *--non-interactive* && $* == *--cert-name* ]] || return 1
@@ -36,6 +45,7 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot; do
             [[ $* == *--webroot-path* && $* == *"$ACME_ROOT"* && $* != *--standalone* ]] || return 1
         fi
         printf invoked >"$case_dir/certbot-called"
+        if [[ $scenario == interrupted-certbot ]]; then kill -TERM "$BASHPID"; return 1; fi
         [[ $scenario != failed-certbot ]] || return 1
         mkdir -p "$CERT_ROOT/live/$DOMAIN" "$CERT_ROOT/renewal"
         cp "$sandbox/cert" "$CERT_ROOT/live/$DOMAIN/fullchain.pem"
@@ -47,6 +57,12 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot; do
     (ensure_certificate) >"$case_dir/manager.log" 2>&1
     result=$?
     set -e
+    if [[ ( $scenario == free || $scenario == webroot ) && $result != 0 ]]; then
+        # Fixture diagnostics only: manager errors contain no fixture key material.
+        grep -E '^ERROR:|^Safety validation|^CRITICAL:' "$case_dir/manager.log" >&2 || true
+        printf 'FAIL - ACME %s returned %s\n' "$scenario" "$result" >&2
+        exit 1
+    fi
     case $scenario in
         free)
             [[ $result == 0 && -f $case_dir/certbot-called ]]
@@ -63,7 +79,9 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot; do
         *)
             [[ $result != 0 ]]
             diff -r "$case_dir/original" "$NGINX_ROOT"
-            if [[ $scenario != failed-certbot ]]; then [[ ! -e $case_dir/certbot-called ]]; fi;;
+            if [[ $scenario != failed-certbot && $scenario != interrupted-certbot ]]; then [[ ! -e $case_dir/certbot-called ]]; fi
+            if [[ $scenario == interrupted-certbot ]]; then [[ $result == 143 ]]; fi;;
     esac
+    [[ ! -e $case_dir/forbidden-service-mutation ]]
     printf 'ok - ACME %s\n' "$scenario"
 done

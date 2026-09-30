@@ -436,6 +436,7 @@ ensure_certificate() {
         [[ ${AGREE_TOS:-0} == 1 ]] || die 'Use --agree-tos to accept ACME subscriber terms'
         sockets=$(ss -H -ltn 'sport = :80') || die 'Port 80 inspection failed'
         if [[ -z $sockets ]]; then
+            [[ $(helper port80-config "$NGINX_ROOT") == 0 ]] || die 'Nginx config declares port 80 but runtime does not; manual review required'
             say 'Requesting standalone HTTP-01 certificate on free port 80. Nginx stays running.'
             certbot certonly --standalone --non-interactive --agree-tos --email "$EMAIL" -d "$DOMAIN" \
                 --cert-name "$DOMAIN" >"$TMP/certbot.log" 2>&1 || die 'Certbot failed; see Certbot own logs'
@@ -443,6 +444,7 @@ ensure_certificate() {
             if ! nginx_runtime_identity || ! nginx_port_owned 80; then
                 die 'Port 80 owner is not the recognized Nginx service'
             fi
+            [[ $(helper port80-config "$NGINX_ROOT") == 1 ]] || die 'Nginx runtime/config port 80 mismatch; manual review required'
             issue_webroot_certificate
             # Issuance committed a persistent renewal vhost. Replan WEB changes.
             nginx_plan
