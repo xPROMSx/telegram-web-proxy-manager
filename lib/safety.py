@@ -59,7 +59,8 @@ class Nginx:
 
     def read(self, path):
         path = Path(path).resolve()
-        require(path.is_relative_to(self.root), "Nginx include escapes config directory")
+        external_module = path.is_relative_to(Path("/usr/share/nginx/modules-available"))
+        require(path.is_relative_to(self.root) or external_module, "Nginx include escapes config directory")
         require(path not in self.stack and path not in self.sources,
                 "repeated or cyclic Nginx include")
         self.stack.append(path)
@@ -116,6 +117,8 @@ class Nginx:
             return nodes, len(source)
 
         nodes, _ = parse()
+        if external_module:
+            require(all(n.args[0] == "load_module" and n.children is None for n in nodes))
         self.stack.pop()
         return nodes
 
@@ -240,8 +243,9 @@ server {{
 
 
 def config_info(path):
-    with open(path, "rb") as source:
-        c = tomllib.load(source)
+    raw = Path(path).read_bytes()
+    require(not re.search(rb"(?m)^\s*include\s*=", raw), "config includes need manual review")
+    c = tomllib.loads(raw.decode())
     require(not any(k in c for k in ("include", "includes")), "config includes need manual review")
     server = c.get("server", {})
     listeners = server.get("listeners", [])

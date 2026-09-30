@@ -19,6 +19,8 @@ run_case() {
 }
 
 # Every case executes a new shell: no conditional-function errexit masking.
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'direct and SOCKS config; generated secret never logged' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
@@ -34,6 +36,8 @@ grep -qx 127.0.0.1:1080 "$SANDBOX/info"
 ! grep -Fq "$token" "$SANDBOX/info"
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'SOCKS Telegram success and failure; direct skips probe' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 curl() { [[ $* == *https://api.telegram.org/* && $* == *socks5h://127.0.0.1:1080* ]]; }
@@ -45,6 +49,8 @@ SOCKS=
 socks_probe
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'already latest does not touch binary or config' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 RELEASE=3.5.9
@@ -53,6 +59,8 @@ backup_begin() { exit 56; }
 update_transaction 3.5.9
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'candidate rejection leaves installed bytes untouched' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 BIN="$SANDBOX/reject-bin" CONFIG="$SANDBOX/reject-config"
@@ -66,6 +74,8 @@ set -e
 [[ $rc != 0 && $(cat "$BIN") == old && $(cat "$CONFIG") == original ]]
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'readiness handles 18-second cold start and bounded timeout' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 tick=0
@@ -84,6 +94,8 @@ systemctl() { printf failed; }
 ! wait_ready 90
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'failed startup rolls back old binary and restarts it' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 BIN="$SANDBOX/rollback-bin" CONFIG="$SANDBOX/rollback-config" UNIT="$SANDBOX/unit"
@@ -104,6 +116,8 @@ set -e
 [[ $(tail -n1 "$SANDBOX/restarts") == old ]]
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'nginx validation failure restores all mutations' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 NGINX_ROOT="$SANDBOX/nginx"
@@ -123,6 +137,8 @@ set -e
 [[ ! -e $NGINX_ROOT/conf.d/telemt-web-manager.conf ]]
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'DNS mismatch refuses before mutation' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 TMP="$SANDBOX/dns"; mkdir "$TMP"
@@ -135,6 +151,8 @@ set -e
 [[ $rc != 0 && ! -e $SANDBOX/destructive ]]
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'concurrent mutation is refused' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 LOCK="$SANDBOX/lock"
@@ -146,6 +164,8 @@ set -e
 [[ $rc != 0 ]]
 '
 
+# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# shellcheck disable=SC2016
 run_case 'non-interactive menu fails promptly' bash -c '
 if timeout 5 bash "$ROOT/telemt-web-manager.sh" </dev/null >"$SANDBOX/menu.log" 2>&1; then exit 1; fi
 grep -q "No interactive terminal" "$SANDBOX/menu.log"

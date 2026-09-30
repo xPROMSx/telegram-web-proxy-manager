@@ -11,10 +11,13 @@ BIN=/usr/local/bin/telemt
 CONFIG=/etc/telemt/telemt.toml
 UNIT=/etc/systemd/system/telemt.service
 STATE=/var/lib/telemt-web-manager
+DATA=/var/lib/telemt
+CONFIG_DIR=/etc/telemt
+RENEW_HOOK=/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager
 NGINX_ROOT=/etc/nginx
 BACKUP_ROOT=/root/telemt-backups
 LOCK=/run/lock/telemt-web-manager.lock
-TMP= BACKUP= DOMAIN= PUBLIC_IP= SOCKS= RELEASE= CANDIDATE=
+TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' RELEASE='' CANDIDATE=''
 ARMED=0 INSTALLING=0 NGINX_CHANGED=0
 declare -a CHANGED=() ORIGINAL=()
 
@@ -28,6 +31,28 @@ nginx_test() { nginx -t >"$TMP/nginx-test.log" 2>&1; }
 nginx_reload() { systemctl reload nginx; }
 now() { date +%s; }
 pause() { sleep 1; }
+
+nginx_runtime_identity() {
+    local pid command sockets
+    pid=$(systemctl show nginx.service -p MainPID --value)
+    [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/cmdline ]] || return 1
+    command=$(tr '\0' ' ' <"/proc/$pid/cmdline")
+    [[ $command == 'nginx: master process '* && $command != *' -c'* && $command != *' -p'* ]] || return 1
+    nginx -V 2>&1 | grep -q -- '--conf-path=/etc/nginx/nginx.conf' || return 1
+    sockets=$(ss -H -ltnp 'sport = :443') || return 1
+    [[ -n $sockets && $sockets == *'"nginx"'* ]] || return 1
+    [[ -z $(printf '%s\n' "$sockets" | grep -v '"nginx"' || true) ]]
+}
+
+process_identity() {
+    local pid uid caps
+    pid=$(systemctl show telemt.service -p MainPID --value)
+    [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+    uid=$(id -u telemt)
+    [[ $(awk '/^Uid:/ {print $2 ":" $3 ":" $4 ":" $5}' "/proc/$pid/status") == "$uid:$uid:$uid:$uid" ]] || return 1
+    caps=$(awk '/^CapEff:/ {print $2}' "/proc/$pid/status")
+    [[ $caps == 0000000000001000 ]]
+}
 
 atomic_copy() {
     local source=$1 destination=$2 stage
@@ -49,7 +74,6 @@ backup_begin() {
 track_file() {
     local destination=$1 index=${#CHANGED[@]}
     [[ ! -L $destination ]] || die "Refusing symlink destination"
-    CHANGED+=("$destination")
     if [[ -e $destination ]]; then
         [[ -f $destination ]] || die "Destination is not a regular file"
         cp -a -- "$destination" "$BACKUP/$index"
@@ -57,6 +81,7 @@ track_file() {
     else
         ORIGINAL+=("")
     fi
+    CHANGED+=("$destination")
     printf '%s\t%s\n' "$index" "$destination" >>"$BACKUP/files.tsv"
 }
 
@@ -110,9 +135,9 @@ preflight() {
 
 fetch_release() {
     curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 --retry 2 \
-        https://api.github.com/repos/telemt/telemt/releases/latest -o "$TMP/release.json"
-    RELEASE=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$TMP/release.json")
-    [[ $RELEASE =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Unrecognized upstream release tag'
+        https://api.github.com/repos/telemt/telemt/releases/latest -o "$TMP/release.json" || return 1
+    RELEASE=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$TMP/release.json") || return 1
+    [[ $RELEASE =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
 download_candidate() {
@@ -145,7 +170,7 @@ binary_version() {
 
 candidate_healthcheck() {
     # Its diagnostics can quote TOML secrets. Keep neither stdout nor stderr.
-    (cd /var/lib/telemt && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
+    (cd "$DATA" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
 }
 
 dns_preflight() {
@@ -175,6 +200,9 @@ log_level = "normal"
 classic = false
 secure = true
 tls = false
+[censorship]
+mask = false
+tls_emulation = false
 [network]
 ipv4 = true
 ipv6 = false
@@ -204,7 +232,7 @@ host = "$DOMAIN"
 public_addr = "$PUBLIC_IP:443"
 [web.vhosts.decoy]
 mode = "static_directory"
-directory = "/var/lib/telemt/public"
+directory = "$DATA/public"
 index = "index.html"
 [[web.vhosts.profiles]]
 user = "web-user"
@@ -271,7 +299,8 @@ listener_ready() {
     pid=$(systemctl show telemt.service -p MainPID --value)
     [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
     listeners=$(ss -H -ltnp 'sport = :18080') || return 1
-    [[ $(printf '%s\n' "$listeners" | wc -l) == 1 && $listeners == *"127.0.0.1:18080 "* && $listeners == *"pid=$pid,"* ]]
+    [[ $(printf '%s\n' "$listeners" | wc -l) == 1 && $listeners == *"127.0.0.1:18080 "* && $listeners == *"pid=$pid,"* ]] || return 1
+    [[ $(ss -H -ltnp | grep -c "pid=$pid,") == 1 ]]
 }
 
 wait_ready() {
@@ -294,7 +323,7 @@ http_ok() {
 }
 
 path_health() {
-    nginx_test && service_active && listener_ready || return 1
+    nginx_test && service_active && listener_ready && process_identity || return 1
     http_ok -H "Host: $DOMAIN" http://127.0.0.1:18080/ || return 1
     # Traverse stream on :443 too: internal :7444 requires a PROXY preamble.
     http_ok --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || return 1
@@ -319,6 +348,8 @@ nginx_plan() {
 
 apply_nginx() {
     local path index=0 expected actual
+    helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$TMP/nginx-plan-current.json"
+    cmp -s "$TMP/nginx-plan.json" "$TMP/nginx-plan-current.json" || die 'Nginx include set changed during preflight'
     while IFS=$'\t' read -r path expected; do
         actual=$(sha256sum "$path"); actual=${actual%% *}
         [[ $actual == "$expected" ]] || die 'Nginx changed during preflight; retry after manual review'
@@ -347,7 +378,7 @@ ensure_certificate() {
             --cert-name "$DOMAIN" >"$TMP/certbot.log" 2>&1 || die 'Certbot failed; see Certbot own logs'
     fi
     openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || die 'Certificate expires within 7 days'
-    openssl x509 -in "$cert" -noout -checkhost "$DOMAIN" >/dev/null || die 'Certificate hostname mismatch'
+    openssl x509 -in "$cert" -noout -checkhost "$DOMAIN" | grep -q 'does match certificate' || die 'Certificate hostname mismatch'
     [[ -r $key ]] || die 'Certificate key unreadable'
     if ! systemctl is-enabled --quiet certbot.timer && ! systemctl is-enabled --quiet snap.certbot.renew.timer; then
         say 'WARNING: renewal timer not detected; verify existing cron/renewal scheduling manually.'
@@ -376,7 +407,7 @@ install_manager() {
         return
     fi
     local path secret since
-    for path in "$BIN" "$CONFIG" "$UNIT" /var/lib/telemt /etc/telemt "$STATE"; do
+    for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$STATE" "$RENEW_HOOK"; do
         [[ ! -e $path && ! -L $path ]] || die 'Existing Telemt files found; automatic adoption not possible; manual review required'
     done
     [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || die 'Existing Telemt unit found'
@@ -385,8 +416,9 @@ install_manager() {
     socks_probe || die 'Telegram HTTPS through SOCKS failed'
     nginx_test || die 'Existing Nginx configuration invalid'
     systemctl is-active --quiet nginx || die 'Nginx must be active'
+    nginx_runtime_identity || die 'Nginx process/config/443 ownership is ambiguous'
     nginx_plan
-    fetch_release
+    fetch_release || die 'Latest stable release unavailable'
     # Fresh config has been researched against this version; never assume future schemas.
     [[ $RELEASE == 3.5.9 ]] || die 'New upstream release requires manager schema review before fresh install'
     download_candidate
@@ -397,17 +429,20 @@ install_manager() {
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         die 'Existing telemt account/group needs manual review'
     fi
-    useradd --system --user-group --home-dir /var/lib/telemt --no-create-home --shell /usr/sbin/nologin telemt
-    install -d -m 0750 -o root -g telemt /etc/telemt /var/lib/telemt /var/lib/telemt/public
-    install -d -m 0750 -o telemt -g telemt /var/lib/telemt/state
+    useradd --system --user-group --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin telemt
+    install -d -m 0750 -o root -g telemt "$CONFIG_DIR" "$DATA" "$DATA/public"
+    install -d -m 0750 -o telemt -g telemt "$DATA/state"
     install -d -m 0700 "$STATE"
-    track_file /var/lib/telemt/public/index.html
-    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >/var/lib/telemt/public/index.html
-    chown root:telemt /var/lib/telemt/public/index.html
-    chmod 0440 /var/lib/telemt/public/index.html
+    track_file "$DATA/public/index.html"
+    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$DATA/public/index.html"
+    chown root:telemt "$DATA/public/index.html"
+    chmod 0440 "$DATA/public/index.html"
     secret=$(openssl rand -hex 16)
     track_file "$CONFIG"
     generate_config "$secret" >"$CONFIG"
+    track_file "$STATE/web-link.txt"
+    printf 'tg://webproxy?server=%s&secret=dd%s\n' "$DOMAIN" "$secret" >"$STATE/web-link.txt"
+    chmod 0600 "$STATE/web-link.txt"
     unset secret
     chown root:telemt "$CONFIG"; chmod 0640 "$CONFIG"
     candidate_healthcheck "$CANDIDATE" "$CONFIG" || die 'Candidate rejected generated config'
@@ -419,12 +454,17 @@ install_manager() {
     systemctl enable --now telemt.service
     wait_ready 90 || die 'Telemt did not become ready'
     apply_nginx
-    path_health && recent_logs "$since" || die 'Post-install health failed'
+    if ! path_health || ! recent_logs "$since"; then die 'Post-install health failed'; fi
+    install -d -m 0755 "$(dirname "$RENEW_HOOK")"
+    track_file "$RENEW_HOOK"
+    printf '#!/bin/sh\nset -eu\n/usr/sbin/nginx -t\n/usr/bin/systemctl reload nginx\n' >"$RENEW_HOOK"
+    chmod 0750 "$RENEW_HOOK"
     track_file "$STATE/manifest.json"
     jq -n --arg domain "$DOMAIN" --arg unit "$(sha256sum "$UNIT" | cut -d' ' -f1)" \
         --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
         '{schema:1,domain:$domain,unit_sha256:$unit,nginx_sha256:$nginx}' >"$STATE/manifest.json"
     ARMED=0
+    say "Private WEB link: $STATE/web-link.txt (0600)"
     say 'Installed. WEB link is generated by Telemt in its journal; treat it as a secret.'
     say 'Run: journalctl -u telemt.service (privately; do not paste unredacted logs).'
 }
@@ -434,6 +474,7 @@ load_installation() {
     jq -e '.schema == 1' "$STATE/manifest.json" >/dev/null || die 'Unknown manifest schema'
     [[ $(systemctl show telemt.service -p FragmentPath --value) == "$UNIT" ]] || die 'Unexpected service unit'
     [[ -z $(systemctl show telemt.service -p DropInPaths --value) ]] || die 'Service drop-ins need manual review'
+    nginx_runtime_identity || die 'Nginx process/config/443 ownership is ambiguous'
     local actual expected
     actual=$(sha256sum "$UNIT"); expected=$(jq -er .unit_sha256 "$STATE/manifest.json")
     [[ ${actual%% *} == "$expected" ]] || die 'Service changed; manual review required'
@@ -460,7 +501,9 @@ update_transaction() {
     ARMED=1
     atomic_copy "$CANDIDATE" "$BIN"
     since=$(now)
-    restart_service && wait_ready 90 && path_health && recent_logs "$since" || die 'Update health failed; restoring previous binary'
+    if ! restart_service || ! wait_ready 90 || ! path_health || ! recent_logs "$since"; then
+        die 'Update health failed; restoring previous binary'
+    fi
     [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed concurrently; manual review required'
     ARMED=0
     say "Updated to $RELEASE. Configuration preserved byte-for-byte."
@@ -470,7 +513,7 @@ update_manager() {
     load_installation
     local current
     current=$(binary_version "$BIN") || die 'Unknown installed binary version'
-    fetch_release
+    fetch_release || die 'Latest stable release unavailable'
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; path_health; return; fi
     path_health || die 'Existing installation unhealthy; update refused'
     download_candidate
@@ -506,7 +549,9 @@ repair_manager() {
     cp -a "$UNIT" "$BACKUP/telemt.service"
     cp "$TMP/nginx-plan.json" "$BACKUP/nginx-plan.json"
     say 'Managed files verified. Restarting Telemt and reloading validated Nginx.'
-    restart_service && wait_ready 90 && nginx_reload && path_health || die 'Service recovery failed; manual review required'
+    if ! restart_service || ! wait_ready 90 || ! nginx_reload || ! path_health; then
+        die 'Service recovery failed; manual review required'
+    fi
 }
 
 usage() {
@@ -522,7 +567,7 @@ EOF
 }
 
 main() {
-    local action= choice
+    local action='' choice
     while (( $# )); do
         case $1 in
             --help) usage; return;;
