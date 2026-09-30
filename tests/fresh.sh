@@ -24,6 +24,7 @@ dig() { if [[ $* == *' A '* ]]; then printf '%s\n' "$PUBLIC_IP"; fi; }
 nginx_test() { return 0; }
 nginx_reload() { return 0; }
 nginx_runtime_identity() { return 0; }
+managed_permissions() { return 0; } # Fixture runs as the CI user, not root.
 ensure_certificate() { return 0; }
 fetch_release() { RELEASE=3.5.9; }
 download_candidate() { CANDIDATE="$TMP/candidate"; printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; chmod 0755 "$CANDIDATE"; }

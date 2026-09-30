@@ -235,6 +235,7 @@ for file in telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
 shellcheck -x telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
+bash tests/download.sh  # Подмена download, неверный digest, symlink, redaction
 bash tests/upstream.sh  # Интернет: официальный release asset и SHA256
 bash tests/nginx.sh     # Нужны nginx и libnginx-mod-stream; private test ports
 ```

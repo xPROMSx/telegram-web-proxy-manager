@@ -9,7 +9,9 @@ jobs:
   safety:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install test tools
         run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream
       - name: Bash syntax
@@ -17,7 +19,7 @@ jobs:
       - name: ShellCheck
         run: shellcheck -x telemt-web-manager.sh tests/*.sh
       - name: Unit and fixture tests (no root, no production access)
-        run: bash tests/run.sh && bash tests/fresh.sh
+        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh
       - name: Published Telemt configuration contract (SHA256 verified)
         run: bash tests/upstream.sh
       - name: Real Nginx stream and TLS fixture

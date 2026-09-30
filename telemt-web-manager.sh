@@ -45,13 +45,27 @@ nginx_runtime_identity() {
 }
 
 process_identity() {
-    local pid uid caps
+    local pid uid gid caps
     pid=$(systemctl show telemt.service -p MainPID --value)
     [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
     uid=$(id -u telemt)
+    gid=$(id -g telemt)
     [[ $(awk '/^Uid:/ {print $2 ":" $3 ":" $4 ":" $5}' "/proc/$pid/status") == "$uid:$uid:$uid:$uid" ]] || return 1
+    [[ $(awk '/^Gid:/ {print $2 ":" $3 ":" $4 ":" $5}' "/proc/$pid/status") == "$gid:$gid:$gid:$gid" ]] || return 1
     caps=$(awk '/^CapEff:/ {print $2}' "/proc/$pid/status")
     [[ $caps == 0000000000001000 ]]
+}
+
+managed_permissions() {
+    local file mode
+    for file in "$BIN" "$CONFIG" "$UNIT" "$STATE" "$STATE/manifest.json" "$DATA" "$CONFIG_DIR"; do
+        [[ -e $file && ! -L $file && $(stat -c %u "$file") == 0 ]] || return 1
+        mode=$(stat -c %a "$file")
+        (( (8#$mode & 0022) == 0 )) || return 1
+    done
+    mode=$(stat -c %a "$CONFIG")
+    (( (8#$mode & 0007) == 0 )) || return 1
+    [[ $(stat -c %a "$STATE") == 700 ]]
 }
 
 atomic_copy() {
@@ -172,7 +186,7 @@ download_candidate() {
 
 binary_version() {
     local version
-    version=$("$1" --version 2>/dev/null) || return 1
+    version=$(timeout 10 "$1" --version 2>/dev/null) || return 1
     [[ $version =~ ^[Tt]elemt[[:space:]]([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
     printf '%s\n' "${BASH_REMATCH[1]}"
 }
@@ -380,6 +394,12 @@ ensure_certificate() {
     local cert="/etc/letsencrypt/live/$DOMAIN/fullchain.pem" key="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
     if [[ ! -e $cert || ! -e $key ]]; then
         [[ ! -d /etc/letsencrypt/live/$DOMAIN ]] || die 'Incomplete existing certificate; manual repair required'
+        if [[ -t 0 && -z ${EMAIL:-} ]]; then read -r -p 'ACME registration email: ' EMAIL; fi
+        if [[ -t 0 && ${AGREE_TOS:-0} != 1 ]]; then
+            local consent
+            read -r -p "Accept the current Let's Encrypt subscriber agreement? [y/N] " consent
+            if [[ $consent == y || $consent == Y ]]; then AGREE_TOS=1; fi
+        fi
         [[ -n ${EMAIL:-} ]] || die 'New certificate needs --email and --agree-tos'
         [[ ${AGREE_TOS:-0} == 1 ]] || die 'Use --agree-tos to accept ACME subscriber terms'
         [[ -z $(ss -H -ltn 'sport = :80') ]] || die 'Port 80 occupied; provision certificate using DNS-01 or existing webroot first'
@@ -481,6 +501,7 @@ install_manager() {
 
 load_installation() {
     [[ -f $STATE/manifest.json && ! -L $STATE/manifest.json ]] || die 'Unmanaged installation; automatic update/migration not possible; manual review required'
+    managed_permissions || die 'Unsafe managed ownership/permissions or symlink; manual review required'
     jq -e '.schema == 1' "$STATE/manifest.json" >/dev/null || die 'Unknown manifest schema'
     [[ $(systemctl show telemt.service -p FragmentPath --value) == "$UNIT" ]] || die 'Unexpected service unit'
     [[ -z $(systemctl show telemt.service -p DropInPaths --value) ]] || die 'Service drop-ins need manual review'
