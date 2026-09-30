@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 ROOT=$PWD
-# shellcheck source=../telemt-web-manager.sh
+# shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
 SANDBOX=$(mktemp -d)
 trap 'rm -rf -- "$SANDBOX"' EXIT

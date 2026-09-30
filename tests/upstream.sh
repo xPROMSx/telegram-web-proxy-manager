@@ -2,7 +2,7 @@
 # CI only. Verify published upstream binary before executing its config validator.
 set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
-# shellcheck source=../telemt-web-manager.sh
+# shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
 TMP=$(mktemp -d)
 trap 'rm -rf -- "$TMP"' EXIT
