@@ -1,43 +1,85 @@
-# telemt-web-manager
+# Telemt WEB Manager
 
-Консервативный Bash-менеджер Telemt WEB Proxy: установка, обновление с откатом,
-диагностика и ограниченное восстановление сервиса. Независимый open-source
-проект под MIT, **не часть upstream Telemt**.
+English | [Русский](README.ru.md)
 
-Версия менеджера: `0.1.0`. Исследованный upstream: **3.5.9**.
-Подробные источники и архитектурные решения: [docs/UPSTREAM.md](docs/UPSTREAM.md).
+A safety-oriented Bash manager for installing, updating, validating and repairing
+[Telemt](https://github.com/telemt/telemt) WEB Proxy deployments behind Nginx.
 
-## Поддерживаемая область
+Designed for VPS environments where port 443 may already be shared between
+multiple services through Nginx `stream` / `ssl_preread` SNI routing.
+An independent open-source project under MIT.
 
-- Ubuntu 24.04 / 26.04, Bash 5+, systemd; x86_64 и aarch64 (arm64).
-- Nginx с HTTP SSL, HTTP/2, realip, stream и ssl_preread modules.
-- Один распознаваемый SNI-router: IPv4 `:443` и optional существующий `[::]:443`,
-  `proxy_protocol on` уже включён. Проверена конфигурация обоих скриптов
-  `mozaroc/3x-ui-pro` на commit, указанном в upstream notes.
-- Отдельный TLS frontend `127.0.0.1:7444`, Telemt `127.0.0.1:18080`.
-- Python 3.11+ используется только для строгого разбора TOML/Nginx и диагностики;
-  внешние Python-пакеты не нужны. Оркестрация и транзакции написаны на Bash.
+Manager version: `0.1.0`. Audited upstream: **3.5.9**.
+Sources and decisions: [docs/UPSTREAM.md](docs/UPSTREAM.md).
+
+## Highlights
+
+- Interactive install, update, check and repair modes
+- Telemt WEB Proxy behind Nginx HTTPS
+- Optional SOCKS5 upstream routing
+- Safe integration with recognized existing SNI routing
+- Release integrity verification
+- Candidate configuration validation before update
+- Automatic rollback after failed updates
+- Bounded readiness checks instead of fixed startup delays
+- Conservative fail-closed behavior
+- systemd hardening with minimal required capabilities
+- Automated regression tests and GitHub Actions
+
+## Tested compatibility
+
+Tests cover complete sanitized configurations emitted by `x-ui-latest.sh` and
+`x-ui-patch.sh` from [`mozaroc/3x-ui-pro`](https://github.com/mozaroc/3x-ui-pro),
+revision `a2c430cd6dec7c86d873dcda3544a61e7ac41144`. The manager recognizes this
+Nginx `stream` / `ssl_preread` topology and adds Telemt without changing existing
+Xray or 3x-ui routing. CI uses real Nginx; installation, Certbot and systemd are
+mocked. Live VPS acceptance has not been performed. Compatibility is limited to
+the documented topology/revision, not arbitrary custom or future configurations.
+
+> Telemt WEB Manager is an independent project and is not affiliated with,
+> endorsed by, or part of Telemt, 3x-ui, or 3x-ui-pro.
+
+## What it does not do
+
+- Rewrite unknown Nginx topologies
+- Modify the 3x-ui database or Xray routing
+- Change firewall/UFW rules
+- Guess configuration migrations
+- Automatically adopt arbitrary existing Telemt installations
+- Suppress validation failures to complete installation
+
+## Supported scope
+
+- Ubuntu 24.04 / 26.04, Bash 5+, systemd; x86_64 and aarch64 (arm64).
+- Nginx with HTTP SSL, HTTP/2, realip, stream and ssl_preread modules.
+- One recognized SNI router on IPv4 `:443`, optionally with an existing `[::]:443`,
+  and outgoing `proxy_protocol on` already enabled. Both reviewed 3x-ui-pro
+  scripts are tested at the documented revision.
+- Dedicated TLS frontend `127.0.0.1:7444`; Telemt `127.0.0.1:18080`.
+- Python 3.11+ standard library for strict TOML/Nginx parsing, diagnostics,
+  bounded archive extraction and path checks. No external Python packages.
+  Bash handles orchestration and transactions.
 
 ```text
 Telegram WEB -> HTTPS :443 -> Nginx stream/SNI
              -> PROXY + TLS 127.0.0.1:7444
              -> HTTP/1.1 127.0.0.1:18080 -> Telemt
-             -> direct или SOCKS5 -> Telegram DC
+             -> direct or SOCKS5 -> Telegram DC
 ```
 
-Скрипт отказывает при неизвестной топологии, изменённом managed vhost, service
-drop-ins, TOML includes или неоднозначных адресах. Отказ не является разрешением
-упростить защиту или переписать существующий конфиг.
+Unknown topology, changed managed vhosts, service drop-ins, TOML includes and
+ambiguous addresses cause refusal. Do not weaken checks or rewrite configuration
+to bypass a refusal.
 
-## Получение и установка менеджера
+## Obtaining and installing the manager
 
-Работайте в root shell на тестовом VPS. `sudo` внутри менеджера не используется.
-Не запускайте код напрямую через `curl | bash`.
+Use a root shell on a test VPS. The manager never invokes `sudo`.
+Do not execute remote code through `curl | bash`.
 
 ```bash
 git clone https://github.com/xPROMSx/telemt-web-manager.git
 cd telemt-web-manager
-# До merge первая реализация находится в work/initial-telemt-manager.
+# Before merge, the implementation is in work/initial-telemt-manager.
 git switch work/initial-telemt-manager
 git log --oneline -5
 less telemt-web-manager.sh
@@ -45,19 +87,17 @@ less lib/safety.py
 bash -n telemt-web-manager.sh
 shellcheck telemt-web-manager.sh
 sha256sum telemt-web-manager.sh lib/safety.py
-# Если опубликованы контрольные суммы выбранного выпуска, сравните с ними.
-# Собственный sha256sum фиксирует скачанные байты, но не подтверждает автора.
+# Compare published checksums for the chosen release, if available.
+# A local hash records bytes; it does not authenticate the publisher.
 install -d -m 0755 /opt/telemt-web-manager/lib
 install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
 install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
 /opt/telemt-web-manager/telemt-web-manager.sh --help
 ```
 
-Не переносите только `.sh`: нужен соседний `lib/safety.py`. Каталог установленного
-менеджера должен принадлежать root и не быть доступен другим пользователям на запись.
-MIT LICENSE сохранена без изменений.
-
-Установите зависимости самостоятельно, не заменяя вслепую действующий Nginx:
+Copy both `.sh` and adjacent `lib/safety.py`. The installed directory must be
+root-owned and not writable by others. The original MIT LICENSE is unchanged.
+Install dependencies yourself without blindly replacing working Nginx:
 
 ```bash
 apt-get update
@@ -65,53 +105,53 @@ apt-get install bash python3 curl ca-certificates tar openssl jq dnsutils \
   util-linux iproute2 coreutils passwd certbot iptables nftables
 ```
 
-Для чистого Nginx пакет stream обычно предоставляется `libnginx-mod-stream`.
-Согласуйте установку модулей с текущим пакетом Nginx и проверьте `nginx -t`.
-Скрипт только проверяет зависимости, сам `apt` не запускает.
+Stream is usually supplied by `libnginx-mod-stream` on clean Nginx installations.
+Match modules to the installed package and run `nginx -t`.
+The manager checks dependencies; it does not run `apt`.
 
 ## Fresh install
 
-Перед установкой настройте DNS A на IPv4 сервера. Менеджер требует ровно один
-совпадающий A и отдельно запрашивает настоящую AAAA через DNS. CNAME, несколько A,
-AAAA и IPv4-mapped AAAA требуют ручной проверки. `getent` для определения AAAA
-не используется. В примерах ниже адрес TEST-NET и домен-заглушка: замените их.
+Point DNS A to the server IPv4. Exactly one matching A is required; real AAAA is
+queried separately through DNS. CNAME, multiple A, AAAA and mapped IPv4 AAAA
+require manual review. `getent` is not used for AAAA detection.
+The TEST-NET address and example hostname below are placeholders:
 
 ```bash
 /opt/telemt-web-manager/telemt-web-manager.sh --install \
   --domain proxy.example.com --public-ip 203.0.113.10
 ```
 
-Без аргументов открывается меню Install / Update / Check / Repair / Exit.
-Интерактивная установка спрашивает домен, публичный IPv4 и optional SOCKS.
-Без TTY недостающие параметры приводят к отказу, а не ожиданию ввода.
+Without arguments: Install / Update / Check / Repair / Exit menu. Interactive
+installation asks for domain, public IPv4 and optional SOCKS. Without a TTY,
+missing parameters cause refusal instead of waiting for input.
 
-Порядок: проверка DNS/портов/Nginx, план изменений, latest stable, загрузка и
-официальный SHA256, сертификат, backup, пользователь `telemt`, private config,
-candidate healthcheck, systemd, bounded readiness, Nginx validation/reload,
-локальный decoy, полный локальный SNI/TLS путь, публичный HTTPS и свежие логи.
+Sequence: DNS/ports/Nginx checks, plan, latest stable, download and official SHA256,
+certificate, backup, `telemt` account, private config, candidate healthcheck,
+systemd, bounded readiness, Nginx validation/reload, local decoy, complete local
+SNI/TLS path, public HTTPS and recent logs.
 
-Создаются:
-
-| Путь | Назначение |
+| Path | Purpose |
 | --- | --- |
-| `/usr/local/bin/telemt` | Проверенный upstream binary |
-| `/etc/telemt/telemt.toml` | root:telemt, 0640; API выключен |
+| `/usr/local/bin/telemt` | Verified upstream binary |
+| `/etc/telemt/telemt.toml` | root:telemt, 0640; API disabled |
 | `/etc/systemd/system/telemt.service` | Hardened unit |
 | `/var/lib/telemt/public/index.html` | Root-owned static decoy, 0440 |
-| `/var/lib/telemt/state/` | Единственный writable state directory сервиса |
-| `/var/lib/telemt-web-manager/manifest.json` | Root-only сведения о managed installation |
-| `/var/lib/telemt-web-manager/web-link.txt` | `tg://webproxy` ссылка, 0600 |
-| `/etc/nginx/conf.d/telemt-web-manager.conf` | Отдельный TLS frontend |
-| `/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager` | Validation/reload Nginx после успешного renewal |
+| `/var/lib/telemt/state/` | Service's only writable state directory |
+| `/var/lib/telemt-web-manager/manifest.json` | Root-only managed installation metadata |
+| `/var/lib/telemt-web-manager/web-link.txt` | `tg://webproxy` link, 0600 |
+| `/etc/nginx/conf.d/telemt-web-manager.conf` | Dedicated TLS frontend |
+| `/etc/nginx/conf.d/telemt-web-manager-acme.conf` | Persistent HTTP-01 vhost, webroot flow only |
+| `/var/lib/telemt-web-manager-acme/` | Root-owned ACME webroot and ownership marker, webroot flow only |
+| `/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager` | Nginx validation/reload after renewal |
 
-Secret генерируется `openssl rand -hex 16`. Менеджер не печатает его и сохраняет
-ссылку в private файл. Upstream link logging в journald остаётся разрешённым.
-Не публикуйте этот файл, конфигурацию, полные журналы или backups.
+`openssl rand -hex 16` generates the secret. The manager saves a private link file
+without printing the secret. Upstream link logging in journald remains enabled.
+Never publish the link file, config, complete journals or backups.
 
-## Требования к Nginx
+## Nginx requirements
 
-Менеджер разбирает дерево include-файлов, а не делает поиск/замену по regex.
-Распознаваемый пример stream-контекста:
+The manager parses the include tree rather than doing regex substitutions.
+Recognized stream example:
 
 ```nginx
 map $ssl_preread_server_name $sni_name {
@@ -132,154 +172,198 @@ server {
 }
 ```
 
-`http` должен непосредственно включать `conf.d/*.conf` (абсолютный или относительный
-путь). Поддерживаются один stream/map/router, точные SNI имена, default route,
-upstream selector и loopback frontend. Все существующие routes сохраняются.
-`hostnames;` допускается один раз перед значениями, но SNI entries всё равно
-должны быть точными именами. `set_real_ip_from unix:;` допускается только в
-указанном виде; входящий PROXY protocol на публичном listener не допускается.
-Общий HTTP snippet может включаться из нескольких vhosts. Обычные regex,
-экранирование и `${variable}` в существующих HTTP directives сохраняются;
-экранированные имена directives/include/listen и неоднозначный синтаксис отвергаются.
-Повторная установка не дублирует mapping/upstream/vhost. Новые include-файлы или
-изменение конфигов во время подготовки приводят к отказу.
+`http` must directly include `conf.d/*.conf` through an absolute or relative path.
+One stream/map/router, exact SNI names, default route, upstream selector and
+loopback frontend are supported. Each named stream upstream must contain one
+plain loopback server; extra stream context directives or upstream options are
+refused. Existing routes are preserved. Optional
+`hostnames;` may occur once before entries, which must still be exact names.
+Only the exact optional `set_real_ip_from unix:;` form is accepted; incoming PROXY
+protocol on public listeners is refused. Shared HTTP snippets may be included by
+several vhosts. Existing HTTP regex, escaping and `${variable}` forms are preserved;
+escaped directive/include/listen names and ambiguous syntax are refused.
+Re-running does not duplicate mapping/upstream/vhost. New includes or changes
+during staging cause refusal.
 
-Сложные regex/wildcard SNI maps, nested dynamic routing, несколько
-router-серверов, нестандартные listen flags/адреса, custom `nginx -c/-p`, занятые private-порты и
-direct HTTPS без stream-router в первой версии автоматически не настраиваются.
-Скрипт не превращает неизвестную схему в этот пример.
-Существующий `[::]:443` сохраняется, но IPv6 egress Telemt и новая AAAA-запись
-для WEB-домена по-прежнему не включаются автоматически.
+Regex/wildcard SNI maps, nested dynamic routing, multiple routers, unknown listen
+flags/addresses, custom `nginx -c/-p`, occupied private ports and direct HTTPS
+without a stream router are not automatically configured. Unknown setups are not
+converted into this example. Existing `[::]:443` is preserved; IPv6 Telemt egress
+and a new WEB-domain AAAA record are not enabled automatically.
 
-Frontend принимает PROXY только с loopback, формирует единственный X-Forwarded-For,
-использует HTTP/1.1 к Telemt, отключает buffering/retries, устанавливает 90s
-таймауты. Публичный HTTP/2 включён. Carrier фиксирован в `https`, поэтому WebSocket
-Upgrade не включается. Access log отключён; error log vhost направлен в `/dev/null`,
-чтобы URL с capability не попадали туда при ошибках. Это уменьшает детализацию
-диагностики, но защищает bearer credentials.
+The frontend trusts PROXY only from loopback, sends one canonical X-Forwarded-For
+over HTTP/1.1, disables buffering/retries and uses 90-second timeouts. Public HTTP/2
+is enabled. Carrier is `https`, so WebSocket Upgrade is not enabled. Access logging
+is disabled; the WEB vhost error log goes to `/dev/null` to keep capability URLs
+out of logs. This reduces diagnostics while protecting bearer credentials.
 
-## SOCKS5 и Telegram egress
+## SOCKS5 and Telegram egress
 
 ```bash
 /opt/telemt-web-manager/telemt-web-manager.sh --install \
   --domain proxy.example.com --public-ip 203.0.113.10 --socks 127.0.0.1:1080
 ```
 
-Проверяется SOCKS handshake и проверяемое HTTPS-соединение с `api.telegram.org`
-через SOCKS5h. Это проверка доступности Telegram, не доказательство географии
-выхода и не полная проверка всех DC. Cloudflare trace не используется.
-Xray/3x-ui не обязательны; их DB, конфиги, firewall и UFW менеджер не изменяет.
-SOCKS authentication и IPv6 upstream оставлены ручной настройкой с review.
+The SOCKS handshake and verified HTTPS connection to `api.telegram.org` use SOCKS5h.
+This checks Telegram reachability, not egress geography or every DC. Cloudflare
+trace is not used. Xray/3x-ui are optional; their database/configuration and
+firewall/UFW are untouched. SOCKS authentication and IPv6 upstream need manual review.
 
 ## TLS / Certbot
 
-Существующий сертификат ищется в `/etc/letsencrypt/live/DOMAIN/`. Проверяются
-hostname, срок более 7 дней и читаемость ключа; TLS trust проверяется HTTP probes.
-Для нового сертификата передайте `--email` и `--agree-tos`, явно принимая условия
-ACME. Поддержан standalone HTTP-01 **только при свободном порте 80**. Nginx не
-останавливается. Если порт занят, сначала получите cert через свой webroot/DNS-01.
+Existing certs are found in `/etc/letsencrypt/live/DOMAIN/`. Validation covers
+hostname, expiry beyond seven days, private key permissions, ownership, safe
+Certbot symlinks within archive/DOMAIN and matching public keys. HTTP probes check
+TLS trust. For new issuance, explicitly accept ACME terms with `--email` and `--agree-tos`.
 
-Проверьте внешнюю доступность 80/443 самостоятельно. Firewall не меняется.
-Новый cron/timer не создаётся. При отсутствии известного Certbot timer выдаётся
-предупреждение: проверьте существующий cron/расписание. Deploy hook запускает
-`nginx -t`, затем reload. Если в будущем порт 80 будет занят, измените renewal
-strategy вручную и проверьте `certbot renew --dry-run`.
+Free port 80 uses standalone HTTP-01 without stopping Nginx. If the port belongs
+to the same verified Nginx master/workers, webroot supports recognized HTTP
+redirect vhosts: `listen 80`, exact `server_name` values and
+`return 301 https://$host$request_uri`. Wildcard/regex names, custom HTTP routing,
+conflicting domains and unrelated processes cause refusal.
+Port-80 runtime/config disagreement also causes refusal, preventing pending
+Nginx configuration from invalidating a standalone renewal strategy.
 
-## Обновление и откат
+After backup, a separate managed vhost serves `/.well-known/acme-challenge/`
+from a root-owned webroot; other requests get 404. `nginx -t` and reload precede
+a local challenge-file probe. Certbot runs `certonly --webroot --webroot-path`,
+records renewal settings, then certificate and renewal contracts are checked.
+Failure/signals restore ACME changes and reload valid previous configuration;
+existing vhosts are untouched. Successful issuance commits the persistent
+vhost/webroot separately for renewal, even if later Telemt installation fails.
+Empty webroot directories may remain after failure; inspect backup/marker before retrying.
+
+Check external reachability of 80/443 yourself; firewall rules remain unchanged.
+No new cron/timer is created. Missing known Certbot timers trigger a warning to
+inspect existing scheduling. The deploy hook runs `nginx -t`, then reload.
+If a standalone certificate's port 80 later becomes occupied, change renewal
+strategy manually. After either flow run `certbot renew --dry-run` on a test VPS.
+CI does not perform real ACME issuance.
+
+## Updates and rollback
 
 ```bash
 /opt/telemt-web-manager/telemt-web-manager.sh --update
 ```
 
-Первый выпуск обновляет только распознанные manager-owned installations.
-Существующий чужой Telemt нельзя автоматически перехватить: unit/config/topology
-требуют review, даже если имя сервиса совпадает. Managed TOML можно редактировать,
-но supported WEB contract должен сохраняться; неизвестные includes/схемы отвергаются.
+Only recognized manager-owned installations are updated. Other existing Telemt
+installations require unit/config/topology review, even with the same service
+name. Managed TOML edits must retain the supported WEB/runtime contract;
+unknown includes/schemas are refused.
 
-При совпадении версии: `already up to date`, затем проверки состояния. Иначе:
-проверенный новый candidate выполняет `healthcheck` **текущего файла**, затем
-создаётся timestamped backup и бинарник атомарно заменяется. TOML сохраняется
-byte-for-byte; Nginx, cert и unit во время binary update не меняются.
-Автоматических TOML migrations нет. Ошибка validation останавливает обновление.
+Matching versions report `already up to date`, then check health. Otherwise the
+verified candidate runs `healthcheck` on the **current config** before backup,
+atomic binary replacement and restart. TOML stays byte-for-byte unchanged; binary
+updates do not modify Nginx, cert or unit. There are no automatic TOML migrations.
+Validation failure stops the update. Runtime/write-path auditing covers only 3.5.9:
+newer latest releases require source audit and an updated version gate even if
+their candidate might accept TOML. Older manager configs with quota outside
+`state` require manual review; updates do not add strict mode or rewrite paths.
+TOML hashes are checked before/after candidate healthcheck and before activation.
 
-После restart менеджер до 90 секунд опрашивает systemd и реальный listener,
-проверяет принадлежность порта PID Telemt, process UID/capabilities, decoy,
-локальный полный TLS путь, публичный HTTPS, SOCKS и свежие журналы. Ошибка
-возвращает старый binary и запускает старую версию. Если сам rollback неудачен,
-выдаётся CRITICAL с путём backup. Возврат бинарника не восстанавливает TCP sessions.
+After restart, readiness polls systemd and the real listener for up to 90 seconds.
+Checks cover listener PID ownership, UID/capabilities, decoy, full local TLS,
+public HTTPS, SOCKS and recent logs. Failure restores/restarts the old binary.
+Failed rollback emits CRITICAL and the backup path. TCP sessions are not restored.
 
-Backups находятся в `/root/telemt-backups/TIMESTAMP.RANDOM/`, каталог 0700.
-`files.tsv` сопоставляет номера копий и пути; `nginx-plan.json` хранит исходные
-изменяемые Nginx-файлы и снимок хешей include-файлов. `nginx-snapshot/` содержит
-копии полного прочитанного дерева конфигурации. Старые backups автоматически
-не удаляются. Каталог содержит private TOML: резервируйте его как секрет.
-SIGINT/TERM/HUP и обычные ошибки запускают rollback. SIGKILL, потеря питания и
-сбой диска не могут быть обработаны Bash trap; понадобится ручное восстановление.
+Backups: `/root/telemt-backups/TIMESTAMP.RANDOM/`, 0700. `files.tsv` maps indexes
+to destinations; `nginx-plan.json` records changed originals and include hashes;
+`nginx-snapshot/` holds the complete read config tree. Backups may contain private
+TOML and are never automatically deleted. SIGINT/TERM/HUP and ordinary failures
+trigger rollback. SIGKILL, power loss and disk failure require manual recovery.
 
-## Check и Repair
+## Check and repair
 
-`--check` не меняет managed files/services: показывает версии, systemd state,
-SubState/NRestarts, identity/capabilities, listener, результаты Nginx/HTTP/TLS,
-срок сертификата, SOCKS и сводку ошибок последних 5 минут. Исходные строки
-journald не печатаются. Для чтения system state требуются root-права; временные
-private файлы диагностики удаляются. При недоступности GitHub latest неизвестен,
-проверка завершается ненулевым кодом.
+`--check` leaves managed configuration/services unchanged. It reports versions,
+systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/TLS,
+expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
+lines are not printed. Root is required; private temporary diagnostics are deleted.
+Unavailable GitHub latest yields an unknown latest version and nonzero result.
 
-`--repair` сверяет ownership manifest, хеши unit/vhost, топологию и config
-healthcheck; делает backup, перезапускает Telemt и reload валидного Nginx.
-Повреждённые/изменённые конфиги не реконструируются по догадке. Cert renewal,
-неработающий Nginx и чужие unit/drop-ins требуют ручного review.
+Check safely creates/opens the common lock and takes shared flock, including the
+first invocation after reboot. Several checks may coexist; mutations take exclusive
+flock. Conflicts fail immediately. Symlink/FIFO/hardlink locks and unsafe permissions
+are refused. Lock/temp files are operational writes of read-only diagnostics.
+Managed webroot installs also verify persistent ACME vhost, marker and renewal settings.
 
-## Systemd и ограничения
+`--repair` checks manifest ownership, unit/vhost hashes, topology and config
+healthcheck; backs up; restarts Telemt and reloads valid Nginx. It does not guess
+how to reconstruct changed/damaged files. Cert renewal problems, inactive Nginx
+and foreign units/drop-ins need manual review.
 
-`User=telemt`, `Group=telemt`, только `CAP_NET_ADMIN`; `NoNewPrivileges`,
-`ProtectSystem=strict`, `ProtectHome`, private tmp/devices, защита kernel/control
-groups, ограничения address families, realtime/SUID/namespaces, W^X и personality.
-Ограничения: 65536 descriptors, 4096 tasks, MemoryMax=1G. Проверьте размер VPS
-и нагрузку перед production. Изменение unit вне менеджера требует ручного review.
+## Systemd and security
 
-CAP_NET_ADMIN оставлен из-за upstream conntrack cleanup даже в tracked mode.
-Известная ошибка missing-chain 3.5.9 классифицируется узко; все другие conntrack
-errors считаются failures. Подробности и ссылки приведены в upstream notes.
+`User=telemt`, `Group=telemt`, only `CAP_NET_ADMIN`; `NoNewPrivileges`,
+`ProtectSystem=strict`, `ProtectHome`, private tmp/devices, kernel/control-group
+protections, restricted address families/realtime/SUID/namespaces, W^X and personality.
+Limits: 65536 descriptors, 4096 tasks, MemoryMax=1G. Review VPS capacity/workload;
+external unit edits require review. CAP_NET_ADMIN remains for upstream conntrack
+cleanup even in tracked mode. The known 3.5.9 missing-chain warning is classified
+narrowly; other conntrack errors fail. Evidence is in upstream notes.
 
-## Тесты
+Fresh TOML sets `general.config_strict = true`, `data_path = /var/lib/telemt`.
+Active beobachten and quota state explicitly use `/var/lib/telemt/state`.
+Unknown-DC log (disabled), public-IP cache (unused by the reviewed probe),
+middle-proxy secret/config caches (middle proxy disabled) and TLS-front cache
+(emulation disabled) also point inside `state`. No file logging: stderr goes to
+journald. ReadWritePaths remains only `/var/lib/telemt/state`; decoy and remaining
+DATA are root-owned. Upstream notes contain the audit table; this is source review,
+not a VPS runtime persistence test.
+
+Positional-config ExecStart remains: upstream default Run is already foreground,
+without daemonization/PID file. systemd Type=simple controls the process directly;
+SIGTERM triggers graceful cleanup/quota save. TimeoutStopSec is 180s because
+individual firewall commands can wait 30s. Exceeding the deadline may still kill
+the process before persistence completes.
+
+## Tests
 
 ```bash
 for file in telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
 shellcheck -x telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
-bash tests/download.sh  # Подмена download, неверный digest, symlink, redaction
-bash tests/upstream.sh  # Интернет: официальный release asset и SHA256
-bash tests/nginx.sh     # Нужны nginx и libnginx-mod-stream; private test ports
-bash tests/three-x-ui.sh # Интернет + Nginx: полные конфиги двух upstream-скриптов
+bash tests/download.sh   # Mock download, bad digest, symlink, redaction
+bash tests/contracts.sh  # Strict config, writable paths, unit
+bash tests/locks.sh      # Shared/exclusive races, unsafe lock paths
+bash tests/acme.sh       # Certbot mocks, refusal, rollback, renewal/idempotence
+bash tests/upstream.sh   # Internet: official release asset and SHA256
+bash tests/nginx.sh      # nginx + libnginx-mod-stream; private ports
+bash tests/three-x-ui.sh  # Internet + Nginx: both full upstream configurations
 ```
 
-Тесты не используют production credentials. Fixtures используют TEST-NET и
-example.com. Secret генерируется только во временном окружении, не выводится.
-CI выполняется на Ubuntu 24.04, включая настоящий Nginx stream/PROXY/TLS frontend
-и проверку канонического X-Forwarded-For. Unit/fixture tests не подменяют live acceptance
-на Ubuntu 26.04, arm64 и целевых клиентах Telegram.
-Для 3x-ui-pro тест скачивает два скрипта с зафиксированного проверенного commit,
-сверяет Git blob hashes и извлекает Nginx heredocs с безопасными example values.
-Installer/patcher не исполняются. Проверяются full fresh-install orchestration
-с mocks, повторный запуск, byte-for-byte rollback всех configs и настоящий
-Nginx/TLS/PROXY/X-Forwarded-For по IPv4 и IPv6. Минимальная локальная fixture
-отдельно проверяет отказ на небезопасных вариантах и include cycles.
+Fixtures use TEST-NET/example.com, no production credentials. Secrets are generated
+only in temporary environments and never printed. Ubuntu 24.04 CI uses real Nginx
+stream/PROXY/TLS and canonical X-Forwarded-For. Fixtures do not replace live acceptance
+on Ubuntu 26.04, arm64 and Telegram clients.
 
-## Ручное восстановление и удаление
+Both 3x-ui-pro scripts are downloaded at the pinned commit, Git blob hashes checked,
+and Nginx heredocs rendered with inert values. Installer/patcher are never executed.
+Tests cover mocked full install, idempotence, byte-for-byte rollback and real
+Nginx/TLS/PROXY/XFF over IPv4/IPv6. Minimal fixtures cover unsafe variants/include
+cycles. Real Nginx checks ACME challenges/404 and preserved HTTP redirects. Python
+checks traversal/hardlink/symlink/duplicate archives and unsafe ancestors.
+Downloads/members are limited to 128 MiB; extraction timeout is 60s.
 
-Сначала сохраните private backup и откройте `files.tsv`. Остановите Telemt,
-восстановите нужный binary с владельцем root и executable mode; TOML восстанавливайте
-только осознанно из соответствующего backup (root:telemt, 0640). После восстановления
-unit выполните `systemctl daemon-reload`. Перед reload Nginx всегда `nginx -t`.
+Parsing/snapshot checks cannot exclude an external root editor: do not edit configs
+during installation. Symlink/write-permission checks protect against unprivileged
+substitution; the root administrator remains the trust boundary.
 
-Автоматического `--uninstall` нет. Для удаления сначала `systemctl disable --now
-telemt.service`, затем вручную удалите только созданные manager files, его точную
-SNI-строку и `twm_frontend` upstream, проверьте Nginx и reload. Не удаляйте чужие
-routes, certs, x-ui DB, firewall rules или backups. Удаление аккаунта `telemt`
-возможно только после проверки, что он больше ничем не используется.
+## Manual recovery and removal
 
-После неудачного fresh install учётная запись, пустые каталоги и выпущенный
-сертификат могут сохраняться намеренно. Менеджер не удаляет аккаунты/сертификаты
-автоматически; осмотрите остатки и backup перед повторной установкой.
+Save a private backup and inspect `files.tsv`. Stop Telemt; restore a root-owned
+executable binary. Restore TOML deliberately from the matching backup (root:telemt,
+0640). After unit restoration run `systemctl daemon-reload`. Always run `nginx -t`
+before reload.
+
+There is no automatic `--uninstall`. Run `systemctl disable --now telemt.service`,
+then manually remove only manager files, its exact SNI entry and `twm_frontend`.
+Validate/reload Nginx. Preserve unrelated routes, certs, x-ui DB, firewall and backups.
+Remove the `telemt` account only after confirming nothing else uses it.
+If the certificate is still needed, retain persistent ACME vhost/webroot/hook or
+first move renewal to another strategy. Removing them can break renewal;
+certificates are not automatically deleted.
+
+Failed fresh installs can intentionally leave accounts, empty directories and
+issued certificates. Accounts/certs are never automatically removed; inspect
+leftovers and backups before retrying.
