@@ -1,0 +1,20 @@
+name: checks
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+      - name: Bash syntax
+        run: bash -n telemt-web-manager.sh tests/run.sh
+      - name: ShellCheck
+        run: shellcheck telemt-web-manager.sh tests/run.sh
+      - name: Unit and fixture tests (no root, no production access)
+        run: bash tests/run.sh
