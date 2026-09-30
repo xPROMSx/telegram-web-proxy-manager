@@ -429,13 +429,15 @@ prompt_install() {
 }
 
 install_manager() {
-    [[ -n $DOMAIN && -n $PUBLIC_IP ]] || prompt_install
     if [[ -f $STATE/manifest.json ]]; then
+        local requested_domain=$DOMAIN
         load_installation
+        [[ -z $requested_domain || $requested_domain == "$DOMAIN" ]] || die 'Different domain requested; manual review required'
         say 'Already installed; checking without rewriting configuration.'
         path_health
         return
     fi
+    [[ -n $DOMAIN && -n $PUBLIC_IP ]] || prompt_install
     local path secret since
     for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$STATE" "$RENEW_HOOK"; do
         [[ ! -e $path && ! -L $path ]] || die 'Existing Telemt files found; automatic adoption not possible; manual review required'

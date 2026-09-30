@@ -37,6 +37,8 @@ set -e
 [[ $result != 0 && ! -e $SANDBOX/executed ]]
 printf 'ok - digest mismatch and symlink archive never execute; valid digest passes\n'
 
+# SC2016: preserve positional arguments for the generated candidate stub.
+# shellcheck disable=SC2016
 printf '#!/bin/sh\ncat "$2" >&2\nexit 1\n' >"$SANDBOX/reject"
 chmod 0755 "$SANDBOX/reject"
 secret=$(openssl rand -hex 16)
