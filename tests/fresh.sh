@@ -28,6 +28,21 @@ nginx_reload() { return 0; }
 nginx_runtime_identity() { return 0; }
 managed_permissions() { return 0; } # Fixture runs as the CI user, not root.
 ensure_certificate() { return 0; }
+if [[ -f $NGINX_ROOT/sites-enabled/80.conf ]]; then
+    # Exercise ACME -> WEB replan -> manifest -> idempotent load as one install.
+    # Issuance and challenge reachability are mocked; tests/acme.sh validates
+    # certificates and tests/nginx.sh serves real challenge requests separately.
+    ACME_ROOT="$SANDBOX/acme" CERT_ROOT="$SANDBOX/certs"
+    EMAIL=operator@example.com
+    validate_certificate() { return 0; }
+    acme_probe() { return 0; }
+    certbot() {
+        mkdir -p "$CERT_ROOT/renewal"
+        printf '[renewalparams]\nauthenticator = webroot\nwebroot_path = %s,\n' \
+            "$ACME_ROOT" >"$CERT_ROOT/renewal/$DOMAIN.conf"
+    }
+    ensure_certificate() { issue_webroot_certificate; nginx_plan; }
+fi
 fetch_release() { RELEASE=3.5.9; }
 download_candidate() { CANDIDATE="$TMP/candidate"; printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; chmod 0755 "$CANDIDATE"; }
 getent() { return 2; }
