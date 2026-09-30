@@ -13,8 +13,10 @@ BACKUP_ROOT="$SANDBOX/backups" NGINX_ROOT="$SANDBOX/nginx" TMP="$SANDBOX/tmp"
 RENEW_HOOK="$SANDBOX/hooks/deploy/telemt-web-manager"
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 mkdir "$TMP"
-cp -r "$ROOT/tests/fixtures/nginx" "$NGINX_ROOT"
-mkdir "$NGINX_ROOT/conf.d"
+cp -r "${1:-$ROOT/tests/fixtures/nginx}" "$NGINX_ROOT"
+mkdir -p "$NGINX_ROOT/conf.d"
+stream_file="$NGINX_ROOT/stream.conf"
+if [[ -f $NGINX_ROOT/stream-enabled/stream.conf ]]; then stream_file="$NGINX_ROOT/stream-enabled/stream.conf"; fi
 systemctl() {
     if [[ $* == *FragmentPath* && -f $UNIT ]]; then printf '%s\n' "$UNIT"; fi
     return 0
@@ -50,7 +52,7 @@ import pathlib, sys, tomllib
 c = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
 assert c['access']['users']['web-user'] not in pathlib.Path(sys.argv[2]).read_text()
 PY
-before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$NGINX_ROOT/stream.conf")
+before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file")
 install_manager >"$SANDBOX/rerun.log" 2>&1
-[[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$NGINX_ROOT/stream.conf") == "$before" ]]
+[[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file") == "$before" ]]
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'

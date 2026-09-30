@@ -108,5 +108,101 @@ class SafetyTests(unittest.TestCase):
                 s.domain(host)
 
 
+class ThreeXTopologyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "nginx"
+        shutil.copytree(ROOT / "tests/fixtures/nginx-3x-ui", self.root)
+        (self.root / "conf.d").mkdir()
+        self.plan = Path(self.temp.name) / "plan.json"
+        self.stream = self.root / "stream-enabled/stream.conf"
+
+    def snapshot(self):
+        return {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+
+    def plan_nginx(self):
+        s.nginx_plan(self.root, "proxy.example.com", self.plan)
+        return json.loads(self.plan.read_text())
+
+    def test_production_layout_preserves_routes_and_shared_http_files(self):
+        before = self.snapshot()
+        plan = self.plan_nginx()
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual({x['path'] for x in plan['edits']},
+                         {str(self.stream.resolve()), str(self.root / 'conf.d/telemt-web-manager.conf')})
+        for edit in plan['edits']:
+            Path(edit['path']).write_text(edit['content'])
+        after = self.stream.read_text()
+        mapping = "    proxy.example.com twm_frontend; # telemt-web-manager\n"
+        upstream = "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n"
+        self.assertEqual(after.replace(mapping, '').replace(upstream, ''),
+                         before[str(self.stream)].decode())
+        for path, content in before.items():
+            if path != str(self.stream):
+                self.assertEqual(Path(path).read_bytes(), content)
+        self.assertEqual(self.plan_nginx()['edits'], [])
+
+    def test_unsafe_variants_refused_without_writes(self):
+        original = self.stream.read_text()
+        replacements = (
+            ('hostnames;', 'hostnames; hostnames;'),
+            ('hostnames;', 'hostnames extra;'),
+            ('panel.example.com      www;', 'panel.example.com      www; hostnames;'),
+            ('panel.example.com', '*.example.com'),
+            ('panel.example.com', '.example.com'),
+            ('panel.example.com', '~.*example.com'),
+            ('set_real_ip_from unix:;', 'set_real_ip_from 0.0.0.0/0;'),
+            ('set_real_ip_from unix:;', 'set_real_ip_from unix:; set_real_ip_from 127.0.0.1;'),
+            ('listen     [::]:443;', 'listen [::]:443 proxy_protocol;'),
+            ('listen     [::]:443;', 'listen [::]:443; listen [::]:443;'),
+            ('listen     [::]:443;', 'listen [2001:db8::1]:443;'),
+            ('listen     443;', 'listen 443 proxy_protocol;'),
+            ('proxy_protocol on;', 'proxy_protocol off;'),
+            ('proxy_protocol on;', 'proxy_protocol on; proxy_protocol off;'),
+            ('ssl_preread on;', 'ssl_preread on; ssl_preread off;'),
+            ('proxy_pass $sni_name;', 'proxy_pass $unknown;'),
+            ('listen     443;', r'listen \443;'),
+        )
+        for old, new in replacements:
+            with self.subTest(new=new):
+                self.stream.write_text(original.replace(old, new))
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    self.plan_nginx()
+                self.assertEqual(before, self.snapshot())
+
+    def test_cycles_still_refused(self):
+        path = self.root / 'snippets/includes.conf'
+        path.write_text('include snippets/includes.conf;')
+        with self.assertRaises(ValueError):
+            self.plan_nginx()
+
+    def test_escaped_include_is_refused(self):
+        path = self.root / 'sites-enabled/other.conf'
+        path.write_text(r'include snippets/\*.conf;')
+        before = self.snapshot()
+        with self.assertRaises(ValueError):
+            self.plan_nginx()
+        self.assertEqual(before, self.snapshot())
+
+    def test_escaped_http_cannot_hide_competing_listen(self):
+        path = self.root / 'sites-enabled/other.conf'
+        for directive in ('listen 443 ssl;', r'listen \443 ssl;', r'\listen 443 ssl;'):
+            with self.subTest(directive=directive):
+                path.write_text('server { ' + directive + ' }')
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    self.plan_nginx()
+                self.assertEqual(before, self.snapshot())
+
+    def test_malformed_quotes_are_refused(self):
+        path = self.root / 'sites-enabled/other.conf'
+        for text in ('server { set $x "unterminated; }', 'server { set $x "a"hidden; }'):
+            path.write_text(text)
+            with self.assertRaises(ValueError):
+                self.plan_nginx()
+
+
 if __name__ == "__main__":
     unittest.main()

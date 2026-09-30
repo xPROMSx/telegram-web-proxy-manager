@@ -56,31 +56,26 @@ class Nginx:
         self.root = Path(root).resolve()
         self.sources = {}
         self.stack = []
+        self.reads = 0
 
     def read(self, path):
         path = Path(path).resolve()
         require(not any(c in str(path) for c in "\t\r\n"), "unsupported Nginx filename")
         external_module = path.is_relative_to(Path("/usr/share/nginx/modules-available"))
         require(path.is_relative_to(self.root) or external_module, "Nginx include escapes config directory")
-        require(path not in self.stack and path not in self.sources,
-                "repeated or cyclic Nginx include")
+        # A shared HTTP snippet can be included by several vhosts. Only an
+        # active recursion is a cycle; each inclusion gets its own AST nodes.
+        self.reads += 1
+        require(path not in self.stack and self.reads <= 256 and len(self.stack) < 32,
+                "cyclic or excessive Nginx includes")
         self.stack.append(path)
         source = path.read_bytes().decode("utf-8")
-        require("\\" not in source, "escaped Nginx syntax needs manual review")
+        require(len(source) <= 1024 * 1024, "Nginx source exceeds parser limit")
         self.sources[path] = source
-        pattern = r'''\s+|\#[^\n]*|"[^"\n]*"|'[^'\n]*'|[{};]|[^\s{};"'\#]+'''
-        tokens = []
-        end = 0
-        for match in re.finditer(pattern, source):
-            require(match.start() == end)
-            end = match.end()
-            token = match.group()
-            if not token.isspace() and not token.startswith("#"):
-                tokens.append((token, match.start()))
-        require(end == len(source))
+        tokens = nginx_tokens(source)
         position = 0
 
-        def parse(nested=False):
+        def parse(nested=False, map_values=False):
             nonlocal position
             nodes = []
             while position < len(tokens):
@@ -96,16 +91,20 @@ class Nginx:
                     args.append(token[1:-1] if token.startswith(('"', "'")) else token)
                     position += 1
                 require(args and position < len(tokens))
+                if not map_values:
+                    require(re.fullmatch(r"[a-zA-Z_][a-zA-Z_0-9]*", args[0]),
+                            "escaped or unknown Nginx directive name")
                 terminator, close = tokens[position]
                 position += 1
                 require(terminator != "}")
                 children = None
                 if terminator == "{":
-                    children, close = parse(True)
+                    children, close = parse(True, args[0] == "map")
                 node = Node(args, children, path, start, close)
                 nodes.append(node)
                 if args[0] == "include":
-                    require(children is None and len(args) == 2 and "$" not in args[1])
+                    require(children is None and len(args) == 2
+                            and not any(c in args[1] for c in "$\\"))
                     include = Path(args[1])
                     if not include.is_absolute():
                         include = self.root / include
@@ -143,6 +142,64 @@ def exact(nodes, key):
     return [n for n in expand(nodes) if n.args[0] == key]
 
 
+def nginx_tokens(source):
+    """Track syntax boundaries without interpreting regex/escape expressions.
+
+    Preserve escaped pairs in token values: critical routing directives below
+    accept only exact literals. Quotes, escaped delimiters and ${variables} in
+    unrelated HTTP directives cannot manufacture a block or hide a listener.
+    """
+    tokens = []
+    i = 0
+    while i < len(source):
+        if source[i].isspace():
+            i += 1
+            continue
+        if source[i] == "#":
+            end = source.find("\n", i)
+            i = len(source) if end < 0 else end + 1
+            continue
+        start = i
+        if source[i] in "{};":
+            tokens.append((source[i], i))
+            i += 1
+            continue
+        chars = []
+        quote = source[i] if source[i] in "\"'" else None
+        if quote:
+            chars.append(quote)
+            i += 1
+        closed = not quote
+        while i < len(source):
+            c = source[i]
+            if c == "\\":
+                require(i + 1 < len(source), "incomplete Nginx escape")
+                chars.append(source[i:i + 2])
+                i += 2
+            elif quote and c == quote:
+                chars.append(c)
+                i += 1
+                closed = True
+                break
+            elif not quote and source.startswith("${", i):
+                variable = re.match(r"\$\{[a-zA-Z_][a-zA-Z_0-9]*\}", source[i:])
+                require(variable is not None, "unsupported Nginx variable syntax")
+                chars.append(variable.group())
+                i += len(variable.group())
+            elif not quote and (c.isspace() or c in "{};#"):
+                break
+            else:
+                require(quote or c not in "\"'", "mixed Nginx quote syntax")
+                chars.append(c)
+                i += 1
+        require(closed and chars, "unterminated Nginx token")
+        if quote:
+            require(i == len(source) or source[i].isspace() or source[i] in ";{}#)",
+                    "concatenated Nginx tokens")
+        tokens.append(("".join(chars), start))
+    return tokens
+
+
 def nginx_plan(root, host, output):
     domain(host)
     parser = Nginx(root)
@@ -158,19 +215,34 @@ def nginx_plan(root, host, output):
             and re.fullmatch(r"\$[a-zA-Z_][a-zA-Z_0-9]*", mapping.args[2]))
     directives = [n.args for n in expand(router.children)]
     allowed = {"listen", "proxy_pass", "ssl_preread", "proxy_protocol", "proxy_timeout",
-               "proxy_connect_timeout", "access_log", "error_log", "tcp_nodelay"}
-    require(all(d[0] in allowed for d in directives))
+               "proxy_connect_timeout", "access_log", "error_log", "tcp_nodelay",
+               "set_real_ip_from"}
+    require(all(d[0] in allowed for d in directives)
+            and all(n.children is None for n in expand(router.children)))
+    trusted = [d for d in directives if d[0] == "set_real_ip_from"]
+    require(trusted in ([], [["set_real_ip_from", "unix:"]]),
+            "unexpected stream PROXY trust boundary")
     for required in (["ssl_preread", "on"], ["proxy_protocol", "on"],
                      ["proxy_pass", mapping.args[2]]):
-        require(directives.count(required) == 1)
+        require([d for d in directives if d[0] == required[0]] == [required])
     listens = [d[1:] for d in directives if d[0] == "listen"]
-    require(listens == [["443"]] or listens == [["0.0.0.0:443"]])
+    # Existing IPv6 ingress does not enable IPv6 Telemt egress or permit an AAAA
+    # record for the new WEB hostname. Never edit these existing listen lines.
+    require(len(listens) in (1, 2) and len({tuple(x) for x in listens}) == len(listens))
+    require(sum(x in (["443"], ["0.0.0.0:443"]) for x in listens) == 1)
+    require(all(x in (["443"], ["0.0.0.0:443"], ["[::]:443"]) for x in listens))
     entries = list(expand(mapping.children))
+    hostname_flags = [n for n in entries if n.args[0] == "hostnames"]
+    require(not hostname_flags or (len(hostname_flags) == 1 and entries[0] == hostname_flags[0]
+                                   and hostname_flags[0].args == ["hostnames"]
+                                   and hostname_flags[0].children is None))
+    entries = [n for n in entries if n.args[0] != "hostnames"]
     require(sum(n.args[0] == "default" for n in entries) == 1)
     require(len({n.args[0] for n in entries}) == len(entries))
     for n in entries:
         require(n.children is None and len(n.args) == 2)
-        require(n.args[0] == "default" or re.fullmatch(r"[a-z0-9.-]+", n.args[0]))
+        if n.args[0] != "default":
+            domain(n.args[0]) # Exact names only, even with the hostnames flag.
         require(re.fullmatch(r"[A-Za-z0-9_.:-]+", n.args[1]))
     upstreams = exact(stream.children, "upstream")
     owned = [n for n in upstreams if n.args == ["upstream", "twm_frontend"]]
@@ -187,7 +259,12 @@ def nginx_plan(root, host, output):
         if n.args[0] == "server_name":
             require(host not in n.args[1:])
         if n.args[0] == "listen" and n not in exact(router.children, "listen"):
-            require(not any(re.search(r"(?:^|:)(443|7444|18080)$", a) for a in n.args[1:]))
+            require(len(n.args) >= 2)
+            address = n.args[1]
+            require(re.fullmatch(r"[0-9]+|[0-9.]+:[0-9]+|\[[0-9a-fA-F:]+\]:[0-9]+|unix:/[^\s\\$]+", address),
+                    "ambiguous Nginx listen address")
+            if not address.startswith("unix:"):
+                require(int(address.rsplit(":", 1)[-1]) not in (443, 7444, 18080))
     edits = {}
     if existing or owned or vhost.exists():
         require(len(existing) == len(owned) == 1 and vhost.exists())

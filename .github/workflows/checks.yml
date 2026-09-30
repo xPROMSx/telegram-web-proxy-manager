@@ -24,3 +24,5 @@ jobs:
         run: bash tests/upstream.sh
       - name: Real Nginx stream and TLS fixture
         run: bash tests/nginx.sh
+      - name: Current reviewed 3x-ui-pro installer and patcher topologies
+        run: bash tests/three-x-ui.sh
