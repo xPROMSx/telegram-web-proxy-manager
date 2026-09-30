@@ -492,14 +492,15 @@ acme_probe() {
     return "$code"
 }
 
-issue_webroot_certificate() (
+issue_webroot_certificate() {
+    local parent_tmp=$TMP
+    local TMP
+    TMP=$(mktemp -d "$parent_tmp/acme.XXXXXXXX")
+    (
     # Separate transaction: successful issuance keeps the renewal vhost even if
     # a later Telemt installation fails. Failure restores only ACME mutations.
     CERT_ONLY=1 INSTALLING=1 PLAN_MODE=acme
     CHANGED=() ORIGINAL=()
-    local parent_tmp=$TMP
-    local TMP
-    TMP=$(mktemp -d "$parent_tmp/acme.XXXXXXXX")
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
@@ -527,7 +528,8 @@ issue_webroot_certificate() (
     validate_certificate
     helper renewal-contract "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT" || die 'Certbot renewal webroot was not recorded as expected'
     ARMED=0
-)
+    )
+}
 
 prompt_install() {
     [[ -t 0 ]] || die 'Non-interactive install requires --domain and --public-ip (see --help)'
