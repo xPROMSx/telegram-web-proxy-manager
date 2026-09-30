@@ -11,7 +11,9 @@
 
 - Ubuntu 24.04 / 26.04, Bash 5+, systemd; x86_64 и aarch64 (arm64).
 - Nginx с HTTP SSL, HTTP/2, realip, stream и ssl_preread modules.
-- Один распознаваемый IPv4 SNI-router на `:443`, `proxy_protocol on` уже включён.
+- Один распознаваемый SNI-router: IPv4 `:443` и optional существующий `[::]:443`,
+  `proxy_protocol on` уже включён. Проверена конфигурация обоих скриптов
+  `mozaroc/3x-ui-pro` на commit, указанном в upstream notes.
 - Отдельный TLS frontend `127.0.0.1:7444`, Telemt `127.0.0.1:18080`.
 - Python 3.11+ используется только для строгого разбора TOML/Nginx и диагностики;
   внешние Python-пакеты не нужны. Оркестрация и транзакции написаны на Bash.
@@ -112,30 +114,42 @@ Secret генерируется `openssl rand -hex 16`. Менеджер не п
 Распознаваемый пример stream-контекста:
 
 ```nginx
-map $ssl_preread_server_name $backend {
-    panel.example.com panel;
+map $ssl_preread_server_name $sni_name {
+    hostnames;
+    panel.example.com www;
+    reality.example.com xray;
     default xray;
 }
-upstream panel { server 127.0.0.1:8443; }
-upstream xray { server 127.0.0.1:9443; }
+upstream xray { server 127.0.0.1:8443; }
+upstream www { server 127.0.0.1:7443; }
 server {
-    listen 443;
-    ssl_preread on;
     proxy_protocol on;
-    proxy_pass $backend;
+    set_real_ip_from unix:;
+    listen 443;
+    listen [::]:443;
+    proxy_pass $sni_name;
+    ssl_preread on;
 }
 ```
 
 `http` должен непосредственно включать `conf.d/*.conf` (абсолютный или относительный
 путь). Поддерживаются один stream/map/router, точные SNI имена, default route,
 upstream selector и loopback frontend. Все существующие routes сохраняются.
+`hostnames;` допускается один раз перед значениями, но SNI entries всё равно
+должны быть точными именами. `set_real_ip_from unix:;` допускается только в
+указанном виде; входящий PROXY protocol на публичном listener не допускается.
+Общий HTTP snippet может включаться из нескольких vhosts. Обычные regex,
+экранирование и `${variable}` в существующих HTTP directives сохраняются;
+экранированные имена directives/include/listen и неоднозначный синтаксис отвергаются.
 Повторная установка не дублирует mapping/upstream/vhost. Новые include-файлы или
 изменение конфигов во время подготовки приводят к отказу.
 
-Сложные regex/wildcard maps, escape-синтаксис, nested dynamic routing, несколько
-router-серверов, IPv6 ingress, custom `nginx -c/-p`, занятые private-порты и
+Сложные regex/wildcard SNI maps, nested dynamic routing, несколько
+router-серверов, нестандартные listen flags/адреса, custom `nginx -c/-p`, занятые private-порты и
 direct HTTPS без stream-router в первой версии автоматически не настраиваются.
 Скрипт не превращает неизвестную схему в этот пример.
+Существующий `[::]:443` сохраняется, но IPv6 egress Telemt и новая AAAA-запись
+для WEB-домена по-прежнему не включаются автоматически.
 
 Frontend принимает PROXY только с loopback, формирует единственный X-Forwarded-For,
 использует HTTP/1.1 к Telemt, отключает buffering/retries, устанавливает 90s
@@ -238,6 +252,7 @@ bash tests/fresh.sh
 bash tests/download.sh  # Подмена download, неверный digest, symlink, redaction
 bash tests/upstream.sh  # Интернет: официальный release asset и SHA256
 bash tests/nginx.sh     # Нужны nginx и libnginx-mod-stream; private test ports
+bash tests/three-x-ui.sh # Интернет + Nginx: полные конфиги двух upstream-скриптов
 ```
 
 Тесты не используют production credentials. Fixtures используют TEST-NET и
@@ -245,6 +260,12 @@ example.com. Secret генерируется только во временно�
 CI выполняется на Ubuntu 24.04, включая настоящий Nginx stream/PROXY/TLS frontend
 и проверку канонического X-Forwarded-For. Unit/fixture tests не подменяют live acceptance
 на Ubuntu 26.04, arm64 и целевых клиентах Telegram.
+Для 3x-ui-pro тест скачивает два скрипта с зафиксированного проверенного commit,
+сверяет Git blob hashes и извлекает Nginx heredocs с безопасными example values.
+Installer/patcher не исполняются. Проверяются full fresh-install orchestration
+с mocks, повторный запуск, byte-for-byte rollback всех configs и настоящий
+Nginx/TLS/PROXY/X-Forwarded-For по IPv4 и IPv6. Минимальная локальная fixture
+отдельно проверяет отказ на небезопасных вариантах и include cycles.
 
 ## Ручное восстановление и удаление
 

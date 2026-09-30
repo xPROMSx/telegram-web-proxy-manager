@@ -60,6 +60,39 @@ Fresh install запрашивает latest при каждом запуске, 
 обновить version gate и contract test. Binary update допускает новый stable после
 проверки его healthcheck на неизменном текущем TOML и последующих runtime-проб.
 
+## Повторная проверка 3x-ui-pro
+
+30 сентября 2026 повторно проверены latest stable Telemt (по-прежнему 3.5.9),
+его main (тот же commit выше, missing-chain bug не исправлен) и текущий main
+`mozaroc/3x-ui-pro`: `a2c430cd6dec7c86d873dcda3544a61e7ac41144`.
+
+- [x-ui-latest.sh, строки 289-307](https://github.com/mozaroc/3x-ui-pro/blob/a2c430cd6dec7c86d873dcda3544a61e7ac41144/x-ui-latest.sh#L289-L307),
+  Git blob `671ca1e17b0162493b05cf3086968d1b43b5547f`.
+- [x-ui-patch.sh, строки 213-231](https://github.com/mozaroc/3x-ui-pro/blob/a2c430cd6dec7c86d873dcda3544a61e7ac41144/x-ui-patch.sh#L213-L231),
+  Git blob `dc506e80e371c7768177881fd0b3b7676c55bf3f`.
+
+Оба создают один `$sni_name` map с `hostnames;`, xray/www upstreams и один
+router с `set_real_ip_from unix:;`, `listen 443;`, `listen [::]:443;`, исходящим
+`proxy_protocol on;` и `ssl_preread on;`. HTTP vhosts повторно включают общий
+`snippets/includes.conf`, содержащий экранированные regex и `${safe}`.
+Именно эти формы первая версия отвергала. Исправление сохраняет existing routes,
+default, listens, trust directive и все HTTP файлы; добавляет только mapping,
+managed upstream и отдельный vhost.
+
+По [Nginx stream map](https://nginx.org/en/docs/stream/ngx_stream_map_module.html)
+`hostnames;` должен находиться перед значениями. Менеджер принимает этот flag,
+но намеренно отвергает wildcard/regex SNI. По
+[Nginx stream realip](https://nginx.org/en/docs/stream/ngx_stream_realip_module.html)
+`unix:` обозначает UNIX sockets; получение PROXY header требует отдельного
+`listen ... proxy_protocol`. Публичные listens здесь такого flag не имеют.
+Менеджер сохраняет точный существующий trust directive, не расширяет его и
+по-прежнему отказывает на входящем PROXY protocol на публичном порту.
+
+Тесты формируют все шесть Nginx heredocs каждого pinned скрипта без выполнения
+shell-кода upstream. Изменения тестовых ports/cert paths изолируют настоящий
+Nginx от системной конфигурации CI. Это проверка совместимости с указанными
+исходниками, а не обещание принимать любые будущие изменения 3x-ui-pro.
+
 ## Границы доказательств
 
 CI проверяет конфигурацию настоящим скачанным и проверенным бинарником 3.5.9.
