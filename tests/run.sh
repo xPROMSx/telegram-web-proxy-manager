@@ -102,7 +102,7 @@ BIN="$SANDBOX/rollback-bin" CONFIG="$SANDBOX/rollback-config" UNIT="$SANDBOX/uni
 BACKUP_ROOT="$SANDBOX/backups" TMP="$SANDBOX/update-tmp"
 mkdir "$TMP"
 printf old >"$BIN"; printf original >"$CONFIG"; printf unit >"$UNIT"
-printf "{}" >"$TMP/nginx-plan.json"
+printf "{\"snapshot\":{}}" >"$TMP/nginx-plan.json"
 CANDIDATE="$SANDBOX/new-bin"; printf new >"$CANDIDATE"
 RELEASE=3.6.0
 candidate_healthcheck() { return 0; }

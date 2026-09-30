@@ -196,7 +196,8 @@ byte-for-byte; Nginx, cert и unit во время binary update не меняю
 
 Backups находятся в `/root/telemt-backups/TIMESTAMP.RANDOM/`, каталог 0700.
 `files.tsv` сопоставляет номера копий и пути; `nginx-plan.json` хранит исходные
-изменяемые Nginx-файлы и снимок хешей include-файлов. Старые backups автоматически
+изменяемые Nginx-файлы и снимок хешей include-файлов. `nginx-snapshot/` содержит
+копии полного прочитанного дерева конфигурации. Старые backups автоматически
 не удаляются. Каталог содержит private TOML: резервируйте его как секрет.
 SIGINT/TERM/HUP и обычные ошибки запускают rollback. SIGKILL, потеря питания и
 сбой диска не могут быть обработаны Bash trap; понадобится ручное восстановление.
@@ -235,11 +236,13 @@ shellcheck -x telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
 bash tests/upstream.sh  # Интернет: официальный release asset и SHA256
+bash tests/nginx.sh     # Нужны nginx и libnginx-mod-stream; private test ports
 ```
 
 Тесты не используют production credentials. Fixtures используют TEST-NET и
 example.com. Secret генерируется только во временном окружении, не выводится.
-CI выполняется на Ubuntu 24.04. Unit/fixture tests не подменяют live acceptance
+CI выполняется на Ubuntu 24.04, включая настоящий Nginx stream/PROXY/TLS frontend
+и проверку канонического X-Forwarded-For. Unit/fixture tests не подменяют live acceptance
 на Ubuntu 26.04, arm64 и целевых клиентах Telegram.
 
 ## Ручное восстановление и удаление

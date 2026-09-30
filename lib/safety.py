@@ -59,6 +59,7 @@ class Nginx:
 
     def read(self, path):
         path = Path(path).resolve()
+        require(not any(c in str(path) for c in "\t\r\n"), "unsupported Nginx filename")
         external_module = path.is_relative_to(Path("/usr/share/nginx/modules-available"))
         require(path.is_relative_to(self.root) or external_module, "Nginx include escapes config directory")
         require(path not in self.stack and path not in self.sources,

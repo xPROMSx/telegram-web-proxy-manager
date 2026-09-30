@@ -35,7 +35,9 @@ Telemt 3.5.9, Ubuntu 26.04, `iptables --version` с `nf_tables`, уровень 
 FakeTLS masking/emulation отключены явно, потому что этот профиль обслуживает
 только WEB и собственный static decoy. Middle proxy отключён, Telegram TCP egress
 идёт через выбранный direct/SOCKS upstream. Поля пользовательского TOML при
-обновлении не меняются.
+обновлении не меняются. `general.beobachten_file` направлен в writable
+`/var/lib/telemt/state/beobachten.txt`: upstream default `cache/beobachten.txt`
+несовместим с root-owned рабочим каталогом hardened unit.
 
 ## Релиз и целостность
 
@@ -61,7 +63,8 @@ Fresh install запрашивает latest при каждом запуске, 
 ## Границы доказательств
 
 CI проверяет конфигурацию настоящим скачанным и проверенным бинарником 3.5.9.
-Сетевые, systemd, Certbot и rollback сценарии проверяются изолированными mocks.
+Nginx stream/PROXY/TLS и канонизация X-Forwarded-For проверяются настоящим Nginx
+на private test ports. Systemd, Certbot и rollback сценарии проверяются mocks.
 Это не подтверждение работы на конкретном VPS или конкретной сборке Telegram.
 Проверка native iOS/Desktop, реального DNS/TLS, egress и host netfilter обязательна
 на тестовом VPS перед production rollout.

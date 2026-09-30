@@ -71,6 +71,15 @@ backup_begin() {
     say "Backup: $BACKUP"
 }
 
+backup_nginx_context() {
+    local path
+    install -d -m 0700 "$BACKUP/nginx-snapshot"
+    while IFS= read -r path; do
+        cp --parents --preserve=mode,ownership,timestamps -- "$path" "$BACKUP/nginx-snapshot"
+    done < <(jq -r '.snapshot | keys[]' "$TMP/nginx-plan.json")
+    cp "$TMP/nginx-plan.json" "$BACKUP/nginx-plan.json"
+}
+
 track_file() {
     local destination=$1 index=${#CHANGED[@]}
     [[ ! -L $destination ]] || die "Refusing symlink destination"
@@ -196,6 +205,7 @@ generate_config() {
 [general]
 use_middle_proxy = false
 log_level = "normal"
+beobachten_file = "$DATA/state/beobachten.txt"
 [general.modes]
 classic = false
 secure = true
@@ -424,7 +434,7 @@ install_manager() {
     download_candidate
     ensure_certificate
     backup_begin
-    cp "$TMP/nginx-plan.json" "$BACKUP/nginx-plan.json"
+    backup_nginx_context
     INSTALLING=1; ARMED=1
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         die 'Existing telemt account/group needs manual review'
@@ -496,7 +506,7 @@ update_transaction() {
     backup_begin
     cp -a "$CONFIG" "$BACKUP/config.toml"
     cp -a "$UNIT" "$BACKUP/telemt.service"
-    cp "$TMP/nginx-plan.json" "$BACKUP/nginx-plan.json"
+    backup_nginx_context
     track_file "$BIN"
     ARMED=1
     atomic_copy "$CANDIDATE" "$BIN"
@@ -515,6 +525,7 @@ update_manager() {
     current=$(binary_version "$BIN") || die 'Unknown installed binary version'
     fetch_release || die 'Latest stable release unavailable'
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; path_health; return; fi
+    [[ $(printf '%s\n%s\n' "$current" "$RELEASE" | sort -V | head -n1) == "$current" ]] || die 'Installed version is newer; automatic downgrade refused'
     path_health || die 'Existing installation unhealthy; update refused'
     download_candidate
     update_transaction "$current"
@@ -547,7 +558,7 @@ repair_manager() {
     backup_begin
     cp -a "$CONFIG" "$BACKUP/config.toml"
     cp -a "$UNIT" "$BACKUP/telemt.service"
-    cp "$TMP/nginx-plan.json" "$BACKUP/nginx-plan.json"
+    backup_nginx_context
     say 'Managed files verified. Restarting Telemt and reloading validated Nginx.'
     if ! restart_service || ! wait_ready 90 || ! nginx_reload || ! path_health; then
         die 'Service recovery failed; manual review required'
