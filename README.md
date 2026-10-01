@@ -15,44 +15,30 @@ port 443 through Nginx `stream` / `ssl_preread`.
 - Health checks, bounded startup readiness and automatic transaction rollback.
 - Hardened systemd service; existing TOML preserved during updates.
 
-## Installation
+## Quick installation
 
-Run in a **root shell**, initially on a disposable test VPS.
-Prerequisites: Ubuntu 24.04/26.04, systemd, Bash 5+, Python 3.11+, an active
-recognized Nginx router and SSL, HTTP/2, realip, stream/ssl_preread modules.
-Install command dependencies without replacing your working Nginx:
+Run in a **root shell**, initially on a disposable test VPS:
 
 ```bash
-apt-get update
-apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
-  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables
+bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh)
 ```
 
-Obtain and inspect the source, validate it and install both files:
+The installer installs the manager and opens its menu when stdin/stdout are a TTY.
+It needs Bash, curl, CA certificates and Python 3.11+; it does not install packages
+or change Telemt, Nginx, Certbot or Xray. Review the script first if preferred.
 
-```bash
-git clone https://github.com/xPROMSx/telemt-web-manager.git
-cd telemt-web-manager
-
-bash -n telemt-web-manager.sh
-shellcheck telemt-web-manager.sh
-
-install -d -m 0755 /opt/telemt-web-manager/lib
-install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
-install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
-```
-
-Keep `/opt/telemt-web-manager` root-owned and unwritable by others.
-On a clean Nginx package, stream usually requires `libnginx-mod-stream`;
-match modules to your installed Nginx and verify `nginx -t`.
-The manager checks dependencies; it does not install packages or run `curl | bash`.
+Both program files come from one published manager release resolved to a commit.
+Stable releases are preferred; prereleases are used while no stable release exists.
+**0.1.1 is not released yet:** until its publication bootstrap selects v0.1.0,
+which has the known fresh-install staging defect. Test this fix from the reviewed
+checkout using the manual installation below. [Release policy and recovery](docs/OPERATIONS.md#manager-bootstrap).
 
 ## First run
 
-Start the interactive menu:
+Open the menu again after installation:
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh
+telemt-web-manager
 ```
 
 Choose Install and supply your WEB domain, public IPv4 and optional SOCKS5 address.
@@ -71,7 +57,7 @@ Replace the example domain and TEST-NET address with your own values.
 Direct egress:
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh --install \
+telemt-web-manager --install \
   --domain proxy.example.com \
   --public-ip 203.0.113.10
 ```
@@ -79,7 +65,7 @@ Direct egress:
 SOCKS5 egress:
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh --install \
+telemt-web-manager --install \
   --domain proxy.example.com \
   --public-ip 203.0.113.10 \
   --socks 127.0.0.1:1080
@@ -92,21 +78,22 @@ agreement. An unrelated existing certificate is not automatically adopted.
 ## Update, check and repair
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh --update
-/opt/telemt-web-manager/telemt-web-manager.sh --check
-/opt/telemt-web-manager/telemt-web-manager.sh --repair
+telemt-web-manager --update
+telemt-web-manager --check
+telemt-web-manager --repair
 ```
 
-`--update` updates the audited **Telemt binary**, with validation and rollback;
+`--update` updates the **Telemt binary**, with validation and rollback;
 it does not update the manager or rewrite TOML.
 `--check` validates managed files, configuration, renewal state and service health.
 `--repair` restarts/reloads only verified managed services, without reconstructing
-changed files. To update the manager, review a newer checkout and repeat the
-validation/copy steps above.
+changed files. To update the manager itself, rerun the quick installation command.
+This preserves the existing Telemt deployment.
 
-## Intended environment
+## Requirements and supported environment
 
-Ubuntu 24.04/26.04 on x86_64 or aarch64, with one recognized Nginx SNI map/router,
+Ubuntu 24.04/26.04, systemd, Bash 5+, Python 3.11+, active Nginx with SSL, HTTP/2,
+realip and stream/ssl_preread modules. x86_64 or aarch64, one recognized Nginx SNI map/router,
 IPv4 `:443`, optional existing `[::]:443`, outgoing PROXY protocol and an HTTP
 `conf.d/*.conf` include. The manager adds a loopback TLS frontend and an IPv4-only
 Telemt WEB listener. Telegram egress is direct or unauthenticated SOCKS5.
@@ -132,9 +119,44 @@ are not automatically supported. Xray and 3x-ui configuration/database are not m
 CI uses the verified official Telemt binary and real Nginx traffic tests.
 Systemd and Certbot lifecycle operations use mocks. Live VPS acceptance is still required.
 
+## Advanced / manual installation
+
+Review a trusted checkout (or the PR checkout during acceptance) and install both
+files. This path does not install the convenient launcher:
+
+```bash
+git clone https://github.com/xPROMSx/telemt-web-manager.git
+cd telemt-web-manager
+bash -n telemt-web-manager.sh
+shellcheck telemt-web-manager.sh
+install -d -m 0755 /opt/telemt-web-manager/lib
+install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
+install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
+/opt/telemt-web-manager/telemt-web-manager.sh
+```
+
+Keep the installation root-owned and unwritable by others. Install missing
+manager dependencies deliberately, without replacing the working Nginx stack:
+
+```bash
+apt-get update
+apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
+  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables
+```
+
+On a clean package Nginx, stream usually needs `libnginx-mod-stream`; match modules
+to the installed Nginx and verify `nginx -t`. The manager checks dependencies.
+Bootstrap options: `--version v0.1.0` selects a published release; `--no-start`
+suppresses the menu. See [operations](docs/OPERATIONS.md#manager-bootstrap).
+
+## Technical documentation
+
+- [Upstream audit and version/configuration contracts](docs/UPSTREAM.md).
+- [Architecture, security, ACME recovery, tests and operations](docs/OPERATIONS.md).
+
 ## Important limitations
 
-- Unknown Nginx topology, changed managed contracts and unaudited versions fail closed.
+- Unknown Nginx topology or incompatible/changed managed runtime contracts fail closed.
 - Unrelated existing Telemt installations and certificates require manual review.
 - No firewall/UFW changes, automatic TOML migrations or automatic uninstall.
 - WEB AAAA, authenticated/IPv6 SOCKS and custom HTTP-80 routing require manual review.
@@ -142,11 +164,6 @@ Systemd and Certbot lifecycle operations use mocks. Live VPS acceptance is still
   managed renewal state; see the recovery guide. Never blindly delete Certbot assets.
 - SIGINT/TERM/HUP trigger transactional rollback. Power loss, SIGKILL, disk failure
   and concurrent root edits remain manual recovery boundaries.
-
-## Technical documentation
-
-- [Upstream audit and version/configuration contracts](docs/UPSTREAM.md).
-- [Architecture, security, ACME recovery, tests and operations](docs/OPERATIONS.md).
 
 ## License and independence
 
