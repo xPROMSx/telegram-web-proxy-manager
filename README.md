@@ -115,6 +115,9 @@ Audited Telemt: **3.5.9**. Unknown future releases require another compatibility
 HTTP-01 uses standalone on free port 80, or a persistent managed webroot when
 port 80 belongs to the recognized Nginx redirect topology. Nginx is never stopped.
 Verify external port 80/443 reachability and certificate renewal yourself.
+Standalone renewal requires port 80 to remain free; `--check` fails on a conflict
+and verifies the manager's deploy hook. No known Certbot timer produces a warning
+to verify cron/custom scheduling manually.
 
 ## Tested 3x-ui-pro compatibility
 

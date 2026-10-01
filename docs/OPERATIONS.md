@@ -91,10 +91,33 @@ the persistent vhost/webroot for renewal, even if later Telemt installation fail
 Empty webroot directories may remain after failure; inspect backup/marker before retrying.
 
 Check external reachability of 80/443 yourself; firewall rules remain unchanged.
-No new cron/timer is created. Missing known Certbot timers trigger a warning to
-inspect existing scheduling. The deploy hook runs `nginx -t`, then reload.
-If a standalone certificate's port 80 later becomes occupied, change renewal
-strategy manually. After either flow run `certbot renew --dry-run` on a test VPS.
+No new cron/timer is created. Installation and `--check` report enabled
+`certbot.timer` or `snap.certbot.renew.timer`. If neither is enabled, a WARNING
+asks you to verify cron/custom scheduling; this alone does not fail the check.
+
+Every managed installation load (`--check`, `--update`, `--repair`, install rerun)
+validates certificate paths, key/hostname/expiry, renewal settings and the
+manager deploy hook. Standalone requires actual TCP port 80 to remain free:
+`ss -H -ltn 'sport = :80'` includes IPv4/IPv6, wildcard and loopback listeners.
+Any listener or socket-inspection failure causes refusal. This is deliberately
+conservative: [Certbot standalone](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)
+tries IPv6 and IPv4 and can continue if only one bind succeeds, which does not
+prove the challenge reaches that socket. Webroot instead requires its verified
+Nginx port-80 owner and persistent managed state; it does not require free port 80.
+
+The canonical `/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager` hook runs
+`/usr/sbin/nginx -t`, then `/usr/bin/systemctl reload nginx`. Validation never
+executes it: safe ancestors, regular non-symlink file, root ownership, owner execute
+permission, no group/other writes or special mode bits, and byte-exact canonical
+content are required. Fresh installation creates it transactionally with mode
+0750. Missing, changed or unsafe hooks require manual review; check/update/repair
+never recreate them. Existing schema-1 manifests remain compatible without new
+fields or automatic migration.
+
+For a port conflict, review renewal strategy manually without stopping an
+unrelated service automatically. No authenticator, renewal file, hook, Nginx
+configuration or firewall is repaired by health checking. After either flow run
+`certbot renew --dry-run` on a test VPS.
 CI does not perform real ACME issuance.
 
 ## Certificate recovery
@@ -219,6 +242,7 @@ bash tests/download.sh   # Mock download, bad digest, symlink, redaction
 bash tests/contracts.sh  # Strict config, writable paths, unit
 bash tests/locks.sh      # Shared/exclusive races, unsafe lock paths
 bash tests/acme.sh       # Certbot mocks, refusal, rollback, renewal/idempotence
+sudo bash tests/renewal.sh # Root-owned hook, standalone sockets, scheduler visibility
 bash tests/upstream.sh   # Internet: official release asset and SHA256
 bash tests/conntrack.sh  # CI: sudo + isolated namespace, actual Noble nf_tables
 bash tests/nginx.sh      # nginx + libnginx-mod-stream; private ports
