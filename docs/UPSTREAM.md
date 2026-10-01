@@ -1,112 +1,98 @@
-# Исследование upstream
+# Upstream audit
 
-Проверено 30 сентября 2026 через официальный GitHub API и исходники.
-`GET /repos/telemt/telemt/releases/latest` вернул **3.5.9** (stable,
-опубликован 28 сентября 2026). Тег и HEAD `main` при проверке соответствовали
-`e3f62db3474fdad12b4b9a20bdbac59b26b311bb`.
+Supported Telemt: **3.5.10**.
 
-## Принятые решения
+The current release and source were verified through official GitHub metadata and
+actual downloads on 1 October 2026 (Europe/Moscow). Manager SCRIPT_VERSION remains
+0.1.1. The supported release is deliberately fixed; production never queries
+`releases/latest` to choose a Telemt candidate.
 
-| Область | Источник и результат |
+| Provenance | Verified value |
 | --- | --- |
-| WEB/TLS | [WEB_PROXY.en.md](https://github.com/telemt/telemt/blob/3.5.9/docs/WEB/WEB_PROXY.en.md): Telemt принимает plain HTTP/1.1, TLS завершает Nginx. |
-| iOS | В той же документации metadata-free iOS поддерживает только `https`. Менеджер не включает negotiation и lanes. |
-| Decoy | Поддержан `static_directory`, файлы загружаются снимком. Root-owned каталог исключает запись со стороны сервиса. |
-| SOCKS | [Reference](https://github.com/telemt/telemt/blob/3.5.9/docs/Config_params/CONFIG_PARAMS.en.md): `[[upstreams]]`, `type = "socks5"`, `address = "host:port"`. Без SOCKS используется явный `type = "direct"`. |
-| IPv4 | `[network] ipv4 = true`, `ipv6 = false`, `prefer = 4`; deprecated `prefer_ipv6` не используется. |
-| Healthcheck | [src/healthcheck.rs](https://github.com/telemt/telemt/blob/3.5.9/src/healthcheck.rs): сначала загружает конфигурацию; при `server.api.enabled = false` возвращает успех без runtime-пробы. Поэтому проверка candidate не заменяет проверки listener/HTTP/TLS. |
-| CLI | [src/cli.rs](https://github.com/telemt/telemt/blob/3.5.9/src/cli.rs): `telemt healthcheck /path/config.toml`. |
-| Startup | [startup.rs](https://github.com/telemt/telemt/blob/3.5.9/src/startup.rs), [runtime_startup.rs](https://github.com/telemt/telemt/blob/3.5.9/src/maestro/runtime_startup.rs): network probe и подготовка runtime предшествуют готовому listener. Ожидание ограничено 90 секундами; тест моделирует 18 секунд. |
-| Capabilities | [service generator](https://github.com/telemt/telemt/blob/3.5.9/src/service/mod.rs) выдаёт NET_BIND_SERVICE и NET_ADMIN. Для порта 18080 оставлен только NET_ADMIN. |
-| Conntrack | [reference](https://github.com/telemt/telemt/blob/3.5.9/docs/Config_params/CONFIG_PARAMS.en.md#inline_conntrack_control): `false` очищает notrack rules, а не гарантирует отсутствие привилегированного cleanup. |
-| Cleanup | [transaction.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/transaction.rs) и [actor.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/actor.rs): recovery/cleanup вызывается для initial Unknown state, а также при завершении. Режим `tracked` не устраняет эту операцию. |
-| Известная ошибка | [command.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/command.rs): `is_not_found_error()` не распознаёт `Chain 'TELEMT_NOTRACK' does not exist`. Проверенный `main` содержал тот же код. |
+| Release | [3.5.10](https://github.com/telemt/telemt/releases/tag/3.5.10), stable, not draft |
+| Tag/source commit | `e5bfeafa2ff58a71c2f770626511c5be7a28bf4f` |
+| x86_64 archive SHA256 | `00bbfe7afe15a80b1f9e29e5158699ad2dd0b4606ebd0f5e5528fd6353dd2376` |
+| aarch64 archive SHA256 | `498d361ddd1368c88f701db84df39aac30d8d33099ec60013ecd4c5b0438de5c` |
 
-В менеджере это предупреждение считается известным non-fatal только при сочетании:
-Telemt 3.5.9, Ubuntu 24.04/26.04, точный backend
-`iptables v1.8.10 (nf_tables)` или `iptables v1.8.11 (nf_tables)`, уровень WARN,
-контекст `Failed to reconcile conntrack firewall policy`, startup recovery и
-точный текст отсутствующей цепочки. Дополнительная ошибка, другой backend,
-версия или контекст приводят к failure. Правила iptables менеджер не создаёт.
+Both architecture assets were downloaded and hashed independently. Production
+constructs the exact official `releases/download/3.5.10/telemt-ARCH-linux-gnu.tar.gz`
+URL, compares its hash with the embedded pin before extraction/execution, retains
+strict archive validation, and verifies the binary's exact version. No x86_64-v3
+asset is selected. These are GitHub integrity checks, not independent signatures.
+`tests/pinned.sh` compares official release/tag metadata and both asset hashes;
+CI mechanically compares the production pin, docs, real downloaded binary, staging
+healthcheck binary and runtime binary. A changed asset fails closed.
 
-`CAP_NET_ADMIN` даёт сервису широкие права в сетевом namespace. Это осознанный
-компромисс с текущим upstream cleanup, а не утверждение, что WEB listener сам
-по себе требует привилегий. `CAP_SYS_ADMIN` и `CAP_NET_BIND_SERVICE` не выдаются.
+Fresh install only downloads the pin. `--check` reports installed/supported versions
+without a latest query. Update keeps equal-version health checks, upgrades older
+compatible manager-owned installations to the pin and refuses newer versions before
+download. A future upstream release needs a newer reviewed manager.
 
-FakeTLS masking/emulation отключены явно, потому что этот профиль обслуживает
-только WEB и собственный static decoy. Middle proxy отключён, Telegram TCP egress
-идёт через выбранный direct/SOCKS upstream. Поля пользовательского TOML при
-обновлении не меняются. `general.beobachten_file` направлен в writable
-`/var/lib/telemt/state/beobachten.txt`: upstream default `cache/beobachten.txt`
-несовместим с root-owned рабочим каталогом hardened unit.
+## Conntrack recovery and severity
 
-## Релиз и целостность
+The immutable [firewall model](https://github.com/telemt/telemt/blob/e5bfeafa2ff58a71c2f770626511c5be7a28bf4f/src/conntrack_control/firewall/model.rs)
+maps tracked/disabled policy to Empty. The [actor](https://github.com/telemt/telemt/blob/e5bfeafa2ff58a71c2f770626511c5be7a28bf4f/src/conntrack_control/firewall/actor.rs)
+starts from Unknown. [Transaction recovery](https://github.com/telemt/telemt/blob/e5bfeafa2ff58a71c2f770626511c5be7a28bf4f/src/conntrack_control/firewall/transaction.rs)
+cleans nft and iptables state even for Empty policy. Setting inline control false
+does not reliably avoid cleanup in this release. The [command parser](https://github.com/telemt/telemt/blob/e5bfeafa2ff58a71c2f770626511c5be7a28bf4f/src/conntrack_control/firewall/command.rs)
+still misses `Chain 'TELEMT_NOTRACK' does not exist`; startup/retry/shutdown can emit
+WARN diagnostics. Official main had the same commit at the current audit.
 
-[Release 3.5.9](https://github.com/telemt/telemt/releases/tag/3.5.9) содержит fix
-trusted helper argv0 для multi-call firewall binaries и обновление документации.
-Для переносимости на старые x86 процессоры не используется вариант x86_64-v3.
+Generated policy stays inline enabled, tracked. `nft`, `iptables`, `ip6tables`,
+`conntrack`, default systemd PATH checks, CAP_NET_ADMIN and actual service-process
+capability validation are retained. The manager creates no permanent firewall rules.
+CAP_NET_ADMIN grants broad network authority; tracked mode does not remove that risk.
 
-| Asset | SHA256 архива из GitHub API |
-| --- | --- |
-| `telemt-x86_64-linux-gnu.tar.gz` | `565fe659765cd0f4e0f851b3d06a50ab9c25bf3bdd9c680646864215d56c258b` |
-| `telemt-aarch64-linux-gnu.tar.gz` | `808eac1217e53147484029b3cb89f764c78b8b0506c36969c024905acaba23bc` |
+The old version/Ubuntu/backend/message-specific exception and `known_nonfatal`
+accounting are removed. Severity is parsed from each record's anchored prefix;
+all WARNs count as diagnostics even with `error=`, permission errors or conntrack
+text. ERROR/FATAL and genuine Rust panic prefixes fail regardless of WARN words
+in their payload. Embedded structured fatal lines cannot hide in a multiline WARN.
+Only ANSI SGR colors are stripped; other unsafe controls and malformed journal JSON
+fail closed. Trusted PID1/systemd lifecycle records are separated by journald
+metadata. The unlevelled `MAESTRO: ` startup banner is recognized by its framing,
+never by link/user payload and never printed. No version/OS/backend inputs exist.
 
-Upstream также публикует `.sha256` assets. Менеджер использует официальный
-`assets[].digest`, полученный по HTTPS, и не запускает бинарник до совпадения
-SHA256. Это проверка целостности относительно GitHub, **не независимая подпись**.
-Если digest исчезнет, установка/обновление прекращаются.
+Upstream [logging](https://github.com/telemt/telemt/blob/e5bfeafa2ff58a71c2f770626511c5be7a28bf4f/src/logging.rs)
+uses the tracing fmt default stdout writer for the destination named stderr;
+the MAESTRO banner actually uses stderr. The runtime smoke captures both streams,
+as journald does, and unsets inherited Cloud RUST_LOG so generated normal logging
+is exercised. Raw logs and generated private WEB links stay in private temporary
+files. Only counts and explicitly safe fragments enter CI logs.
 
-Установка и обновление выбирают официальный latest stable. Точное ограничение
-3.5.9 из предыдущего review заменено проверками контрактов: SemVer, управляемый
-WEB TOML, writable paths, положительный healthcheck и отклонение неизвестного
-ключа, затем systemd/readiness/listener/path/log проверки с rollback.
-Source audit ниже относится к базе 3.5.9, а не к гарантии всех будущих версий.
+The sanitized seven-WARN live fixture must produce `errors=0, warnings=7` for raw
+and journal JSON transport. Appending actual ERROR/FATAL/panic produces failure.
+WARN alone never overrides process, PID/listener, UID/capabilities, HTTP/TLS, decoy,
+SOCKS, strict configuration or hash failures.
 
-## Повторная проверка 3x-ui-pro
+## What the evidence proves
 
-30 сентября 2026 повторно проверены latest stable Telemt (по-прежнему 3.5.9),
-его main (тот же commit выше, missing-chain bug не исправлен) и текущий main
-`mozaroc/3x-ui-pro`: `a2c430cd6dec7c86d873dcda3544a61e7ac41144`.
+Earlier green checks combined real config healthcheck with mocked service/readiness,
+path health and journal transport. The old conntrack bridge used a synthetic WARN
+and 3.5.9 classifier input while fresh download selection moved. Neither ran the
+new downloaded release. These labels and future-version acceptance fixtures have
+been corrected. Healthcheck with API disabled loads config; it does not prove a
+running listener. [Complete CI truth table](CI-COVERAGE.md).
 
-- [x-ui-latest.sh, строки 289-307](https://github.com/mozaroc/3x-ui-pro/blob/a2c430cd6dec7c86d873dcda3544a61e7ac41144/x-ui-latest.sh#L289-L307),
-  Git blob `671ca1e17b0162493b05cf3086968d1b43b5547f`.
-- [x-ui-patch.sh, строки 213-231](https://github.com/mozaroc/3x-ui-pro/blob/a2c430cd6dec7c86d873dcda3544a61e7ac41144/x-ui-patch.sh#L213-L231),
-  Git blob `dc506e80e371c7768177881fd0b3b7676c55bf3f`.
+The new smoke runs the verified 3.5.10 process in a new Linux network namespace with
+real helpers and CAP_NET_ADMIN; verifies PID-owned socket and actual HTTP 200/index,
+classifies captured startup/retry/shutdown logs, injects fatal classifier negatives,
+requires clean shutdown and inspects nft/IPv4/IPv6 state for Telemt-owned names.
+Namespace destruction isolates all firewall effects. No skip or mocked fallback
+is permitted. It does not cover systemd sandbox execution, public DNS/ACME, external
+TLS, Telegram clients, real SOCKS egress or a VPS host's firewall coexistence.
 
-Оба создают один `$sni_name` map с `hostnames;`, xray/www upstreams и один
-router с `set_real_ip_from unix:;`, `listen 443;`, `listen [::]:443;`, исходящим
-`proxy_protocol on;` и `ssl_preread on;`. HTTP vhosts повторно включают общий
-`snippets/includes.conf`, содержащий экранированные regex и `${safe}`.
-Именно эти формы первая версия отвергала. Исправление сохраняет existing routes,
-default, listens, trust directive и все HTTP файлы; добавляет только mapping,
-managed upstream и отдельный vhost.
+## Historical source inventory and retained recovery safeguards
 
-По [Nginx stream map](https://nginx.org/en/docs/stream/ngx_stream_map_module.html)
-`hostnames;` должен находиться перед значениями. Менеджер принимает этот flag,
-но намеренно отвергает wildcard/regex SNI. По
-[Nginx stream realip](https://nginx.org/en/docs/stream/ngx_stream_realip_module.html)
-`unix:` обозначает UNIX sockets; получение PROXY header требует отдельного
-`listen ... proxy_protocol`. Публичные listens здесь такого flag не имеют.
-Менеджер сохраняет точный существующий trust directive, не расширяет его и
-по-прежнему отказывает на входящем PROXY protocol на публичном порту.
-
-Тесты формируют все шесть Nginx heredocs каждого pinned скрипта без выполнения
-shell-кода upstream. Изменения тестовых ports/cert paths изолируют настоящий
-Nginx от системной конфигурации CI. Это проверка совместимости с указанными
-исходниками, а не обещание принимать любые будущие изменения 3x-ui-pro.
-
-## Границы доказательств
-
-CI проверяет конфигурацию настоящим скачанным и проверенным бинарником 3.5.9.
-Nginx stream/PROXY/TLS и канонизация X-Forwarded-For проверяются настоящим Nginx
-на private test ports. Systemd, Certbot и rollback сценарии проверяются mocks.
-Это не подтверждение работы на конкретном VPS или конкретной сборке Telegram.
-Проверка native iOS/Desktop, реального DNS/TLS, egress и host netfilter обязательна
-на тестовом VPS перед production rollout.
+The following path/security inventory records the earlier 3.5.9 source review.
+It is historical source evidence, not the current download policy or a promise of
+future release compatibility. Current 3.5.10 healthcheck and runtime smoke add
+release-specific evidence; deployment under the complete systemd sandbox still
+requires VPS acceptance.
 
 ## Runtime paths and systemd audit, full second review
 
-Rechecked official latest stable/main and both 3x-ui-pro scripts immediately before
+Historical review: rechecked official stable/main and both 3x-ui-pro scripts before
 this pass: revisions are unchanged from the records above. The following table
 covers the generated WEB profile, API disabled, middle proxy disabled, direct or
 SOCKS upstream. References below use the audited Telemt tag 3.5.9.
@@ -203,171 +189,3 @@ asset URL and unambiguous digest, no candidate execution before verification,
 root-only config/backups/staging, suppressed candidate diagnostics and raw journals,
 signal rollback, managed manifest/hash checks and required public HTTPS probe.
 No production VPS or secrets were used. See both READMEs for intentional boundaries.
-
-## Third review, 2026-10-01: conntrack evidence
-
-At the third review, official GitHub API and refs reported stable **3.5.9**, Telemt
-main/peeled tag is `e3f62db3474fdad12b4b9a20bdbac59b26b311bb`, and 3x-ui-pro
-main remains `a2c430cd6dec7c86d873dcda3544a61e7ac41144`. Version and topology
-support have not been expanded.
-
-Ubuntu's [Noble package record](https://packages.ubuntu.com/noble/net/iptables)
-lists iptables 1.8.10-3ubuntu2. The
-[official iptables 1.8.10 source archive](https://www.netfilter.org/projects/iptables/files/iptables-1.8.10.tar.xz)
-contains `nft_check_chain()` in `iptables/nft.c`: it emits
-`Chain '%s' does not exist` when a named jump chain is absent. This is an
-nf_tables frontend diagnostic, not an Ubuntu-26-only property.
-
-Audited [Telemt cleanup](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/iptables.rs)
-removes the PREROUTING jump to TELEMT_NOTRACK and aggregates failures with "; ".
-[command.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/command.rs)
-forces LC_ALL=C but omits this message from NotFound recognition.
-[transaction.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/transaction.rs)
-wraps it as startup recovery failure;
-[actor.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/actor.rs)
-emits WARN with generation/error fields and retries.
-It is a failed cleanup/reconciliation, not proof of a fatal WEB listener failure.
-Downgrading this warning does not prove absence of stale rules or overall health:
-listener, identity, HTTP, TLS and egress tests remain mandatory.
-
-The exception now requires **all** of: Telemt 3.5.9, supported Ubuntu 24.04/26.04,
-an exact reviewed iptables 1.8.10/1.8.11 nf_tables version string, and a complete
-`Failed to reconcile conntrack firewall policy ... error=startup recovery failed:`
-WARN record. Only exact TELEMT_NOTRACK diagnostics from iptables/ip6tables are
-accepted, including an optional full stop and exact tool-specific help line.
-Repeated diagnostics are permitted only with upstream's "; " separator.
-Timestamp/module/generation framing is explicitly constrained.
-No arbitrary punctuation or unexpected stderr is discarded. Other chains,
-contexts, legacy backends, helper/Telemt versions, permissions and ERROR/FATAL/panic
-fail. The lowercase structured `error=` field is not an ERROR severity.
-
-`tests/conntrack.sh` captures the actual Noble iptables-nft diagnostic in an
-isolated CI network namespace, without touching host firewall state.
-Ubuntu 26.04 is covered by strict classifier fixtures, not a live netfilter claim.
-
-## Third review: deterministic journal and managed TOML
-
-The [general schema](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/general.rs)
-defaults `disable_colors` to false.
-[bootstrap.rs](https://github.com/telemt/telemt/blob/3.5.9/src/maestro/bootstrap.rs)
-selects `with_ansi(false)` and disables maestro colors when it is true.
-Fresh configs now explicitly use `disable_colors = true` for systemd/journald.
-Existing TOML is never rewritten to add it. Only ANSI SGR sequences are normalized
-for older configs. `recent_logs()` reads journald JSON MESSAGE records so embedded
-newlines, even lines starting with INFO, cannot hide extra stderr. Diagnostics
-emit aggregate counts only. Upstream journal link logging remains enabled.
-
-Semantic acceptance follows audited
-[WEB](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/web.rs),
-[server](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/server.rs),
-[network/upstream](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/network.rs)
-and [access](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/access.rs)
-schemas. Load now validates:
-
-- Strict config; one loopback WEB listener and matching server port; exact XFF
-  trust; no extra metrics/Unix sockets or enabled/aliased API.
-- HTTPS carrier; one canonical hostname and IPv4 public_addr:443; empty base path.
-- One web-user/dd profile bound to one 16-byte hexadecimal access secret.
-- Static decoy at DATA/public, using index.html.
-- Tracked/auto conntrack; secure-only modes; masking/TLS emulation/middle proxy off.
-- IPv4-only, prefer=4; one enabled direct or unauthenticated SOCKS5 upstream,
-  without interface, bind, scope, DNS or family routing overrides.
-- Existing active-write-path constraints and stderr logging. A state directory
-  itself cannot be used as a writable state filename.
-
-New manifests record the public IPv4 and detect drift from it. Older schema-1
-manifests did not record the original IP; they validate the supported IPv4:443
-shape but cannot prove its historical value. There is no automatic manifest/TOML
-migration. Installed runtimes require valid SemVer after ownership/permission
-checks. Every load runs suppressed strict compatibility probes against private
-TOML copies, covering unknown keys and invalid tuning without an exact-version gate.
-
-Session limits, weights and unrelated timeouts remain tunable. Inactive caches
-are not forced to cosmetic equality. Safe explicit/default equivalences are
-accepted where the audited defaults are relevant, including omitted static index
-and an older config without the new color setting.
-
-## Third review: Certbot partial success
-
-Certbot lineage/account/renewal files are never deleted or rewritten by rollback.
-If Certbot succeeds but certificate or renewal post-validation fails, the ACME
-Nginx/marker transaction rolls back while the lineage survives. Subsequent
-invocations inspect renewal settings even when certificate/key already exist.
-
-Exact manager webroot renewal requires safe persistent webroot/challenge
-directories, an exact domain ownership marker, the exact loaded managed ACME
-vhost and port 80 owned by recognized Nginx. Missing/changed state fails with a
-certificate-retained recovery message. No automatic reconstruction is attempted:
-rollback can remove the proof of ownership. A complete manager webroot is reused
-idempotently, without another Certbot issuance.
-
-Standalone certificates are accepted only when newly issued in this invocation
-or associated with an existing manager manifest. Unrelated certificates and
-orphan live/archive/renewal assets refuse adoption/new issuance. The renewal
-parser is section-aware, rejects duplicate/foreign maps and checks lineage path
-options when present. The manifest's strategy must agree. Check/update/repair
-never invoke Certbot or change its state. See [OPERATIONS.md](OPERATIONS.md)
-for deliberate recovery and remaining live-acceptance requirements.
-
-## Live acceptance follow-up, 1 October 2026
-
-Official API now reports latest stable **3.5.7**, target revision
-`4ca7418442478cd92f9e861c21977a81b249efc8`. Releases 3.5.8 and 3.5.9 are
-prereleases; 3.5.9 still records `e3f62db3474fdad12b4b9a20bdbac59b26b311bb`.
-The reviewed 3x-ui-pro main remains
-`a2c430cd6dec7c86d873dcda3544a61e7ac41144`. Release flags are queried at runtime,
-not embedded in eligibility logic. CI verifies official digests for both 3.5.7
-and the historical 3.5.9 reference and exercises their strict direct/SOCKS configs.
-
-Fresh Ubuntu 26 acceptance exposed standard mime.types data incorrectly treated
-as directives and the exact-version gate incorrectly calling older stable 3.5.7
-a new unaudited release. See [operations](OPERATIONS.md#live-acceptance-fixes-mime-data-and-release-compatibility)
-for the context-aware grammar, package-byte coverage gap and contract-based
-pre-issuance/activation checks. Future releases are conditionally evaluated, not
-guaranteed compatible. The historical source/path audit above remains evidence
-for its recorded baseline; no future source-code properties are claimed.
-
-## v0.1.0 fresh-install staging follow-up, 1 October 2026
-
-Latest stable remains 3.5.7 at `4ca7418442478cd92f9e861c21977a81b249efc8`;
-3.5.8/3.5.9 remain prereleases and the reviewed 3x-ui-pro revision is unchanged.
-This fixes the manager staging model, without a Telemt version special case.
-
-[3.5.7 healthcheck](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/healthcheck.rs)
-calls `ProxyConfig::load` before returning success for a disabled API.
-[Config loading](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/config/load.rs)
-and [WEB runtime construction](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/config/load/runtime_web.rs)
-build a validated immutable static-site snapshot. A missing static directory or
-index is an invalid runtime configuration, not merely an unavailable optional
-path. The first v0.1.0 healthcheck used absolute production paths before creating
-the decoy, so a compatible official binary correctly rejected it before ACME.
-
-The corrected pre-issuance check uses a real private decoy and state layout,
-with the data-root prefix passed to the same generator and runtime contract.
-Final production config is generated by that same template and revalidated after
-its files exist. CI combines the actual SHA256-verified latest-stable binary
-with fresh orchestration, missing-directory/index negatives and both egress
-profiles. See [operations](OPERATIONS.md#live-acceptance-fixes-mime-data-and-release-compatibility)
-for ordering, coverage gap and rollback boundaries. These checks still do not
-replace real systemd/ACME/Telegram acceptance on a disposable VPS.
-
-## Telemt 3.5.7 conntrack runtime dependency
-
-The annotated 3.5.7 tag resolves to `4ca7418442478cd92f9e861c21977a81b249efc8`.
-[`probe_runtime_support` / `effective_conntrack_enabled`](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/conntrack_control.rs)
-require enabled inline control, CAP_NET_ADMIN, a detected nft/iptables backend and
-`conntrack` discoverable on PATH. Explicitly enabled but unavailable control emits
-the startup warning and disables runtime features. The generated tracked-mode
-contract intentionally enables this control, so missing `conntrack` is a preflight
-error, not a new nonfatal journal exception. Ubuntu's package is `conntrack`.
-
-The pinned [configuration reference](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/docs/Config_params/CONFIG_PARAMS.en.md#serverconntrack_control)
-describes optional pressure-driven table deletes using `conntrack -D`; the exact
-3.5.7 source additionally gates the entire enabled worker on binary availability.
-Tracked mode does not install notrack rules, but still uses this runtime gate.
-
-The [hot-reload diff](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/config/hot_reload/diff.rs)
-emits `censorship settings changed; restart required` when comparing censorship
-settings. That WARN alone does not establish an invalid manager runtime contract
-and remains a normal warning. Live readiness/path checks had already succeeded;
-the unavailable conntrack-control record was the late health failure source.

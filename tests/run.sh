@@ -51,12 +51,12 @@ socks_probe
 
 # SC2016: this literal is executed by the child Bash, which must expand its variables.
 # shellcheck disable=SC2016
-run_case 'already latest does not touch binary or config' bash -c '
+run_case 'already supported does not touch binary or config' bash -c '
 source "$ROOT/telemt-web-manager.sh"
-RELEASE=3.5.9
+RELEASE=$SUPPORTED_TELEMT_VERSION
 candidate_healthcheck() { exit 55; }
 backup_begin() { exit 56; }
-update_transaction 3.5.9
+update_transaction "$SUPPORTED_TELEMT_VERSION"
 '
 
 # SC2016: this literal is executed by the child Bash, which must expand its variables.
@@ -65,7 +65,7 @@ run_case 'candidate rejection leaves installed bytes untouched' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 BIN="$SANDBOX/reject-bin" CONFIG="$SANDBOX/reject-config"
 printf old >"$BIN"; printf original >"$CONFIG"
-RELEASE=3.6.0 CANDIDATE="$SANDBOX/candidate"
+RELEASE=$SUPPORTED_TELEMT_VERSION CANDIDATE="$SANDBOX/candidate"
 candidate_healthcheck() { return 1; }
 candidate_compatibility() { candidate_healthcheck "$@"; }
 set +e
@@ -81,7 +81,7 @@ run_case 'concurrent config edit during candidate validation refuses before bina
 source "$ROOT/telemt-web-manager.sh"
 BIN="$SANDBOX/concurrent-bin" CONFIG="$SANDBOX/concurrent-config"
 printf old >"$BIN"; printf original >"$CONFIG"
-RELEASE=3.6.0 CANDIDATE="$SANDBOX/candidate"
+RELEASE=$SUPPORTED_TELEMT_VERSION CANDIDATE="$SANDBOX/candidate"
 candidate_healthcheck() { printf edited >"$CONFIG"; }
 candidate_compatibility() { candidate_healthcheck "$@"; }
 backup_begin() { exit 56; }
@@ -94,13 +94,12 @@ set -e
 
 # SC2016: child shell expands paths.
 # shellcheck disable=SC2016
-run_case 'future release reaches candidate validation without a version pin' bash -c '
+run_case 'older compatible install reaches the pinned candidate download' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 load_installation() { return 0; }
 binary_version() { printf 3.5.9; }
-fetch_release() { RELEASE=42.7.123; }
 path_health() { return 0; }
-download_candidate() { exit 57; }
+download_candidate() { [[ $RELEASE == "$SUPPORTED_TELEMT_VERSION" ]] || exit 58; exit 57; }
 set +e
 (update_manager) >"$SANDBOX/future.log" 2>&1
 rc=$?
@@ -138,7 +137,7 @@ mkdir "$TMP"
 printf old >"$BIN"; printf original >"$CONFIG"; printf unit >"$UNIT"
 printf "{\"snapshot\":{}}" >"$TMP/nginx-plan.json"
 CANDIDATE="$SANDBOX/new-bin"; printf new >"$CANDIDATE"
-RELEASE=3.6.0
+RELEASE=$SUPPORTED_TELEMT_VERSION
 candidate_healthcheck() { return 0; }
 candidate_compatibility() { candidate_healthcheck "$@"; }
 restart_service() { printf "%s\n" "$(cat "$BIN")" >>"$SANDBOX/restarts"; }

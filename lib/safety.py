@@ -925,65 +925,75 @@ def config_info(path):
         print(value)
 
 
-def classify(version, os_version, backend, text, records=None):
-    # Old configs may emit ANSI SGR; new configs disable colors explicitly.
-    # Strip only color sequences, not arbitrary control/error text.
-    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-    if records is None:
-        records = []
-        for line in text.splitlines():
-            if re.match(r"^(?:\d{4}-\d\d-\d\dT\S+\s+)?(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL|panic)\b", line, re.I):
-                records.append(line)
-            elif records:
-                records[-1] += "\n" + line
-            elif line.strip():
-                records.append(line)
-    require(all(isinstance(record, str) for record in records), "binary journal message requires review")
-    helper_version = r"1\.8\.(?:10|11)"
-    backend_ok = re.fullmatch(rf"iptables v{helper_version} \(nf_tables\)", backend) is not None
-    diagnostic = (
-        rf"(?P<tool>ip6?tables) v{helper_version} \(nf_tables\): "
-        r"Chain 'TELEMT_NOTRACK' does not exist\.?"
-        r"(?:\nTry \x60(?P=tool) -h' or '(?P=tool) --help' for more information\.)?"
-    )
-    warning = re.compile(
-        r"^(?:\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d\d:\d\d)\s+)?"
-        r"WARN\s+(?:[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*:\s+)?"
-        r"Failed to reconcile conntrack firewall policy"
-        r"(?:\s+generation=[0-9]+)?\s+error=startup recovery failed: (?P<payload>.+)$",
-        re.S,
-    )
-    known = failures = warnings = 0
+# The level is a record prefix, never a keyword in arbitrary message payload.
+LOG_PREFIX = re.compile(
+    r"^[ \t]*(?:\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d\d:\d\d)\s+)?"
+    r"(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)(?:[ \t]+|$)")
+PANIC_PREFIX = re.compile(
+    r"^[ \t]*(?:panic(?:ked)?(?:[: \t]|$)|fatal runtime error:|"
+    r"thread ['\"].+?['\"](?: \(\d+\))? panicked at\b)", re.I)
+
+
+def classify_records(records):
+    errors = warnings = 0
     for record in records:
+        require(isinstance(record, str), "binary journal message requires review")
         record = re.sub(r"\x1b\[[0-9;]*m", "", record)
-        # Severity wins even if the record also contains the known warning.
-        if re.search(r"\b(ERROR|FATAL|panic)\b(?![=])", record, re.I):
-            failures += 1
-            continue
-        if not re.search(r"\bWARN\b", record, re.I):
-            if re.search(r"Operation not permitted|Permission denied", record, re.I):
-                failures += 1
-            continue
-        match = warning.fullmatch(record)
-        diagnostics = match["payload"].split("; ") if match else []
-        expected = (version == "3.5.9" and os_version in ("ubuntu:24.04", "ubuntu:26.04")
-                    and backend_ok and diagnostics
-                    and all(re.fullmatch(diagnostic, part) for part in diagnostics))
-        if expected:
-            known += 1
-        elif re.search(r"conntrack|Operation not permitted|Permission denied", record, re.I):
-            failures += 1
-        else:
-            warnings += 1
-    print(f"logs: failures={failures}, warnings={warnings}, known_nonfatal={known}")
-    return 1 if failures else 0
+        require(not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", record),
+                "unsafe log control sequence")
+        started = False
+        for line in record.splitlines():
+            if not line.strip(): continue
+            level = LOG_PREFIX.match(line)
+            panic = PANIC_PREFIX.match(line)
+            # Check every line, even inside a journal MESSAGE: an embedded
+            # structured fatal record must not disappear as WARN continuation.
+            if level:
+                started = True
+                if level[1] in ('ERROR', 'FATAL'): errors += 1
+                elif level[1] == 'WARN': warnings += 1
+            elif panic:
+                started = True
+                errors += 1
+            elif line.startswith('MAESTRO: '):
+                # Telemt's unlevelled startup banner (including private links).
+                # Recognize its record framing, never inspect/print its payload.
+                started = True
+            else:
+                require(started, "unrecognized log record prefix")
+    print(f"logs: errors={errors}, warnings={warnings}")
+    return 1 if errors else 0
 
 
-def classify_journal(version, os_version, backend, text):
-    # Journald JSON preserves MESSAGE boundaries, including embedded newlines.
-    # A continuation that looks like INFO must not hide extra stderr.
-    records = [json.loads(line)["MESSAGE"] for line in text.splitlines() if line.strip()]
-    return classify(version, os_version, backend, "", records)
+def classify(text):
+    return classify_records([text])
+
+
+def journal_object(pairs):
+    value = {}
+    for key, item in pairs:
+        require(key not in value, "duplicate journal field")
+        value[key] = item
+    return value
+
+
+def journal_constant(_value):
+    raise ValueError("invalid JSON constant")
+
+
+def classify_journal(text):
+    records = []
+    for line in text.splitlines():
+        if not line.strip(): continue
+        item = json.loads(line, object_pairs_hook=journal_object,
+                          parse_constant=journal_constant)
+        require(isinstance(item, dict) and isinstance(item.get('MESSAGE'), str),
+                "missing/binary journal message")
+        # Trusted journald metadata distinguishes PID 1's unit lifecycle
+        # messages from Telemt stderr. Objective service checks cover its state.
+        if item.get('_PID') == '1' and item.get('_COMM') == 'systemd': continue
+        records.append(item['MESSAGE'])
+    return classify_records(records)
 
 
 def main():
@@ -1038,9 +1048,11 @@ def main():
     elif command == "acme-state":
         acme_state(*args)
     elif command == "classify":
-        return classify(*args[:3], sys.stdin.read())
+        require(not args)
+        return classify(sys.stdin.read())
     elif command == "classify-journal":
-        return classify_journal(*args[:3], sys.stdin.read())
+        require(not args)
+        return classify_journal(sys.stdin.read())
     else:
         raise ValueError("unknown helper command")
     return 0

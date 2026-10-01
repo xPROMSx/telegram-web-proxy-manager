@@ -8,34 +8,41 @@ permissions:
 jobs:
   safety:
     runs-on: ubuntu-24.04
+    env:
+      TELEMT_TEST_EVIDENCE_DIR: ${{ runner.temp }}/telemt-pinned-evidence
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables conntrack passwd
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables nftables conntrack passwd iproute2 util-linux curl python3 openssl ca-certificates
       - name: Telemt conntrack dependency and default systemd runtime PATH
         run: |
           command -v conntrack
           systemd-path search-binaries-default
           env -i PATH="$(systemd-path search-binaries-default)" conntrack --version
+          mkdir -m 0700 "$TELEMT_TEST_EVIDENCE_DIR"
       - name: Bash syntax
         run: for file in install.sh telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
       - name: ShellCheck
         run: shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
-      - name: Unit and fixture tests (no root, no production access)
+      - name: Parser/unit and fresh transaction fixtures (service/path/journal transport mocked)
         run: bash tests/run.sh && bash tests/fresh.sh && bash tests/fresh-rollback.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh && bash tests/preflight.sh
       - name: Real fresh account and owned runtime-state rollback (temporary root-owned fixtures)
         run: sudo bash tests/fresh-account.sh
-      - name: Published Telemt configuration contract (SHA256 verified)
-        run: bash tests/upstream.sh
-      - name: Real latest-stable Telemt fresh pre-certificate staging and negative regressions
+      - name: Pinned Telemt 3.5.10 release provenance and real config healthcheck (no runtime)
+        run: bash tests/pinned.sh && bash tests/upstream.sh
+      - name: Pinned Telemt 3.5.10 staging healthcheck (service/path health mocked)
         run: bash tests/staging.sh
+      - name: Real Telemt 3.5.10 runtime smoke in isolated network namespace (no systemd)
+        run: sudo env TELEMT_TEST_EVIDENCE_DIR="$TELEMT_TEST_EVIDENCE_DIR" bash tests/runtime.sh
+      - name: Production pin equals real downloaded, staging, runtime and documented version
+        run: bash tests/pinned.sh --versions
       - name: Manager bootstrap release selection, atomic pair update and rollback (temporary root-owned fixtures)
         run: sudo bash tests/bootstrap.sh
-      - name: Version-independent compatibility, downgrade and rollback regressions
-        run: bash tests/versions.sh && FIXTURE_VERSION=42.7.123 bash tests/fresh.sh && FIXTURE_VERSION=42.7.123 FIXTURE_INCOMPATIBLE=1 bash tests/fresh.sh
-      - name: Actual Ubuntu nf_tables missing-chain diagnostic (isolated namespace)
+      - name: Pinned upgrade/newer-version refusal and rollback fixtures (synthetic binary/lifecycle)
+        run: bash tests/versions.sh
+      - name: Real nf_tables diagnostic in namespace (synthetic log bridge; no Telemt runtime)
         run: bash tests/conntrack.sh
       - name: Writable state and systemd contract
         run: bash tests/contracts.sh

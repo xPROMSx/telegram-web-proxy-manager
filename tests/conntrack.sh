@@ -21,13 +21,12 @@ spec = importlib.util.spec_from_file_location("safety", "lib/safety.py")
 s = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = s
 spec.loader.exec_module(s)
-backend = (root / "backend").read_text().strip()
 diagnostic = (root / "stderr").read_text().strip()
 assert "Chain 'TELEMT_NOTRACK' does not exist" in diagnostic, "actual nft diagnostic differs; review required"
 record = ("WARN Failed to reconcile conntrack firewall policy generation=1 "
           "error=startup recovery failed: " + diagnostic)
 with contextlib.redirect_stdout(io.StringIO()) as out:
-    assert s.classify("3.5.9", "ubuntu:24.04", backend, record) == 0
-assert "known_nonfatal=1" in out.getvalue()
+    assert s.classify(record) == 0
+assert "errors=0, warnings=1" in out.getvalue()
 PY
-printf 'ok - actual Ubuntu 24.04 nf_tables missing-chain diagnostic (isolated namespace)\n'
+printf 'ok - real Ubuntu nf_tables diagnostic captured in isolated namespace; synthetic WARN severity bridge only, not Telemt runtime\n'

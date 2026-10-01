@@ -5,6 +5,10 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C
 readonly SCRIPT_VERSION=0.1.1
+readonly SUPPORTED_TELEMT_VERSION=3.5.10
+readonly SUPPORTED_TELEMT_COMMIT=e5bfeafa2ff58a71c2f770626511c5be7a28bf4f
+readonly TELEMT_SHA256_X86_64=00bbfe7afe15a80b1f9e29e5158699ad2dd0b4606ebd0f5e5528fd6353dd2376
+readonly TELEMT_SHA256_AARCH64=498d361ddd1368c88f701db84df39aac30d8d33099ec60013ecd4c5b0438de5c
 BASE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HELPER="$BASE_DIR/lib/safety.py"
 BIN=/usr/local/bin/telemt
@@ -190,28 +194,25 @@ check_dependencies() {
     PATH="$service_path" command -v conntrack >/dev/null || die 'conntrack unavailable on the systemd runtime PATH (see README)'
 }
 
-fetch_release() {
-    curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 --retry 2 \
-        https://api.github.com/repos/telemt/telemt/releases/latest -o "$TMP/release.json" || return 1
-    RELEASE=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$TMP/release.json") || return 1
-    helper semver "$RELEASE" stable
-}
-
 download_candidate() {
     local arch asset url digest actual
-    arch=$(uname -m); [[ $arch != arm64 ]] || arch=aarch64
+    RELEASE=$SUPPORTED_TELEMT_VERSION
+    arch=$(uname -m)
+    case $arch in
+        x86_64) digest=$TELEMT_SHA256_X86_64;;
+        aarch64|arm64) arch=aarch64; digest=$TELEMT_SHA256_AARCH64;;
+        *) die 'Unsupported architecture';;
+    esac
     asset="telemt-$arch-linux-gnu.tar.gz"
-    jq -e --arg name "$asset" '[.assets[] | select(.name == $name)] | length == 1' "$TMP/release.json" >/dev/null || die 'Ambiguous/missing release asset'
-    url=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' "$TMP/release.json")
-    digest=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' "$TMP/release.json")
-    [[ $url == "https://github.com/telemt/telemt/releases/download/$RELEASE/$asset" && $digest =~ ^sha256:[a-f0-9]{64}$ ]] || die 'Official SHA256 digest/asset URL unavailable'
+    url="https://github.com/telemt/telemt/releases/download/$SUPPORTED_TELEMT_VERSION/$asset"
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --max-filesize 134217728 --retry 2 "$url" -o "$TMP/asset.tar.gz"
     actual=$(sha256sum "$TMP/asset.tar.gz"); actual=${actual%% *}
-    [[ sha256:$actual == "$digest" ]] || die 'SHA256 mismatch; candidate will not execute'
+    [[ $actual == "$digest" ]] || die 'Pinned SHA256 mismatch; candidate will not execute'
+    say "Verified Telemt $SUPPORTED_TELEMT_VERSION $asset SHA256: $actual; release commit: $SUPPORTED_TELEMT_COMMIT"
     timeout 60 python3 "$HELPER" extract-binary "$TMP/asset.tar.gz" "$TMP/telemt" || die 'Unknown/unsafe/oversized archive layout'
     chmod 0755 "$TMP/telemt"
     CANDIDATE="$TMP/telemt"
-    [[ $(binary_version "$CANDIDATE") == "$RELEASE" ]] || die 'Candidate version mismatch'
+    [[ $(binary_version "$CANDIDATE") == "$SUPPORTED_TELEMT_VERSION" ]] || die 'Candidate differs from supported Telemt version'
 }
 
 
@@ -439,14 +440,9 @@ path_health() {
 }
 
 recent_logs() {
-    local since=$1 version os backend
-    version=$(binary_version "$BIN") || return 1
-    # shellcheck source=/dev/null
-    source /etc/os-release
-    os="$ID:$VERSION_ID"
-    backend=$(iptables --version 2>/dev/null || true)
+    local since=$1
     journalctl -u telemt.service --since "@$since" --no-pager -o json |
-        helper classify-journal "$version" "$os" "$backend"
+        helper classify-journal
 }
 
 nginx_plan() {
@@ -697,7 +693,6 @@ install_manager() {
     systemctl is-active --quiet nginx || die 'Nginx must be active'
     nginx_runtime_identity || die 'Nginx process/config/443 ownership is ambiguous'
     nginx_plan
-    fetch_release || die 'Latest stable release unavailable'
     download_candidate
     secret=$(openssl rand -hex 16)
     prepare_compatibility_data "$TMP/compat-data" || die 'Unable to stage managed decoy; no certificate issuance attempted'
@@ -786,6 +781,7 @@ load_installation() {
 
 update_transaction() {
     local current=$1 since config_hash
+    [[ $RELEASE == "$SUPPORTED_TELEMT_VERSION" ]] || die 'Update target differs from supported Telemt version'
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; return 0; fi
     config_hash=$(sha256sum "$CONFIG")
     candidate_compatibility "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
@@ -811,10 +807,13 @@ update_manager() {
     load_installation
     local current comparison
     current=$(binary_version "$BIN") || die 'Unknown installed binary version'
-    fetch_release || die 'Latest stable release unavailable'
+    RELEASE=$SUPPORTED_TELEMT_VERSION
     comparison=$(helper version-compare "$RELEASE" "$current") || die 'Invalid release/installed SemVer'
-    if [[ $comparison == 0 ]]; then say 'already up to date'; path_health; return; fi
-    [[ $comparison == 1 ]] || die "Latest stable $RELEASE is older than installed $current; automatic downgrade refused"
+    if [[ $comparison == 0 ]]; then
+        [[ $current == "$RELEASE" ]] || die "Installed Telemt $current differs from exact supported $RELEASE; manual review required"
+        say 'already up to date'; path_health; return
+    fi
+    [[ $comparison == 1 ]] || die "Installed Telemt $current is newer than supported $RELEASE; automatic downgrade refused; use a newer reviewed manager/manual review"
     path_health || die 'Existing installation unhealthy; update refused'
     download_candidate
     update_transaction "$current"
@@ -823,9 +822,13 @@ update_manager() {
 check_manager() {
     load_installation
     renewal_scheduler_status
-    local failed=0 pid cert
-    say "Manager: $SCRIPT_VERSION; installed Telemt: $(binary_version "$BIN")"
-    if fetch_release; then say "Latest stable: $RELEASE"; else say 'Latest release unavailable'; failed=1; fi
+    local failed=0 pid cert current
+    current=$(binary_version "$BIN") || return 1
+    say "Manager: $SCRIPT_VERSION; installed Telemt: $current; supported Telemt: $SUPPORTED_TELEMT_VERSION"
+    if [[ $current != "$SUPPORTED_TELEMT_VERSION" ]]; then
+        say 'Installed version differs from this manager audited target; use --update for an older managed version, or a newer reviewed manager/manual review for a newer version.'
+        failed=1
+    fi
     systemctl show telemt.service -p ActiveState -p SubState -p NRestarts -p User -p Group -p MainPID -p AmbientCapabilities -p CapabilityBoundingSet
     pid=$(systemctl show telemt.service -p MainPID --value)
     if [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/status ]]; then

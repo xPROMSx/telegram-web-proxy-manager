@@ -78,16 +78,12 @@ for scenario in missing symlink changed extra-command group-writable other-writa
     RENEW_HOOK="$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager"
 done
 reset_hook
-if chown 65534 "$RENEW_HOOK" 2>/dev/null; then
-    assert_rejected 'deploy hook wrong owner' renewal_deploy_hook_contract
-else
-    printf 'SKIP - wrong owner: environment cannot change UID\n'
-fi
+chown 65534 "$RENEW_HOOK"
+assert_rejected 'deploy hook wrong owner' renewal_deploy_hook_contract
 reset_hook
 # Test the actual check orchestration with only unrelated runtime diagnostics mocked.
 load_installation() { certificate_health_contract; }
-binary_version() { printf 3.5.9; }
-fetch_release() { RELEASE=3.5.9; }
+binary_version() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; }
 listener_ready() { return 0; }
 path_health() { return 0; }
 recent_logs() { return 0; }

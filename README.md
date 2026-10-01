@@ -96,9 +96,12 @@ realip and stream/ssl_preread modules. x86_64 or aarch64, one recognized Nginx S
 IPv4 `:443`, optional existing `[::]:443`, outgoing PROXY protocol and an HTTP
 `conf.d/*.conf` include. The manager adds a loopback TLS frontend and an IPv4-only
 Telemt WEB listener. Telegram egress is direct or unauthenticated SOCKS5.
-Source-audited baseline: **3.5.9**; official 3.5.7/3.5.9 configuration tests are retained.
-Stable releases are evaluated against explicit configuration/runtime health contracts;
-incompatible candidates are refused or rolled back, without a version-number gate.
+Supported Telemt: **3.5.10**. Fresh installs and updates use only this reviewed
+release and embedded official SHA256 values. Older managed installs must pass
+compatibility checks; newer installs are never downgraded. Supporting a future
+release requires a new reviewed manager version. `--check` reports installed and
+supported versions locally. WARN is diagnostic; genuine ERROR/FATAL/panic and
+failed objective health checks cause failure. [CI coverage](docs/CI-COVERAGE.md).
 
 HTTP-01 uses standalone on free port 80, or a persistent managed webroot when
 port 80 belongs to the recognized Nginx redirect topology. Nginx is never stopped.

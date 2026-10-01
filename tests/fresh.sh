@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Full orchestration fixture. All OS/service/account operations are mocked.
+# Fresh transaction fixture. Service/path/journal transport and Certbot mocked;
+# optional official binary tests config healthcheck only, never runtime startup.
 set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 ROOT=$PWD
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
+eval "$(declare -f recent_logs | sed '1s/recent_logs/official_recent_logs/')"
 eval "$(declare -f ensure_certificate | sed '1s/ensure_certificate/official_ensure_certificate/')"
 SANDBOX=$(mktemp -d)
 fixture_cleanup() {
@@ -65,14 +67,15 @@ else
     certificate_renewal_contract() { return 0; } # Minimal fixture has no Certbot assets.
 fi
 if [[ -z ${REAL_CANDIDATE:-} ]]; then
-    binary_version() { printf '%s' "${FIXTURE_VERSION:-3.5.9}"; }
+    binary_version() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; }
 fi
-fetch_release() { RELEASE=${FIXTURE_VERSION:-3.5.9}; }
 download_candidate() {
+    RELEASE=$SUPPORTED_TELEMT_VERSION
     CANDIDATE="$TMP/candidate"
     if [[ -n ${REAL_CANDIDATE:-} ]]; then cp -- "$REAL_CANDIDATE" "$CANDIDATE";
     else printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; fi
     chmod 0755 "$CANDIDATE"
+    [[ $(binary_version "$CANDIDATE") == "$SUPPORTED_TELEMT_VERSION" ]] || die 'Fixture candidate must use the production pin'
 }
 export FIXTURE_ACCOUNTS="$SANDBOX/accounts"
 mkdir "$SANDBOX/account-tools"
@@ -106,7 +109,8 @@ candidate_healthcheck() {
 }
 wait_ready() { [[ -f $SANDBOX/final-validated ]]; printf ok >"$SANDBOX/readiness"; }
 path_health() { printf ok >"$SANDBOX/path-health"; }
-recent_logs() { printf ok >"$SANDBOX/log-health"; }
+journalctl() { cat "$ROOT/tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl"; }
+recent_logs() { printf ok >"$SANDBOX/log-health"; official_recent_logs "$@"; }
 SOCKS=${FIXTURE_SOCKS:-direct}
 socks_probe() { return 0; } # Config selection only; egress probes have separate coverage.
 if [[ -n ${FIXTURE_FAILURE:-} ]]; then
@@ -157,7 +161,13 @@ if [[ -n ${FIXTURE_FAILURE:-} ]]; then
         if [[ $FIXTURE_FAILURE == identity ]]; then
             sed -i 's/424242/424243/' "$FIXTURE_ACCOUNTS/passwd"
         fi
-        [[ $FIXTURE_FAILURE == none ]]
+        official_recent_logs "$@"
+    }
+    # Invoked through the production recent_logs function captured above.
+    # shellcheck disable=SC2317
+    journalctl() {
+        cat "$ROOT/tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl"
+        if [[ $FIXTURE_FAILURE != none ]]; then printf '{"MESSAGE":"ERROR telemt::fixture: controlled late health failure"}\n'; fi
     }
     helper() {
         if [[ $1 == fresh-mkdir ]]; then
@@ -252,12 +262,11 @@ assert (pathlib.Path(sys.argv[4]) / 'public/index.html').read_bytes() == (pathli
 assert c['upstreams'] == ([{'type': 'direct'}] if sys.argv[6] == 'direct' else [{'type': 'socks5', 'address': sys.argv[6]}])
 PY
 printf 'ok - staged/final semantics identical; no temporary path/secret leaks; final revalidation and readiness/path/log checks (%s)\n' "$SOCKS"
-if [[ -n ${REAL_CANDIDATE:-} ]]; then printf 'ok - REAL official candidate validated fresh staging before certificate and final filesystem before activation\n'; fi
+if [[ -n ${REAL_CANDIDATE:-} ]]; then printf 'ok - official pinned binary config healthcheck validates staged/final files; service/path checks and journal transport remain mocked\n'; fi
 before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file")
 install_manager >"$SANDBOX/rerun.log" 2>&1
 [[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file") == "$before" ]]
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
-if [[ -n ${FIXTURE_VERSION:-} ]]; then printf 'ok - compatible future fresh version %s accepted and managed load remains valid\n' "$FIXTURE_VERSION"; fi
 cp "$CONFIG" "$SANDBOX/original.toml"
 sed 's/secret_mode = "dd"/secret_mode = "plain"/' "$CONFIG" >"$SANDBOX/drift"
 cp "$SANDBOX/drift" "$CONFIG"

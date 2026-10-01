@@ -36,14 +36,9 @@ PY
 }
 make_binary "$BIN" 3.5.9 compatible
 CANDIDATE="$sandbox/candidate"
-make_binary "$CANDIDATE" 42.7.123 compatible
-RELEASE=42.7.123
+make_binary "$CANDIDATE" "$SUPPORTED_TELEMT_VERSION" compatible
 before=$(sha256sum "$CONFIG")
-candidate_compatibility "$CANDIDATE" "$CONFIG"
-[[ $(binary_version "$CANDIDATE") == 42.7.123 && $(sha256sum "$CONFIG") == "$before" ]]
-printf 'ok - future 42.7.123 strict candidate compatibility accepted without a version pin\n'
 load_installation() { candidate_compatibility "$BIN" "$CONFIG"; }
-fetch_release() { RELEASE=${fixture_latest:-42.7.123}; }
 download_candidate() { return 0; }
 restart_service() { return 0; }
 wait_ready() { [[ ${fixture_runtime_fail:-0} == 0 || $(binary_version "$BIN") == 3.5.9 ]]; }
@@ -61,26 +56,26 @@ assert_rejected() {
     printf 'ok - %s refused; TOML preserved\n' "$name"
 }
 update_manager >"$sandbox/update.log" 2>&1
-[[ $(binary_version "$BIN") == 42.7.123 && $(sha256sum "$CONFIG") == "$before" ]]
-printf 'ok - compatible future update activated; TOML byte-identical\n'
-fixture_latest=42.7.123
+[[ $(binary_version "$BIN") == "$SUPPORTED_TELEMT_VERSION" && $(sha256sum "$CONFIG") == "$before" ]]
+printf 'ok - older managed install upgrades to pinned Telemt 3.5.10 (mocked lifecycle); TOML byte-identical\n'
 update_manager >"$sandbox/equal.log" 2>&1
 grep -q 'already up to date' "$sandbox/equal.log"
 printf 'ok - equal version reports already up to date\n'
-fixture_latest=3.5.7
-assert_rejected 'latest stable older than installed' update_manager
-grep -q 'Latest stable 3.5.7 is older than installed 42.7.123; automatic downgrade refused' "$sandbox/refusal.log"
+make_binary "$BIN" 3.5.10+unreviewed compatible
+assert_rejected 'equal SemVer precedence but different exact supported version' update_manager
+grep -q 'differs from exact supported 3.5.10; manual review required' "$sandbox/refusal.log"
+[[ $(binary_version "$BIN") == 3.5.10+unreviewed ]]
+make_binary "$BIN" 42.7.123 compatible
+assert_rejected 'installed newer than supported target; no automatic downgrade' update_manager
+grep -q 'Installed Telemt 42.7.123 is newer than supported 3.5.10; automatic downgrade refused' "$sandbox/refusal.log"
 [[ $(binary_version "$BIN") == 42.7.123 ]]
 make_binary "$BIN" 3.5.9 compatible
-fixture_latest=3.5.7
-assert_rejected 'stable 3.5.7 versus installed 3.5.9 downgrade' update_manager
-fixture_latest=42.7.123
 for behavior in incompatible noop mutate; do
-    make_binary "$CANDIDATE" 42.7.123 "$behavior"
-    assert_rejected "future candidate $behavior" update_manager
+    make_binary "$CANDIDATE" "$SUPPORTED_TELEMT_VERSION" "$behavior"
+    assert_rejected "pinned candidate $behavior" update_manager
     [[ $(binary_version "$BIN") == 3.5.9 ]]
 done
-make_binary "$CANDIDATE" 42.7.123 compatible
+make_binary "$CANDIDATE" "$SUPPORTED_TELEMT_VERSION" compatible
 fixture_runtime_fail=1
 runtime_update() { trap cleanup EXIT; update_manager; }
 assert_rejected 'incompatible activated runtime rollback' runtime_update
@@ -91,14 +86,17 @@ for value in '01.2.3' '1.2' '4.0.0 extra'; do
     make_binary "$CANDIDATE" "$value" compatible
     assert_rejected 'malformed binary --version' binary_version "$CANDIDATE"
 done
-# Use the production selector, not the fixture override.
-fetch_release_real() {
-    (source ./telemt-web-manager.sh; TMP="$sandbox/tmp"; fetch_release)
-}
-# Public latest metadata must reject both draft and prerelease flags.
-for state in prerelease draft; do
-    curl() { printf '{"tag_name":"42.7.123","draft":%s,"prerelease":%s}' \
-        "$( [[ $state == draft ]] && printf true || printf false )" \
-        "$( [[ $state == prerelease ]] && printf true || printf false )" >"$sandbox/tmp/release.json"; }
-    assert_rejected "latest metadata $state" fetch_release_real
- done
+# Check reports the audited target locally and fails mismatched installations.
+# Objective health/lifecycle and certificate commands remain fixture-only.
+load_installation() { return 0; }
+renewal_scheduler_status() { return 0; }
+systemctl() { if [[ $* == *MainPID* ]]; then printf '%s\n' "$$"; fi; }
+listener_ready() { return 0; }
+openssl() { return 0; }
+make_binary "$BIN" "$SUPPORTED_TELEMT_VERSION" compatible
+check_manager >"$sandbox/check.log" 2>&1
+grep -q 'installed Telemt: 3.5.10; supported Telemt: 3.5.10' "$sandbox/check.log"
+grep -q 'Check result: OK' "$sandbox/check.log"
+make_binary "$BIN" 42.7.123 compatible
+assert_rejected 'check newer installation requires reviewed manager/manual review' check_manager
+printf 'ok - check reports installed/supported versions without a moving release query\n'
