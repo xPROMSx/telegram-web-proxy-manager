@@ -95,7 +95,8 @@ def extract_binary(archive, output):
 
 
 def runtime_contract(path, data):
-    c = tomllib.loads(Path(path).read_text())
+    c = read_config(path)
+    managed_web_contract(c, data)
     general = c.get("general", {})
     require(general.get("use_middle_proxy") is False, "middle proxy requires runtime review")
     require(c.get("censorship", {}).get("tls_emulation") is False)
@@ -109,19 +110,76 @@ def runtime_contract(path, data):
         paths.append(general.get("unknown_dc_log_path", "unknown-dc.txt"))
     for value in paths:
         p = Path(value)
-        require(p.is_absolute() and p.is_relative_to(state) and ".." not in p.parts,
+        require(p != state and p.is_absolute() and p.is_relative_to(state) and ".." not in p.parts,
                 "active state path escapes systemd sandbox; manual review required")
 
 
-def renewal_contract(root, host, webroot):
-    path = Path(root) / "renewal" / f"{domain(host)}.conf"
+def renewal_info(root, host):
+    """Read Certbot sections without executing hooks or interpolating values."""
+    host = domain(host)
+    path = Path(root) / "renewal" / f"{host}.conf"
     safe_path(path)
-    text = path.read_text()
-    require(re.search(r"(?m)^authenticator\s*=\s*webroot\s*$", text))
-    pattern = re.escape(str(webroot))
-    require(re.search(rf"(?m)^webroot_path\s*=\s*{pattern},?\s*$", text))
-    maps = re.findall(rf"(?m)^{re.escape(host)}\s*=\s*(.+)$", text)
-    require(not maps or maps == [str(webroot)])
+    sections = {"": {}}
+    section = ""
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line in ("[renewalparams]", "[[webroot_map]]"):
+            section = line
+            require(section not in sections, "duplicate renewal section")
+            sections[section] = {}
+        else:
+            require(not line.startswith("[") and "=" in line, "unsupported renewal syntax")
+            key, value = (part.strip() for part in line.split("=", 1))
+            require(key not in sections[section], "duplicate renewal option")
+            sections[section][key] = value
+    params = sections.get("[renewalparams]", {})
+    kind = params.get("authenticator")
+    require(kind in ("standalone", "webroot"), "unrecognized certificate authenticator")
+    for key in ("cert", "privkey", "chain", "fullchain"):
+        expected = str(Path(root) / "live" / host / f"{key}.pem")
+        require(sections[""].get(key, expected) == expected, "foreign certificate lineage")
+    expected = str(Path(root) / "archive" / host)
+    require(sections[""].get("archive_dir", expected) == expected)
+    return kind, params, sections.get("[[webroot_map]]", {})
+
+
+def renewal_contract(root, host, webroot):
+    kind, params, mapping = renewal_info(root, host)
+    require(kind == "webroot")
+    require(params.get("webroot_path", "").rstrip(",") == str(webroot))
+    require(not mapping or mapping == {host: str(webroot)}, "foreign renewal webroot map")
+
+
+def renewal_kind(root, host, webroot):
+    kind, params, mapping = renewal_info(root, host)
+    if kind == "webroot":
+        renewal_contract(root, host, webroot)
+    else:
+        require(not params.get("webroot_path") and not mapping)
+    print(kind)
+
+
+def acme_state(root, host, webroot):
+    """Accept only complete persistent manager state for webroot renewal."""
+    webroot = Path(webroot)
+    for path in (webroot, webroot / ".well-known", webroot / ".well-known/acme-challenge"):
+        safe_path(path)
+        require(path.is_dir(), "ACME webroot incomplete")
+    marker = webroot / ".telemt-web-manager"
+    safe_path(marker)
+    require(marker.is_file() and marker.read_text() == host + "\n", "ACME marker missing or changed")
+    vhost = Path(root) / "conf.d/telemt-web-manager-acme.conf"
+    safe_path(vhost)
+    require(vhost.is_file() and vhost.read_text() == render_acme(host, webroot),
+            "ACME vhost missing or changed")
+    parser = Nginx(root)
+    nodes = parser.read(parser.root / "nginx.conf")
+    http = exact(nodes, "http")
+    require(len(http) == 1 and sum(n.path == vhost.resolve()
+                                  for n in exact(http[0].children, "server")) == 1,
+            "ACME vhost not included exactly once")
 
 
 def domain(value):
@@ -519,66 +577,156 @@ server {{
 '''
 
 
-def config_info(path):
+def read_config(path):
     raw = Path(path).read_bytes()
     require(not re.search(rb"(?m)^\s*include\s*=", raw), "config includes need manual review")
     c = tomllib.loads(raw.decode())
     require(not any(k in c for k in ("include", "includes")), "config includes need manual review")
+    return c
+
+
+def managed_web_contract(c, data):
+    general = c.get("general", {})
+    require(general.get("config_strict") is True, "strict config required")
+    modes = general.get("modes", {})
+    require(modes.get("classic", False) is False and modes.get("secure") is True
+            and modes.get("tls", True) is False, "unsupported WEB-only modes")
+    require(c.get("censorship", {}).get("mask") is False
+            and c.get("censorship", {}).get("tls_emulation") is False)
+    network = c.get("network", {})
+    require(network.get("ipv4", True) is True and network.get("ipv6") is False
+            and type(network.get("prefer", 4)) is int and network.get("prefer", 4) == 4
+            and general.get("prefer_ipv6", False) is False, "unsupported IP family contract")
+    require(network.get("multipath", False) is False and not network.get("dns_overrides"),
+            "network routing overrides need review")
     server = c.get("server", {})
+    require(type(server.get("port")) is int and server["port"] == 18080
+            and server.get("proxy_protocol", False) is False)
+    require(not any(server.get(k) for k in ("listen_unix_sock", "metrics_port", "metrics_listen"))
+            and server.get("listen_tcp", True) is True, "extra listener requires review")
+    require(server.get("api", {}).get("enabled") is False and not server.get("admin_api"),
+            "enabled or aliased API needs review")
+    conntrack = server.get("conntrack_control", {})
+    require(conntrack.get("inline_conntrack_control") is True
+            and conntrack.get("mode", "tracked") == "tracked"
+            and conntrack.get("backend", "auto") == "auto", "conntrack policy needs review")
     listeners = server.get("listeners", [])
     require(len(listeners) == 1 and listeners[0].get("ip") == "127.0.0.1"
+            and type(listeners[0].get("port")) is int
             and listeners[0].get("port") == 18080 and listeners[0].get("transport") == "web"
             and listeners[0].get("proxy_protocol", False) is False
             and listeners[0].get("web_client_ip_source") == "x_forwarded_for"
             and listeners[0].get("web_trusted_proxy_cidrs") == ["127.0.0.1/32"],
             "unsupported listener; manual review required")
+    require(listeners[0].get("synlimit", False) is False, "listener firewall policy needs review")
     web = c.get("web", {})
     require(web.get("enabled") is True and web.get("carrier") == "https"
             and not web.get("carriers"), "unsupported WEB carrier")
     vhosts = web.get("vhosts", [])
     require(len(vhosts) == 1 and not vhosts[0].get("base_path"), "unsupported WEB scope")
-    require(server.get("api", {}).get("enabled") is False, "enabled API needs manual review")
     host = domain(vhosts[0]["host"])
+    address, port = vhosts[0]["public_addr"].rsplit(":", 1)
+    ipv4(address)
+    public = ipaddress.ip_address(address)
+    require(port == "443" and not public.is_unspecified and not public.is_loopback
+            and not public.is_multicast, "unsupported public address")
+    decoy = vhosts[0].get("decoy", {})
+    require(decoy.get("mode") == "static_directory"
+            and decoy.get("directory") == str(Path(data) / "public")
+            and decoy.get("index", "index.html") == "index.html", "decoy contract changed")
+    profiles = vhosts[0].get("profiles", [])
+    require(len(profiles) == 1 and profiles[0].get("user") == "web-user"
+            and profiles[0].get("secret_mode") == "dd", "WEB profile binding changed")
+    access = c.get("access", {})
+    users = access.get("users", {})
+    require(set(users) == {"web-user"} and isinstance(users["web-user"], str)
+            and re.fullmatch(r"[a-fA-F0-9]{32}", users["web-user"]), "access binding changed")
+    require(access.get("user_enabled", {}).get("web-user", True) is True)
     upstreams = c.get("upstreams", [])
     require(len(upstreams) == 1, "ambiguous upstream configuration")
     upstream = upstreams[0]
     kind = upstream.get("type")
-    require(kind in ("direct", "socks5"), "unsupported upstream")
-    address = upstream.get("address", "")
+    require(kind in ("direct", "socks5") and upstream.get("enabled", True) is True)
+    require(not any(upstream.get(k) for k in
+                    ("interface", "bind_addresses", "bindtodevice", "force_bind", "scopes",
+                     "username", "password", "url", "user_id")), "upstream routing/auth needs review")
+    require(upstream.get("ipv4", True) is True and upstream.get("ipv6", False) is False
+            and type(upstream.get("prefer", 4)) is int and upstream.get("prefer", 4) == 4)
+    socks = upstream.get("address", "")
     if kind == "socks5":
-        socks_address(address)
-        require(not upstream.get("username") and not upstream.get("password"), "SOCKS auth needs manual review")
-    print(host)
-    print(address if kind == "socks5" else "direct")
+        socks_address(socks)
+    else:
+        require(not socks, "direct upstream has an unexpected address")
+    return host, socks if kind == "socks5" else "direct", address
 
 
-def classify(version, os_version, backend, text):
-    # Only a whole known upstream warning with no extra error is downgraded.
-    known = 0
-    failures = 0
-    warnings = 0
-    for line in text.splitlines():
-        if not re.search(r"\b(WARN|ERROR|FATAL|panic)\b", line, re.I):
+def config_info(path):
+    c = read_config(path)
+    data = c.get("general", {}).get("data_path", "/var/lib/telemt")
+    require(isinstance(data, str) and Path(data).is_absolute())
+    for value in managed_web_contract(c, data):
+        print(value)
+
+
+def classify(version, os_version, backend, text, records=None):
+    # Old configs may emit ANSI SGR; new configs disable colors explicitly.
+    # Strip only color sequences, not arbitrary control/error text.
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    if records is None:
+        records = []
+        for line in text.splitlines():
+            if re.match(r"^(?:\d{4}-\d\d-\d\dT\S+\s+)?(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL|panic)\b", line, re.I):
+                records.append(line)
+            elif records:
+                records[-1] += "\n" + line
+            elif line.strip():
+                records.append(line)
+    require(all(isinstance(record, str) for record in records), "binary journal message requires review")
+    helper_version = r"1\.8\.(?:10|11)"
+    backend_ok = re.fullmatch(rf"iptables v{helper_version} \(nf_tables\)", backend) is not None
+    diagnostic = (
+        rf"(?P<tool>ip6?tables) v{helper_version} \(nf_tables\): "
+        r"Chain 'TELEMT_NOTRACK' does not exist\.?"
+        r"(?:\nTry \x60(?P=tool) -h' or '(?P=tool) --help' for more information\.)?"
+    )
+    warning = re.compile(
+        r"^(?:\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d\d:\d\d)\s+)?"
+        r"WARN\s+(?:[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*:\s+)?"
+        r"Failed to reconcile conntrack firewall policy"
+        r"(?:\s+generation=[0-9]+)?\s+error=startup recovery failed: (?P<payload>.+)$",
+        re.S,
+    )
+    known = failures = warnings = 0
+    for record in records:
+        record = re.sub(r"\x1b\[[0-9;]*m", "", record)
+        # Severity wins even if the record also contains the known warning.
+        if re.search(r"\b(ERROR|FATAL|panic)\b(?![=])", record, re.I):
+            failures += 1
             continue
-        exact_error = "Chain 'TELEMT_NOTRACK' does not exist"
-        expected = (version == "3.5.9" and os_version == "ubuntu:26.04"
-                    and "nf_tables" in backend and "WARN" in line
-                    and "Failed to reconcile conntrack firewall policy" in line
-                    and "startup recovery failed:" in line and exact_error in line)
-        # Permit repeated identical iptables messages, but no permission/other failures.
-        remainder = line.split("startup recovery failed:", 1)[-1]
-        remainder = remainder.replace("Failed to reconcile conntrack firewall policy", "")
-        remainder = remainder.replace(exact_error, "")
-        remainder = re.sub(r"ip6?tables v[0-9.]+ \(nf_tables\):", "", remainder)
-        remainder = re.sub(r'''[\s;:."']''', "", remainder)
-        if expected and not remainder:
+        if not re.search(r"\bWARN\b", record, re.I):
+            if re.search(r"Operation not permitted|Permission denied", record, re.I):
+                failures += 1
+            continue
+        match = warning.fullmatch(record)
+        diagnostics = match["payload"].split("; ") if match else []
+        expected = (version == "3.5.9" and os_version in ("ubuntu:24.04", "ubuntu:26.04")
+                    and backend_ok and diagnostics
+                    and all(re.fullmatch(diagnostic, part) for part in diagnostics))
+        if expected:
             known += 1
-        elif re.search(r"ERROR|FATAL|panic|conntrack|Operation not permitted|Permission denied", line, re.I):
+        elif re.search(r"conntrack|Operation not permitted|Permission denied", record, re.I):
             failures += 1
         else:
             warnings += 1
     print(f"logs: failures={failures}, warnings={warnings}, known_nonfatal={known}")
     return 1 if failures else 0
+
+
+def classify_journal(version, os_version, backend, text):
+    # Journald JSON preserves MESSAGE boundaries, including embedded newlines.
+    # A continuation that looks like INFO must not hide extra stderr.
+    records = [json.loads(line)["MESSAGE"] for line in text.splitlines() if line.strip()]
+    return classify(version, os_version, backend, "", records)
 
 
 def main():
@@ -611,8 +759,14 @@ def main():
         runtime_contract(*args)
     elif command == "renewal-contract":
         renewal_contract(*args)
+    elif command == "renewal-kind":
+        renewal_kind(*args)
+    elif command == "acme-state":
+        acme_state(*args)
     elif command == "classify":
         return classify(*args[:3], sys.stdin.read())
+    elif command == "classify-journal":
+        return classify_journal(*args[:3], sys.stdin.read())
     else:
         raise ValueError("unknown helper command")
     return 0
@@ -621,7 +775,7 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (ValueError, OSError, KeyError, TypeError, IndexError, tarfile.TarError):
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, IndexError, tarfile.TarError):
         # Config parse errors may contain credentials. Never echo exception text.
         print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
         sys.exit(1)

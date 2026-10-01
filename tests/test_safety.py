@@ -97,9 +97,11 @@ class SafetyTests(unittest.TestCase):
     def test_known_warning_narrow_classification(self):
         line = "WARN Failed to reconcile conntrack firewall policy error=startup recovery failed: iptables v1.8.11 (nf_tables): Chain 'TELEMT_NOTRACK' does not exist"
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(s.classify("3.5.9", "ubuntu:26.04", "nf_tables", line), 0)
+            backend = "iptables v1.8.11 (nf_tables)"
+            self.assertEqual(s.classify("3.5.9", "ubuntu:26.04", backend, line), 0)
+            self.assertEqual(s.classify("3.5.9", "ubuntu:24.04", backend, line), 0)
             for version, os, backend in (("3.6.0", "ubuntu:26.04", "nf_tables"),
-                                         ("3.5.9", "ubuntu:24.04", "nf_tables"),
+                                         ("3.5.9", "ubuntu:22.04", "nf_tables"),
                                          ("3.5.9", "ubuntu:26.04", "legacy")):
                 self.assertEqual(s.classify(version, os, backend, line), 1)
             self.assertEqual(s.classify("3.5.9", "ubuntu:26.04", "nf_tables", line + "; Permission denied"), 1)

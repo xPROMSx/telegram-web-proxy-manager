@@ -22,6 +22,7 @@ unit = dict(line.split('=', 1) for line in (t/'unit').read_text().splitlines() i
 state = Path(unit['ReadWritePaths'])
 assert str(state) == '/var/lib/telemt/state'
 assert c['general']['config_strict'] is True
+assert c['general']['disable_colors'] is True
 assert c['general']['data_path'] == unit['WorkingDirectory'] == '/var/lib/telemt'
 for key in ('beobachten_file', 'quota_state_path', 'unknown_dc_log_path',
             'proxy_secret_path', 'proxy_config_v4_cache_path', 'proxy_config_v6_cache_path'):

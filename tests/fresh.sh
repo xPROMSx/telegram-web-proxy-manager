@@ -26,6 +26,7 @@ dig() { if [[ $* == *' A '* ]]; then printf '%s\n' "$PUBLIC_IP"; fi; }
 nginx_test() { return 0; }
 nginx_reload() { return 0; }
 nginx_runtime_identity() { return 0; }
+nginx_port_owned() { return 0; }
 managed_permissions() { return 0; } # Fixture runs as the CI user, not root.
 ensure_certificate() { return 0; }
 if [[ -f $NGINX_ROOT/sites-enabled/80.conf ]]; then
@@ -42,7 +43,10 @@ if [[ -f $NGINX_ROOT/sites-enabled/80.conf ]]; then
             "$ACME_ROOT" >"$CERT_ROOT/renewal/$DOMAIN.conf"
     }
     ensure_certificate() { issue_webroot_certificate; nginx_plan; }
+else
+    certificate_renewal_contract() { return 0; } # Minimal fixture has no Certbot assets.
 fi
+binary_version() { printf 3.5.9; }
 fetch_release() { RELEASE=3.5.9; }
 download_candidate() { CANDIDATE="$TMP/candidate"; printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; chmod 0755 "$CANDIDATE"; }
 getent() { return 2; }
@@ -71,3 +75,14 @@ before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file")
 install_manager >"$SANDBOX/rerun.log" 2>&1
 [[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file") == "$before" ]]
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
+cp "$CONFIG" "$SANDBOX/original.toml"
+sed 's/secret_mode = "dd"/secret_mode = "plain"/' "$CONFIG" >"$SANDBOX/drift"
+cp "$SANDBOX/drift" "$CONFIG"
+drift_hash=$(sha256sum "$CONFIG")
+set +e
+(set -Eeuo pipefail; load_installation) >"$SANDBOX/drift.log" 2>&1
+result=$?
+set -e
+[[ $result != 0 && $(sha256sum "$CONFIG") == "$drift_hash" ]]
+cp "$SANDBOX/original.toml" "$CONFIG"
+printf 'ok - installation load refuses meaningful TOML drift without rewriting it\n'

@@ -23,7 +23,8 @@
 | Известная ошибка | [command.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/command.rs): `is_not_found_error()` не распознаёт `Chain 'TELEMT_NOTRACK' does not exist`. Проверенный `main` содержал тот же код. |
 
 В менеджере это предупреждение считается известным non-fatal только при сочетании:
-Telemt 3.5.9, Ubuntu 26.04, `iptables --version` с `nf_tables`, уровень WARN,
+Telemt 3.5.9, Ubuntu 24.04/26.04, точный backend
+`iptables v1.8.10 (nf_tables)` или `iptables v1.8.11 (nf_tables)`, уровень WARN,
 контекст `Failed to reconcile conntrack firewall policy`, startup recovery и
 точный текст отсутствующей цепочки. Дополнительная ошибка, другой backend,
 версия или контекст приводят к failure. Правила iptables менеджер не создаёт.
@@ -203,3 +204,108 @@ asset URL and unambiguous digest, no candidate execution before verification,
 root-only config/backups/staging, suppressed candidate diagnostics and raw journals,
 signal rollback, managed manifest/hash checks and required public HTTPS probe.
 No production VPS or secrets were used. See both READMEs for intentional boundaries.
+
+## Third review, 2026-10-01: conntrack evidence
+
+Official GitHub API and refs were rechecked: stable remains **3.5.9**, Telemt
+main/peeled tag is `e3f62db3474fdad12b4b9a20bdbac59b26b311bb`, and 3x-ui-pro
+main remains `a2c430cd6dec7c86d873dcda3544a61e7ac41144`. Version and topology
+support have not been expanded.
+
+Ubuntu's [Noble package record](https://packages.ubuntu.com/noble/net/iptables)
+lists iptables 1.8.10-3ubuntu2. The
+[official iptables 1.8.10 source archive](https://www.netfilter.org/projects/iptables/files/iptables-1.8.10.tar.xz)
+contains `nft_check_chain()` in `iptables/nft.c`: it emits
+`Chain '%s' does not exist` when a named jump chain is absent. This is an
+nf_tables frontend diagnostic, not an Ubuntu-26-only property.
+
+Audited [Telemt cleanup](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/iptables.rs)
+removes the PREROUTING jump to TELEMT_NOTRACK and aggregates failures with "; ".
+[command.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/command.rs)
+forces LC_ALL=C but omits this message from NotFound recognition.
+[transaction.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/transaction.rs)
+wraps it as startup recovery failure;
+[actor.rs](https://github.com/telemt/telemt/blob/3.5.9/src/conntrack_control/firewall/actor.rs)
+emits WARN with generation/error fields and retries.
+It is a failed cleanup/reconciliation, not proof of a fatal WEB listener failure.
+Downgrading this warning does not prove absence of stale rules or overall health:
+listener, identity, HTTP, TLS and egress tests remain mandatory.
+
+The exception now requires **all** of: Telemt 3.5.9, supported Ubuntu 24.04/26.04,
+an exact reviewed iptables 1.8.10/1.8.11 nf_tables version string, and a complete
+`Failed to reconcile conntrack firewall policy ... error=startup recovery failed:`
+WARN record. Only exact TELEMT_NOTRACK diagnostics from iptables/ip6tables are
+accepted, including an optional full stop and exact tool-specific help line.
+Repeated diagnostics are permitted only with upstream's "; " separator.
+Timestamp/module/generation framing is explicitly constrained.
+No arbitrary punctuation or unexpected stderr is discarded. Other chains,
+contexts, legacy backends, helper/Telemt versions, permissions and ERROR/FATAL/panic
+fail. The lowercase structured `error=` field is not an ERROR severity.
+
+`tests/conntrack.sh` captures the actual Noble iptables-nft diagnostic in an
+isolated CI network namespace, without touching host firewall state.
+Ubuntu 26.04 is covered by strict classifier fixtures, not a live netfilter claim.
+
+## Third review: deterministic journal and managed TOML
+
+The [general schema](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/general.rs)
+defaults `disable_colors` to false.
+[bootstrap.rs](https://github.com/telemt/telemt/blob/3.5.9/src/maestro/bootstrap.rs)
+selects `with_ansi(false)` and disables maestro colors when it is true.
+Fresh configs now explicitly use `disable_colors = true` for systemd/journald.
+Existing TOML is never rewritten to add it. Only ANSI SGR sequences are normalized
+for older configs. `recent_logs()` reads journald JSON MESSAGE records so embedded
+newlines, even lines starting with INFO, cannot hide extra stderr. Diagnostics
+emit aggregate counts only. Upstream journal link logging remains enabled.
+
+Semantic acceptance follows audited
+[WEB](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/web.rs),
+[server](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/server.rs),
+[network/upstream](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/network.rs)
+and [access](https://github.com/telemt/telemt/blob/3.5.9/src/config/types/access.rs)
+schemas. Load now validates:
+
+- Strict config; one loopback WEB listener and matching server port; exact XFF
+  trust; no extra metrics/Unix sockets or enabled/aliased API.
+- HTTPS carrier; one canonical hostname and IPv4 public_addr:443; empty base path.
+- One web-user/dd profile bound to one 16-byte hexadecimal access secret.
+- Static decoy at DATA/public, using index.html.
+- Tracked/auto conntrack; secure-only modes; masking/TLS emulation/middle proxy off.
+- IPv4-only, prefer=4; one enabled direct or unauthenticated SOCKS5 upstream,
+  without interface, bind, scope, DNS or family routing overrides.
+- Existing active-write-path constraints and stderr logging. A state directory
+  itself cannot be used as a writable state filename.
+
+New manifests record the public IPv4 and detect drift from it. Older schema-1
+manifests did not record the original IP; they validate the supported IPv4:443
+shape but cannot prove its historical value. There is no automatic manifest/TOML
+migration. Unknown installed runtimes are rejected after ownership/permission
+checks, before binary healthcheck. Every load also runs the audited installed
+binary's suppressed strict healthcheck, covering unknown keys and invalid tuning.
+
+Session limits, weights and unrelated timeouts remain tunable. Inactive caches
+are not forced to cosmetic equality. Safe explicit/default equivalences are
+accepted where the audited defaults are relevant, including omitted static index
+and an older config without the new color setting.
+
+## Third review: Certbot partial success
+
+Certbot lineage/account/renewal files are never deleted or rewritten by rollback.
+If Certbot succeeds but certificate or renewal post-validation fails, the ACME
+Nginx/marker transaction rolls back while the lineage survives. Subsequent
+invocations inspect renewal settings even when certificate/key already exist.
+
+Exact manager webroot renewal requires safe persistent webroot/challenge
+directories, an exact domain ownership marker, the exact loaded managed ACME
+vhost and port 80 owned by recognized Nginx. Missing/changed state fails with a
+certificate-retained recovery message. No automatic reconstruction is attempted:
+rollback can remove the proof of ownership. A complete manager webroot is reused
+idempotently, without another Certbot issuance.
+
+Standalone certificates are accepted only when newly issued in this invocation
+or associated with an existing manager manifest. Unrelated certificates and
+orphan live/archive/renewal assets refuse adoption/new issuance. The renewal
+parser is section-aware, rejects duplicate/foreign maps and checks lineage path
+options when present. The manifest's strategy must agree. Check/update/repair
+never invoke Certbot or change its state. See [OPERATIONS.md](OPERATIONS.md)
+for deliberate recovery and remaining live-acceptance requirements.
