@@ -22,6 +22,8 @@ jobs:
         run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh
       - name: Published Telemt configuration contract (SHA256 verified)
         run: bash tests/upstream.sh
+      - name: Version-independent compatibility, downgrade and rollback regressions
+        run: bash tests/versions.sh && FIXTURE_VERSION=42.7.123 bash tests/fresh.sh && FIXTURE_VERSION=42.7.123 FIXTURE_INCOMPATIBLE=1 bash tests/fresh.sh
       - name: Actual Ubuntu nf_tables missing-chain diagnostic (isolated namespace)
         run: bash tests/conntrack.sh
       - name: Writable state and systemd contract

@@ -67,6 +67,7 @@ BIN="$SANDBOX/reject-bin" CONFIG="$SANDBOX/reject-config"
 printf old >"$BIN"; printf original >"$CONFIG"
 RELEASE=3.6.0 CANDIDATE="$SANDBOX/candidate"
 candidate_healthcheck() { return 1; }
+candidate_compatibility() { candidate_healthcheck "$@"; }
 set +e
 (update_transaction 3.5.9) >"$SANDBOX/rejection.log" 2>&1
 rc=$?
@@ -82,6 +83,7 @@ BIN="$SANDBOX/concurrent-bin" CONFIG="$SANDBOX/concurrent-config"
 printf old >"$BIN"; printf original >"$CONFIG"
 RELEASE=3.6.0 CANDIDATE="$SANDBOX/candidate"
 candidate_healthcheck() { printf edited >"$CONFIG"; }
+candidate_compatibility() { candidate_healthcheck "$@"; }
 backup_begin() { exit 56; }
 set +e
 (update_transaction 3.5.9) >"$SANDBOX/concurrent.log" 2>&1
@@ -92,17 +94,18 @@ set -e
 
 # SC2016: child shell expands paths.
 # shellcheck disable=SC2016
-run_case 'future runtime contract is not automatically adopted' bash -c '
+run_case 'future release reaches candidate validation without a version pin' bash -c '
 source "$ROOT/telemt-web-manager.sh"
 load_installation() { return 0; }
 binary_version() { printf 3.5.9; }
-fetch_release() { RELEASE=3.6.0; }
+fetch_release() { RELEASE=42.7.123; }
+path_health() { return 0; }
 download_candidate() { exit 57; }
 set +e
 (update_manager) >"$SANDBOX/future.log" 2>&1
 rc=$?
 set -e
-[[ $rc != 0 && $rc != 57 ]]
+[[ $rc == 57 ]]
 '
 
 # SC2016: this literal is executed by the child Bash, which must expand its variables.
@@ -137,6 +140,7 @@ printf "{\"snapshot\":{}}" >"$TMP/nginx-plan.json"
 CANDIDATE="$SANDBOX/new-bin"; printf new >"$CANDIDATE"
 RELEASE=3.6.0
 candidate_healthcheck() { return 0; }
+candidate_compatibility() { candidate_healthcheck "$@"; }
 restart_service() { printf "%s\n" "$(cat "$BIN")" >>"$SANDBOX/restarts"; }
 wait_ready() { [[ $(cat "$BIN") == old ]]; }
 set +e

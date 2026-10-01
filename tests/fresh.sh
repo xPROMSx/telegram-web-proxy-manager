@@ -29,7 +29,7 @@ nginx_reload() { return 0; }
 nginx_runtime_identity() { return 0; }
 nginx_port_owned() { return 0; }
 managed_permissions() { return 0; } # Fixture runs as the CI user, not root.
-ensure_certificate() { return 0; }
+ensure_certificate() { printf attempted >"$SANDBOX/certificate-attempt"; }
 validate_certificate() { return 0; } # Certificate validation has separate real-cert tests.
 stat() {
     # Account/chown are mocked in this non-root orchestration fixture only.
@@ -53,8 +53,8 @@ if [[ -f $NGINX_ROOT/sites-enabled/80.conf ]]; then
 else
     certificate_renewal_contract() { return 0; } # Minimal fixture has no Certbot assets.
 fi
-binary_version() { printf 3.5.9; }
-fetch_release() { RELEASE=3.5.9; }
+binary_version() { printf '%s' "${FIXTURE_VERSION:-3.5.9}"; }
+fetch_release() { RELEASE=${FIXTURE_VERSION:-3.5.9}; }
 download_candidate() { CANDIDATE="$TMP/candidate"; printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; chmod 0755 "$CANDIDATE"; }
 getent() { return 2; }
 useradd() { return 0; }
@@ -66,10 +66,24 @@ install() {
     done
     command install "${args[@]}"
 }
-candidate_healthcheck() { helper config-info "$2" >/dev/null; }
+candidate_healthcheck() {
+    [[ ${FIXTURE_INCOMPATIBLE:-0} != 1 ]] || return 1
+    ! grep -q '^__telemt_web_manager_unknown_contract = ' "$2" || return 1
+    helper config-info "$2" >/dev/null
+}
 wait_ready() { return 0; }
 path_health() { return 0; }
 recent_logs() { return 0; }
+if [[ ${FIXTURE_INCOMPATIBLE:-0} == 1 ]]; then
+    set +e
+    (set -Eeuo pipefail; install_manager) >"$SANDBOX/reject.log" 2>&1
+    result=$?
+    set -e
+    [[ $result != 0 && ! -e $BIN && ! -e $CONFIG && ! -e $UNIT && ! -e $STATE && ! -e $DATA && ! -e $CONFIG_DIR && ! -e $RENEW_HOOK && ! -e $SANDBOX/certificate-attempt ]]
+    grep -q 'no certificate issuance attempted' "$SANDBOX/reject.log"
+    printf 'ok - incompatible future fresh candidate refused before certificate/persistent installation\n'
+    exit 0
+fi
 install_manager >"$SANDBOX/manager.log" 2>&1
 [[ -f $BIN && -f $UNIT && -f $CONFIG && -f $STATE/manifest.json && -f $RENEW_HOOK ]]
 [[ $(stat -c %a "$CONFIG") == 640 && $(stat -c %a "$STATE/web-link.txt") == 600 ]]
@@ -84,6 +98,7 @@ before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file")
 install_manager >"$SANDBOX/rerun.log" 2>&1
 [[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file") == "$before" ]]
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
+if [[ -n ${FIXTURE_VERSION:-} ]]; then printf 'ok - compatible future fresh version %s accepted and managed load remains valid\n' "$FIXTURE_VERSION"; fi
 cp "$CONFIG" "$SANDBOX/original.toml"
 sed 's/secret_mode = "dd"/secret_mode = "plain"/' "$CONFIG" >"$SANDBOX/drift"
 cp "$SANDBOX/drift" "$CONFIG"

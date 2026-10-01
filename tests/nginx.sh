@@ -12,6 +12,9 @@ finish() {
 }
 trap finish EXIT
 cp -r "${1:-tests/fixtures/nginx}" "$test_dir/nginx"
+# Mandatory package bytes, copied inside the same include trust boundary.
+cp /etc/nginx/mime.types "$test_dir/nginx/mime.types"
+sed -i 's/http {/http { include mime.types;/' "$test_dir/nginx/nginx.conf"
 mkdir -p "$test_dir/nginx/conf.d" "$test_dir/logs"
 mkdir -p "$test_dir/acme/.well-known/acme-challenge"
 printf challenge-fixture >"$test_dir/acme/.well-known/acme-challenge/probe"
@@ -22,6 +25,13 @@ for edit in json.loads(pathlib.Path(sys.argv[1]).read_text())['edits']:
     pathlib.Path(edit['path']).write_text(edit['content'])
 PY
 python3 lib/safety.py nginx-plan "$test_dir/nginx" proxy.example.com "$test_dir/plan.json" "$test_dir/acme"
+python3 - "$test_dir/plan.json" "$test_dir/nginx/mime.types" <<'PY'
+import hashlib, json, pathlib, sys
+path = pathlib.Path(sys.argv[2])
+assert path.read_bytes() == pathlib.Path('/etc/nginx/mime.types').read_bytes()
+assert json.loads(pathlib.Path(sys.argv[1]).read_text())['snapshot'][str(path)] == hashlib.sha256(path.read_bytes()).hexdigest()
+PY
+printf 'ok - real Ubuntu package mime.types parsed and integrity-snapshotted in Nginx/ACME plans\n'
 python3 - "$test_dir/plan.json" <<'PY'
 import json, pathlib, sys
 for edit in json.loads(pathlib.Path(sys.argv[1]).read_text())['edits']:

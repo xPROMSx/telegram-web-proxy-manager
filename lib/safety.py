@@ -20,6 +20,33 @@ def require(ok, message="automatic nginx integration not possible"):
         raise ValueError(message)
 
 
+def semver(value):
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+                         r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+                         r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?", value)
+    require(match is not None, "invalid SemVer")
+    pre = match[4].split(".") if match[4] else []
+    require(all(not x.isdigit() or x == "0" or not x.startswith("0") for x in pre))
+    return tuple(int(match[i]) for i in (1, 2, 3)), pre
+
+
+def version_compare(left, right):
+    a, ap = semver(left)
+    b, bp = semver(right)
+    if a != b:
+        return (a > b) - (a < b)
+    if not ap or not bp:
+        return (not ap) - (not bp)
+    for x, y in zip(ap, bp):
+        if x != y:
+            if x.isdigit() and y.isdigit():
+                return (int(x) > int(y)) - (int(x) < int(y))
+            if x.isdigit() != y.isdigit():
+                return -1 if x.isdigit() else 1
+            return (x > y) - (x < y)
+    return (len(ap) > len(bp)) - (len(ap) < len(bp))
+
+
 def safe_path(path):
     """Check writable destinations and their ancestors, without resolving links.
 
@@ -214,6 +241,7 @@ class Node:
     path: Path
     start: int
     close: int
+    data_record: bool = False
 
 
 class Nginx:
@@ -242,7 +270,7 @@ class Nginx:
         tokens = nginx_tokens(source)
         position = 0
 
-        def parse(nested=False, map_values=False):
+        def parse(nested=False, context="directives"):
             nonlocal position
             nodes = []
             while position < len(tokens):
@@ -258,18 +286,23 @@ class Nginx:
                     args.append(token[1:-1] if token.startswith(('"', "'")) else token)
                     position += 1
                 require(args and position < len(tokens))
-                if not map_values:
+                if context == "directives":
                     require(re.fullmatch(r"[a-zA-Z_][a-zA-Z_0-9]*", args[0]),
                             "escaped or unknown Nginx directive name")
                 terminator, close = tokens[position]
                 position += 1
                 require(terminator != "}")
                 children = None
+                if context == "types":
+                    require(terminator == ";", "nested MIME records are unsupported")
                 if terminator == "{":
-                    children, close = parse(True, args[0] == "map")
-                node = Node(args, children, path, start, close)
+                    if args[0] == "types":
+                        require(args == ["types"])
+                    child_context = args[0] if args[0] in ("map", "types") else "directives"
+                    children, close = parse(True, child_context)
+                node = Node(args, children, path, start, close, context == "types")
                 nodes.append(node)
-                if args[0] == "include":
+                if args[0] == "include" and context != "types":
                     require(children is None and len(args) == 2
                             and not any(c in args[1] for c in "$\\"))
                     include = Path(args[1])
@@ -292,6 +325,8 @@ class Nginx:
 
 def expand(nodes):
     for node in nodes:
+        if node.data_record:
+            continue
         if node.args[0] == "include":
             yield from expand(node.children)
         else:
@@ -300,6 +335,8 @@ def expand(nodes):
 
 def walk(nodes):
     for node in nodes:
+        if node.data_record:
+            continue
         yield node
         if node.children:
             yield from walk(node.children)
@@ -731,7 +768,12 @@ def classify_journal(version, os_version, backend, text):
 
 def main():
     command, *args = sys.argv[1:]
-    if command == "nginx-plan":
+    if command == "semver":
+        _, pre = semver(args[0])
+        require(len(args) == 1 or (args[1] == "stable" and not pre))
+    elif command == "version-compare":
+        print(version_compare(*args))
+    elif command == "nginx-plan":
         nginx_plan(*args)
     elif command == "acme-plan":
         acme_plan(*args)

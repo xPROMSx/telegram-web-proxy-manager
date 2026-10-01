@@ -171,7 +171,7 @@ fetch_release() {
     curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 --retry 2 \
         https://api.github.com/repos/telemt/telemt/releases/latest -o "$TMP/release.json" || return 1
     RELEASE=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$TMP/release.json") || return 1
-    [[ $RELEASE =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    helper semver "$RELEASE" stable
 }
 
 download_candidate() {
@@ -195,13 +195,34 @@ download_candidate() {
 binary_version() {
     local version
     version=$(timeout 10 "$1" --version 2>/dev/null) || return 1
-    [[ $version =~ ^[Tt]elemt[[:space:]]([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
-    printf '%s\n' "${BASH_REMATCH[1]}"
+    [[ $version =~ ^[Tt]elemt[[:blank:]]([0-9A-Za-z.+-]+)$ ]] || return 1
+    version=${BASH_REMATCH[1]}
+    helper semver "$version" || return 1
+    printf '%s\n' "$version"
 }
 
 candidate_healthcheck() {
     # Its diagnostics can quote TOML secrets. Keep neither stdout nor stderr.
-    (cd "$DATA" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
+    (cd "${3:-$DATA}" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
+}
+
+candidate_compatibility() {
+    local binary=$1 config=$2 cwd=${3:-$DATA} before copy probe
+    binary_version "$binary" >/dev/null || return 1
+    helper config-info "$config" >/dev/null || return 1
+    helper runtime-contract "$config" "$DATA" || return 1
+    before=$(sha256sum "$config"); before=${before%% *}
+    copy=$(mktemp "$TMP/compat-config.XXXXXXXX") || return 1
+    probe=$(mktemp "$TMP/compat-probe.XXXXXXXX") || return 1
+    cp -- "$config" "$copy" || return 1
+    candidate_healthcheck "$binary" "$copy" "$cwd" || return 1
+    [[ $(sha256sum "$copy" | cut -d' ' -f1) == "$before" ]] || return 1
+    # Prove strict parsing of the supplied file, not merely a zero CLI exit.
+    printf '__telemt_web_manager_unknown_contract = true\n' >"$probe"
+    cat "$copy" >>"$probe"
+    if candidate_healthcheck "$binary" "$probe" "$cwd"; then return 1; fi
+    [[ $(sha256sum "$config" | cut -d' ' -f1) == "$before" ]] || return 1
+    rm -f -- "$copy" "$probe"
 }
 
 dns_preflight() {
@@ -633,9 +654,12 @@ install_manager() {
     nginx_runtime_identity || die 'Nginx process/config/443 ownership is ambiguous'
     nginx_plan
     fetch_release || die 'Latest stable release unavailable'
-    # Fresh config has been researched against this version; never assume future schemas.
-    [[ $RELEASE == 3.5.9 ]] || die 'New upstream release requires manager schema review before fresh install'
     download_candidate
+    secret=$(openssl rand -hex 16)
+    generate_config "$secret" >"$TMP/fresh.toml"
+    install -d -m 0700 "$TMP/compat-data"
+    candidate_compatibility "$CANDIDATE" "$TMP/fresh.toml" "$TMP/compat-data" ||
+        die 'Candidate incompatible with strict managed WEB configuration; no certificate issuance attempted'
     ensure_certificate
     backup_begin
     backup_nginx_context
@@ -651,15 +675,14 @@ install_manager() {
     say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$DATA/public/index.html"
     chown root:telemt "$DATA/public/index.html"
     chmod 0440 "$DATA/public/index.html"
-    secret=$(openssl rand -hex 16)
     track_file "$CONFIG"
-    generate_config "$secret" >"$CONFIG"
+    cp -- "$TMP/fresh.toml" "$CONFIG"
     track_file "$STATE/web-link.txt"
     printf 'tg://webproxy?server=%s&secret=dd%s\n' "$DOMAIN" "$secret" >"$STATE/web-link.txt"
     chmod 0600 "$STATE/web-link.txt"
     unset secret
     chown root:telemt "$CONFIG"; chmod 0640 "$CONFIG"
-    candidate_healthcheck "$CANDIDATE" "$CONFIG" || die 'Candidate rejected generated config'
+    candidate_compatibility "$CANDIDATE" "$CONFIG" || die 'Candidate rejected generated config'
     helper config-info "$CONFIG" >"$TMP/config-info"
     track_file "$BIN"; atomic_copy "$CANDIDATE" "$BIN"
     track_file "$UNIT"; generate_unit >"$UNIT"; chmod 0644 "$UNIT"
@@ -688,7 +711,7 @@ install_manager() {
 load_installation() {
     [[ -f $STATE/manifest.json && ! -L $STATE/manifest.json ]] || die 'Unmanaged installation; automatic update/migration not possible; manual review required'
     managed_permissions || die 'Unsafe managed ownership/permissions or symlink; manual review required'
-    [[ $(binary_version "$BIN") == 3.5.9 ]] || die 'Installed Telemt runtime is unaudited; manual review required'
+    binary_version "$BIN" >/dev/null || die 'Invalid installed Telemt version; manual review required'
     jq -e '.schema == 1' "$STATE/manifest.json" >/dev/null || die 'Unknown manifest schema'
     [[ $(systemctl show telemt.service -p FragmentPath --value) == "$UNIT" ]] || die 'Unexpected service unit'
     [[ -z $(systemctl show telemt.service -p DropInPaths --value) ]] || die 'Service drop-ins need manual review'
@@ -700,7 +723,7 @@ load_installation() {
     [[ ${actual%% *} == "$expected" ]] || die 'Nginx vhost changed; manual review required'
     helper config-info "$CONFIG" >"$TMP/config-info" || die 'automatic update/migration not possible; manual review required'
     helper runtime-contract "$CONFIG" "$DATA" || die 'Runtime/write paths require manual review; existing TOML was not changed'
-    candidate_healthcheck "$BIN" "$CONFIG" || die 'Installed binary rejected managed TOML; no changes made'
+    candidate_compatibility "$BIN" "$CONFIG" || die 'Installed binary rejected managed TOML; no changes made'
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
     [[ $(jq -r '.public_ip // ""' "$STATE/manifest.json") == "" ||
@@ -715,7 +738,7 @@ update_transaction() {
     local current=$1 since config_hash
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; return 0; fi
     config_hash=$(sha256sum "$CONFIG")
-    candidate_healthcheck "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
+    candidate_compatibility "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
     [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed during candidate validation'
     backup_begin
     cp -a "$CONFIG" "$BACKUP/config.toml"
@@ -736,12 +759,12 @@ update_transaction() {
 
 update_manager() {
     load_installation
-    local current
+    local current comparison
     current=$(binary_version "$BIN") || die 'Unknown installed binary version'
     fetch_release || die 'Latest stable release unavailable'
-    if [[ $current == "$RELEASE" ]]; then say 'already up to date'; path_health; return; fi
-    [[ $RELEASE == 3.5.9 ]] || die 'Unaudited upstream runtime/write-path contract; manual review required'
-    [[ $(printf '%s\n%s\n' "$current" "$RELEASE" | sort -V | head -n1) == "$current" ]] || die 'Installed version is newer; automatic downgrade refused'
+    comparison=$(helper version-compare "$RELEASE" "$current") || die 'Invalid release/installed SemVer'
+    if [[ $comparison == 0 ]]; then say 'already up to date'; path_health; return; fi
+    [[ $comparison == 1 ]] || die "Latest stable $RELEASE is older than installed $current; automatic downgrade refused"
     path_health || die 'Existing installation unhealthy; update refused'
     download_candidate
     update_transaction "$current"
@@ -770,7 +793,7 @@ check_manager() {
 
 repair_manager() {
     load_installation
-    candidate_healthcheck "$BIN" "$CONFIG" || die 'Config validation failed; no repair attempted'
+    candidate_compatibility "$BIN" "$CONFIG" || die 'Config validation failed; no repair attempted'
     nginx_test || die 'Nginx validation failed; no repair attempted'
     backup_begin
     cp -a "$CONFIG" "$BACKUP/config.toml"
