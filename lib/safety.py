@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Strict validators, staged Nginx plans and owned fresh rollback. Python 3.11+ stdlib only."""
+"""Strict, read-only parsers and staged Nginx plans. Python 3.11+ stdlib only."""
+# This canonical header is also the install.sh downloaded-pair identity marker.
 import base64
 import glob
 import hashlib
