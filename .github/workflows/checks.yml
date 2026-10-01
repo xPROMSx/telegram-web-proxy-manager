@@ -2,7 +2,7 @@ name: checks
 on:
   pull_request:
   push:
-    branches-ignore: [main]
+    branches: [main]
 permissions:
   contents: read
 jobs:
@@ -13,7 +13,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables
       - name: Bash syntax
         run: for file in telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
       - name: ShellCheck
@@ -22,6 +22,8 @@ jobs:
         run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh
       - name: Published Telemt configuration contract (SHA256 verified)
         run: bash tests/upstream.sh
+      - name: Actual Ubuntu nf_tables missing-chain diagnostic (isolated namespace)
+        run: bash tests/conntrack.sh
       - name: Writable state and systemd contract
         run: bash tests/contracts.sh
       - name: Shared check lock and exclusive mutation races
