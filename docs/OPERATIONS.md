@@ -246,6 +246,7 @@ bash tests/acme.sh       # Certbot mocks, refusal, rollback, renewal/idempotence
 sudo bash tests/renewal.sh # Root-owned hook, standalone sockets, scheduler visibility
 bash tests/upstream.sh   # Internet: official release asset and SHA256
 bash tests/staging.sh    # Verified latest stable, REAL fresh staging + missing decoy negatives
+bash tests/bootstrap_versions.sh # SemVer, installed parser and paginated release fixtures
 sudo bash tests/bootstrap.sh # Root-owned isolated bootstrap atomicity/release/TTY fixtures
 bash tests/conntrack.sh  # CI: sudo + isolated namespace, actual Noble nf_tables
 bash tests/nginx.sh      # nginx + libnginx-mod-stream; private ports
@@ -348,18 +349,30 @@ release eligibility gate; it is deliberately not generalized to unknown versions
 
 `install.sh` installs only the manager program pair and a fixed-path launcher.
 It resolves releases from `xPROMSx/telemt-web-manager`, ignores drafts, prefers
-published stable releases, and uses the newest published prerelease only while
-no stable exists. `--version v0.1.0` selects an explicit published tag, including
-prereleases. The tag is resolved through official Git objects to a commit SHA;
+the highest published stable SemVer, and uses the highest prerelease only while
+no stable exists. SemVer prerelease tags are never classified as stable even if
+GitHub's prerelease flag is false; a plain core tag flagged prerelease is supported.
+Duplicate JSON fields fail closed. Release pages are enumerated with 100 entries
+per page until a short page, up to 20 pages. A full twentieth page, failed page, malformed metadata or duplicate tag
+causes refusal rather than selection from an incomplete/ambiguous history.
+Publication timestamps validate published status but never decide precedence.
+Core and numeric prerelease identifiers compare by digit length then ASCII digits,
+without bounded integer conversion. Build metadata is accepted but ignored for
+precedence; distinct highest tags of equal precedence require explicit `--version`.
+The existing explicit-tag surface accepts a prerelease or a build suffix, not
+both together. Default discovery retains its existing support for both suffixes;
+ambiguities outside the explicit surface require manual review.
+`--version v0.1.0` selects an explicit published tag, including prereleases.
+The tag is resolved through official Git objects to a commit SHA; annotated tag
+objects must identify the exact requested object SHA;
 both files are fetched over HTTPS from that same immutable commit. Metadata
 cannot supply an arbitrary download URL or repository. Release ambiguity, unsafe
 ref syntax, failed/empty downloads, Bash/Python syntax errors all cause refusal.
 
 The bootstrap script itself is fetched from main in the quick command; review it
 or download it before execution if desired. The program pair is never installed
-from mutable main. This branch prepares 0.1.1 without publishing it: until the
-next release, bootstrap selects v0.1.0, which still contains the fresh staging bug.
-For PR acceptance, manually install the reviewed PR checkout; do not retag v0.1.0.
+from mutable main. To test an unpublished PR/commit, use the advanced/manual
+installation workflow with its reviewed immutable checkout.
 The manager's release channel is independent from Telemt's latest-stable channel.
 
 Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
@@ -369,13 +382,27 @@ non-symlink regular files, a recognized two-file existing installation, no extra
 files, and an absent or exact canonical launcher are required. An unrelated
 `/opt/telemt-web-manager` or `/usr/local/bin/telemt-web-manager` causes refusal.
 Manual two-file installations from previous manager versions can be updated;
-modified layouts require manual review.
+modified layouts require manual review. Under the exclusive lock, the canonical
+installed manager is read as UTF-8 text; only one exact unquoted
+`readonly SCRIPT_VERSION=MAJOR.MINOR.PATCH...` declaration immediately after the
+fixed generated prologue is accepted. Missing,
+malformed, duplicate or ambiguous declarations fail closed, including for explicit
+updates. No installed shell content is sourced, evaluated or executed.
+Downloaded file identity and declared version must also match the published tag.
+For automatic selection, a candidate below the installed SemVer is refused before
+any installation stage, directory replacement or launcher mutation. The error
+shows both versions. Equal versions can safely reinstall; newer versions update.
+An explicit valid published `--version` permits an intentional downgrade while
+retaining every validation, path, lock and rollback safeguard.
 
 The validated pair is staged beside `/opt/telemt-web-manager`. Linux `renameat2`
 exchanges whole directories atomically for updates; a fresh directory is renamed
 atomically. Launcher commit failure restores the old complete pair (or removes
-the new pair on a fresh install). Catchable signals are blocked across this short
-commit window; cleanup deletes only transaction stages. Unsupported exchange,
+the new pair on a fresh install). If the reverse exchange itself fails, retain
+the previous pair's staging directory and report its path for manual recovery;
+never delete the sole recoverable previous pair. Catchable signals are blocked
+across this short commit window; cleanup deletes only disposable transaction stages.
+Interrupted metadata/download operations also clean their private temporary files. Unsupported exchange,
 unsafe lock, active manager or write failure causes refusal. Power loss/SIGKILL
 and concurrent root edits remain manual recovery boundaries. Both installed
 files and directories are root:root, script/launcher 0755 and helper 0644.

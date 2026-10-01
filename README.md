@@ -28,10 +28,9 @@ It needs Bash, curl, CA certificates and Python 3.11+; it does not install packa
 or change Telemt, Nginx, Certbot or Xray. Review the script first if preferred.
 
 Both program files come from one published manager release resolved to a commit.
-Stable releases are preferred; prereleases are used while no stable release exists.
-**0.1.1 is not released yet:** until its publication bootstrap selects v0.1.0,
-which has the known fresh-install staging defect. Test this fix from the reviewed
-checkout using the manual installation below. [Release policy and recovery](docs/OPERATIONS.md#manager-bootstrap).
+The highest stable SemVer is selected; if none exists, the highest prerelease is
+used. Automatic manager downgrades are refused. Testing an unpublished commit
+uses the advanced/manual workflow below. [Release policy and recovery](docs/OPERATIONS.md#manager-bootstrap).
 
 ## First run
 

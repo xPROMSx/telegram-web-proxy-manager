@@ -19,7 +19,7 @@ jobs:
       - name: ShellCheck
         run: shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
       - name: Unit and fixture tests (no root, no production access)
-        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh
+        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh
       - name: Published Telemt configuration contract (SHA256 verified)
         run: bash tests/upstream.sh
       - name: Real latest-stable Telemt fresh pre-certificate staging and negative regressions

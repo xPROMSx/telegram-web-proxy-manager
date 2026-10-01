@@ -19,10 +19,14 @@ fixture_version=v0.1.0 fixture_mode=valid fixture_fault=0
 python3() {
     if [[ $fixture_fault == 1 && ${2:-} == "$BOOTSTRAP_TMP" && ${3:-} == "$INSTALL_DIR" ]]; then
         { printf 'import os\ndef fail_replace(*args): raise OSError("fixture launcher commit failure")\nos.replace = fail_replace\n'; cat; } | command python3 "$@"
+    elif [[ $fixture_fault == 2 && ${2:-} == "$BOOTSTRAP_TMP" && ${3:-} == "$INSTALL_DIR" ]]; then
+        # Fail only the reverse exchange after launcher failure. Preserve real
+        # forward renameat2, and prove cleanup retains the sole old pair.
+        command python3 "$@" < <(cat | sed '/^def interrupted/i\real_swap = swap\nswap_count = 0\ndef swap(a, b):\n    global swap_count\n    swap_count += 1\n    if swap_count == 2: raise OSError("fixture reverse exchange failure")\n    real_swap(a, b)\ndef fail_replace(*args): raise OSError("fixture launcher commit failure")\nos.replace = fail_replace\n')
     else command python3 "$@"; fi
 }
 bootstrap_download() {
-    local url=$1 target=$2
+    local url=$1 target=$2 downloaded_version=${MANAGER_TAG:-$fixture_version}
     printf '%s\n' "$url" >>"$SANDBOX/requests"
     case $url in
         "https://api.github.com/repos/$MANAGER_REPO/releases"*|"https://api.github.com/repos/$MANAGER_REPO/releases/tags/"*)
@@ -46,12 +50,16 @@ PY
             else printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%040d"}}' "${url##*/}" 1 >"$target"; fi
             ;;
         "https://api.github.com/repos/$MANAGER_REPO/git/tags/"*)
-            printf '{"object":{"type":"commit","sha":"%040d"}}' 1 >"$target";;
+            printf '{"sha":"%040d","object":{"type":"commit","sha":"%040d"}}' 2 1 >"$target";;
         "https://raw.githubusercontent.com/$MANAGER_REPO/0000000000000000000000000000000000000001/telemt-web-manager.sh")
             [[ $fixture_mode != shell-failure ]] || return 1
             if [[ $fixture_mode == shell-empty ]]; then : >"$target";
             elif [[ $fixture_mode == bash-invalid ]]; then printf 'if then\n' >"$target";
-            else printf '#!/usr/bin/env bash\n# Telemt WEB Manager. fixture\nprintf "fixture-%s\\n"\n' "$fixture_version" >"$target"; fi
+            else
+                printf '#!/usr/bin/env bash\n# Telemt WEB Manager. fixture\nset +x\nset -Eeuo pipefail\numask 077\nexport LC_ALL=C\nreadonly SCRIPT_VERSION=%s\nprintf "fixture-%s\\n"\n' "${downloaded_version#v}" "$downloaded_version" >"$target"
+                if [[ $fixture_mode == version-mismatch ]]; then sed -i 's/^readonly SCRIPT_VERSION=.*/readonly SCRIPT_VERSION=99.0.0/' "$target"; fi
+                if [[ $fixture_mode == unrecognized ]]; then sed -i '2c# unrelated program' "$target"; fi
+            fi
             ;;
         "https://raw.githubusercontent.com/$MANAGER_REPO/0000000000000000000000000000000000000001/lib/safety.py")
             [[ $fixture_mode != helper-failure ]] || return 1
@@ -70,6 +78,35 @@ rejected() {
     if run_bootstrap "$@"; then bootstrap_die "Unexpected bootstrap acceptance: $fixture_mode"; fi
 }
 pair_hash() { sha256sum "$INSTALL_DIR/telemt-web-manager.sh" "$INSTALL_DIR/lib/safety.py"; }
+python3 - "$ROOT/install.sh" "$SANDBOX" <<'PY'
+import os, signal, subprocess, sys, time
+from pathlib import Path
+script, root = sys.argv[1:]
+root = Path(root)
+marker = root / 'download-started'
+code = ('source "$1"; INSTALL_DIR="$2/opt/signal-fixture"; LAUNCHER="$2/bin/signal-fixture"; '
+        'BOOTSTRAP_LOCK="$2/lock/signal-fixture"; '
+        'bootstrap_download() { printf "%s" "$BOOTSTRAP_TMP" >"$2"; '
+        'printf "%s" "$BOOTSTRAP_TMP" >"$SIGNAL_MARKER"; sleep 30; }; '
+        'SIGNAL_MARKER="$2/download-started"; '
+        'bootstrap_main --no-start')
+p = subprocess.Popen(['bash','-c',code,'fixture',script,str(root)],
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+try:
+    for _ in range(100):
+        if marker.exists(): break
+        if p.poll() is not None: raise AssertionError(p.communicate())
+        time.sleep(0.02)
+    assert marker.exists(), 'download not reached'
+    temporary = Path(marker.read_text())
+    os.killpg(p.pid, signal.SIGTERM)
+    p.communicate(timeout=10)
+    assert p.returncode and not temporary.exists()
+    assert not (root / 'opt/signal-fixture').exists() and not (root / 'bin/signal-fixture').exists()
+finally:
+    if p.poll() is None: os.killpg(p.pid, signal.SIGKILL); p.wait()
+print('ok - interrupted download cleans private temporary files without installation mutation')
+PY
 python3 - "$ROOT/install.sh" <<'PY'
 import os, pathlib, subprocess, sys, tempfile
 # CI has real root privileges. Some cloud containers have an unmapped nobody UID.
@@ -104,26 +141,78 @@ run_bootstrap
 [[ $(pair_hash) == "$old" ]]
 printf 'ok - safe bootstrap rerun preserves manager pair\n'
 fixture_mode=stable
-run_bootstrap
+rejected
+grep -q 'automatic downgrade refused' "$SANDBOX/bootstrap.log"
+run_bootstrap --version v0.0.9
 grep -q 'Installed manager v0.0.9' "$SANDBOX/bootstrap.log"
-printf 'ok - published stable preferred when available\n'
+printf 'ok - automatic stable downgrade refused; explicit published downgrade allowed\n'
 fixture_mode=annotated
 run_bootstrap --version v0.1.0
 grep -q 'Installed manager v0.1.0' "$SANDBOX/bootstrap.log"
 printf 'ok - explicit published version and annotated tag resolve to immutable commit\n'
 old=$(pair_hash)
-for fixture_mode in shell-failure helper-failure shell-empty helper-empty bash-invalid python-invalid foreign; do
+for fixture_mode in shell-failure helper-failure shell-empty helper-empty bash-invalid python-invalid foreign version-mismatch unrecognized; do
     rejected
     [[ $(pair_hash) == "$old" && $("$LAUNCHER") == fixture-v0.1.0 ]]
     printf 'ok - bootstrap %s refused before installation; previous pair intact\n' "$fixture_mode"
 done
 fixture_mode=valid
 rejected --version '../../foreign'
-printf 'ok - arbitrary ref/path input rejected\n'
+rejected --version v0.1.0 --version v0.1.1
+rejected --version ''
+rejected --version
+rejected --unknown
+printf 'ok - arbitrary ref/path, duplicate/missing version and unknown options rejected\n'
 fixture_version=v0.1.1
 run_bootstrap
 [[ $("$LAUNCHER") == fixture-v0.1.1 && $(pair_hash) != "$old" ]]
 printf 'ok - manager update atomically replaces complete validated pair\n'
+old=$(pair_hash)
+# The locked guard must leave directory identity, bytes, modes and launcher intact.
+identity=$(stat -c '%d:%i' "$INSTALL_DIR")
+fixture_version=v0.1.0
+rejected
+grep -q 'Installed manager 0.1.1; automatically selected v0.1.0; automatic downgrade refused' "$SANDBOX/bootstrap.log"
+[[ $(pair_hash) == "$old" && $(stat -c '%d:%i' "$INSTALL_DIR") == "$identity" && $("$LAUNCHER") == fixture-v0.1.1 ]]
+printf 'ok - automatic downgrade before persistent installation mutation; installed pair and launcher unchanged\n'
+fixture_version=v0.1.1
+cp "$INSTALL_DIR/telemt-web-manager.sh" "$SANDBOX/saved-script"
+for declaration in missing malformed duplicate ambiguous substitution; do
+    python3 - "$INSTALL_DIR/telemt-web-manager.sh" "$SANDBOX/saved-script" "$declaration" "$SANDBOX/executed" <<'PY'
+from pathlib import Path
+import sys
+path, original, mode, marker = sys.argv[1:]
+text = Path(original).read_text()
+assignment = 'readonly SCRIPT_VERSION=0.1.1'
+replacement = {'missing': '', 'malformed': 'readonly SCRIPT_VERSION=01.1.1',
+               'duplicate': assignment + '\n' + assignment,
+               'ambiguous': 'readonly SCRIPT_VERSION="0.1.1"',
+               'substitution': 'readonly SCRIPT_VERSION=$(touch ' + marker + ')'}[mode]
+Path(path).write_text(text.replace(assignment, replacement))
+PY
+    broken=$(pair_hash)
+    rejected
+    [[ $(pair_hash) == "$broken" && ! -e $SANDBOX/executed && $(stat -c '%d:%i' "$INSTALL_DIR") == "$identity" ]]
+    # Even an explicit downgrade must not bypass malformed installed state.
+    rejected --version v0.1.0
+    [[ $(pair_hash) == "$broken" && ! -e $SANDBOX/executed ]]
+    printf 'ok - installed SCRIPT_VERSION %s refused without execution/mutation\n' "$declaration"
+done
+cp "$SANDBOX/saved-script" "$INSTALL_DIR/telemt-web-manager.sh"
+printf '\ntouch "%s"\n' "$SANDBOX/executed" >>"$INSTALL_DIR/telemt-web-manager.sh"
+run_bootstrap
+[[ ! -e $SANDBOX/executed ]]
+printf 'ok - malicious installed script content is never executed during version detection\n'
+# A higher-core prerelease still compares above a lower stable candidate.
+sed -i 's/^readonly SCRIPT_VERSION=.*/readonly SCRIPT_VERSION=0.2.0-alpha.10/' "$INSTALL_DIR/telemt-web-manager.sh"
+rejected
+[[ ! -e $SANDBOX/executed ]]
+fixture_version=v0.2.0-alpha.2
+rejected
+grep -q 'automatic downgrade refused' "$SANDBOX/bootstrap.log"
+printf 'ok - installed prerelease alpha.10 vs lower alpha.2 automatic candidate refused by SemVer\n'
+fixture_version=v0.1.1
+cp "$SANDBOX/saved-script" "$INSTALL_DIR/telemt-web-manager.sh"
 old=$(pair_hash)
 # Inject failure exactly after pair exchange, before creating the launcher.
 # No production test hook or environment switch exists in the installer.
@@ -138,7 +227,17 @@ rejected
 [[ ! -e $INSTALL_DIR && ! -e $LAUNCHER ]]
 mv "$SANDBOX/opt/saved-pair" "$INSTALL_DIR"
 
+# A failed rollback must retain the previous pair, never delete its stage.
+fixture_fault=2
+rejected
+grep -q 'previous manager pair retained at .*manual recovery required' "$SANDBOX/bootstrap.log"
+recovery=$(find "$SANDBOX/opt" -maxdepth 1 -type d -name '.telemt-web-manager.*')
+[[ -n $recovery && ! -e $LAUNCHER ]]
+[[ $(sha256sum "$recovery/telemt-web-manager.sh" "$recovery/lib/safety.py" | cut -d' ' -f1) == $(printf '%s\n' "$old" | cut -d' ' -f1) ]]
+rm -rf -- "$INSTALL_DIR"
+mv "$recovery" "$INSTALL_DIR"
 fixture_fault=0
+printf 'ok - failed reverse exchange retains previous pair for manual recovery\n'
 printf 'ok - installer failed-update after directory exchange rolls back complete previous pair; fresh commit failure leaves no installation\n'
 fixture_version=v0.1.1
 run_bootstrap
@@ -156,6 +255,19 @@ chmod 0755 "$LAUNCHER"
 chmod 0775 "$INSTALL_DIR/lib/safety.py"
 rejected
 chmod 0644 "$INSTALL_DIR/lib/safety.py"
+ln "$INSTALL_DIR/telemt-web-manager.sh" "$SANDBOX/hardlinked-script"
+rejected
+rm "$SANDBOX/hardlinked-script"
+mv "$INSTALL_DIR/telemt-web-manager.sh" "$SANDBOX/symlink-script"
+ln -s "$SANDBOX/symlink-script" "$INSTALL_DIR/telemt-web-manager.sh"
+rejected
+rm "$INSTALL_DIR/telemt-web-manager.sh"
+mv "$SANDBOX/symlink-script" "$INSTALL_DIR/telemt-web-manager.sh"
+mv "$INSTALL_DIR/lib/safety.py" "$SANDBOX/saved-helper"
+ln -s "$SANDBOX/saved-helper" "$INSTALL_DIR/lib/safety.py"
+rejected
+rm "$INSTALL_DIR/lib/safety.py"
+mv "$SANDBOX/saved-helper" "$INSTALL_DIR/lib/safety.py"
 mv "$INSTALL_DIR" "$SANDBOX/opt/owned"
 ln -s "$SANDBOX/opt/owned" "$INSTALL_DIR"
 rejected
