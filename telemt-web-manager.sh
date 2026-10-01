@@ -457,13 +457,45 @@ ensure_certificate() {
     fi
     validate_certificate
     certificate_renewal_contract "$issued"
-    if ! systemctl is-enabled --quiet certbot.timer && ! systemctl is-enabled --quiet snap.certbot.renew.timer; then
-        say 'WARNING: renewal timer not detected; verify existing cron/renewal scheduling manually.'
+    renewal_scheduler_status
+}
+
+generate_renewal_hook() {
+    printf '#!/bin/sh\nset -eu\n/usr/sbin/nginx -t\n/usr/bin/systemctl reload nginx\n'
+}
+
+renewal_deploy_hook_contract() {
+    [[ $RENEW_HOOK == "$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager" ]] ||
+        die 'Unexpected managed Certbot deploy-hook path; manual review required'
+    helper safe-path "$RENEW_HOOK" || die 'Unsafe managed Certbot deploy hook; manual review required'
+    [[ -f $RENEW_HOOK && ! -L $RENEW_HOOK && $(stat -c %u "$RENEW_HOOK") == 0 ]] ||
+        die 'Managed Certbot deploy hook missing or wrong owner; manual review required'
+    local mode
+    mode=$(stat -c %a "$RENEW_HOOK")
+    (( (8#$mode & 0100) != 0 && (8#$mode & 07022) == 0 )) ||
+        die 'Unsafe managed Certbot deploy-hook permissions; manual review required'
+    cmp -s "$RENEW_HOOK" <(generate_renewal_hook) ||
+        die 'Managed Certbot deploy hook changed; manual review required'
+}
+
+renewal_scheduler_status() {
+    if systemctl is-enabled --quiet certbot.timer; then
+        say 'Renewal scheduler detected: certbot.timer'
+    elif systemctl is-enabled --quiet snap.certbot.renew.timer; then
+        say 'Renewal scheduler detected: snap.certbot.renew.timer'
+    else
+        say 'WARNING: no known Certbot timer detected; verify cron/custom renewal scheduling manually.'
     fi
 }
 
+certificate_health_contract() {
+    validate_certificate
+    certificate_renewal_contract
+    renewal_deploy_hook_contract
+}
+
 certificate_renewal_contract() {
-    local freshly_issued=${1:-0} kind expected=''
+    local freshly_issued=${1:-0} kind expected='' sockets
     kind=$(helper renewal-kind "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT") ||
         die 'Certificate renewal settings are unsupported; preserve Certbot assets and review docs/OPERATIONS.md'
     if [[ -f $STATE/manifest.json ]]; then
@@ -479,6 +511,11 @@ certificate_renewal_contract() {
         [[ -z $expected ]] || die 'Managed webroot certificate changed to standalone; manual review required'
         [[ $freshly_issued == 1 || -f $STATE/manifest.json ]] ||
             die 'Existing certificate has no manager ownership evidence; automatic adoption refused. Preserve Certbot assets; see docs/OPERATIONS.md'
+        # ss includes IPv4 and IPv6, including wildcard and loopback listeners.
+        # Any listener is outside the audited free-port standalone contract.
+        sockets=$(ss -H -ltn 'sport = :80') || die 'Standalone renewal port 80 inspection failed'
+        [[ -z $sockets ]] ||
+            die 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.'
     fi
 }
 
@@ -634,8 +671,9 @@ install_manager() {
     if ! path_health || ! recent_logs "$since"; then die 'Post-install health failed'; fi
     install -d -m 0755 "$(dirname "$RENEW_HOOK")"
     track_file "$RENEW_HOOK"
-    printf '#!/bin/sh\nset -eu\n/usr/sbin/nginx -t\n/usr/bin/systemctl reload nginx\n' >"$RENEW_HOOK"
+    generate_renewal_hook >"$RENEW_HOOK"
     chmod 0750 "$RENEW_HOOK"
+    renewal_deploy_hook_contract
     track_file "$STATE/manifest.json"
     jq -n --arg domain "$DOMAIN" --arg public_ip "$PUBLIC_IP" --arg unit "$(sha256sum "$UNIT" | cut -d' ' -f1)" \
         --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
@@ -670,7 +708,7 @@ load_installation() {
     [[ $DOMAIN == "$(jq -er .domain "$STATE/manifest.json")" ]] || die 'Domain changed; manual review required'
     nginx_plan
     [[ $(jq '.edits | length' "$TMP/nginx-plan.json") == 0 ]] || die 'Nginx integration incomplete; manual review required'
-    certificate_renewal_contract
+    certificate_health_contract
 }
 
 update_transaction() {
@@ -711,6 +749,7 @@ update_manager() {
 
 check_manager() {
     load_installation
+    renewal_scheduler_status
     local failed=0 pid cert
     say "Manager: $SCRIPT_VERSION; installed Telemt: $(binary_version "$BIN")"
     if fetch_release; then say "Latest stable: $RELEASE"; else say 'Latest release unavailable'; failed=1; fi

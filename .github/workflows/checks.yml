@@ -30,6 +30,8 @@ jobs:
         run: bash tests/locks.sh
       - name: Certbot and Nginx webroot transactions
         run: bash tests/acme.sh
+      - name: Renewal socket, deploy hook and scheduler contracts (temporary root-owned fixtures)
+        run: sudo bash tests/renewal.sh
       - name: Real Nginx stream and TLS fixture
         run: bash tests/nginx.sh
       - name: Current reviewed 3x-ui-pro installer and patcher topologies
