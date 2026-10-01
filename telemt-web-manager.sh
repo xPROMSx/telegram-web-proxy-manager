@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=0.1.0
+readonly SCRIPT_VERSION=0.1.1
 BASE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HELPER="$BASE_DIR/lib/safety.py"
 BIN=/usr/local/bin/telemt
@@ -207,20 +207,20 @@ candidate_healthcheck() {
 }
 
 candidate_compatibility() {
-    local binary=$1 config=$2 cwd=${3:-$DATA} before copy probe
+    local binary=$1 config=$2 data_root=${3:-$DATA} before copy probe
     binary_version "$binary" >/dev/null || return 1
     helper config-info "$config" >/dev/null || return 1
-    helper runtime-contract "$config" "$DATA" || return 1
+    helper runtime-contract "$config" "$data_root" || return 1
     before=$(sha256sum "$config"); before=${before%% *}
     copy=$(mktemp "$TMP/compat-config.XXXXXXXX") || return 1
     probe=$(mktemp "$TMP/compat-probe.XXXXXXXX") || return 1
     cp -- "$config" "$copy" || return 1
-    candidate_healthcheck "$binary" "$copy" "$cwd" || return 1
+    candidate_healthcheck "$binary" "$copy" "$data_root" || return 1
     [[ $(sha256sum "$copy" | cut -d' ' -f1) == "$before" ]] || return 1
     # Prove strict parsing of the supplied file, not merely a zero CLI exit.
     printf '__telemt_web_manager_unknown_contract = true\n' >"$probe"
     cat "$copy" >>"$probe"
-    if candidate_healthcheck "$binary" "$probe" "$cwd"; then return 1; fi
+    if candidate_healthcheck "$binary" "$probe" "$data_root"; then return 1; fi
     [[ $(sha256sum "$config" | cut -d' ' -f1) == "$before" ]] || return 1
     rm -f -- "$copy" "$probe"
 }
@@ -242,22 +242,23 @@ socks_probe() {
 }
 
 generate_config() {
-    local secret=$1
-    cat <<EOF
+    local secret=$1 data_root=${2:-$DATA}
+    helper safe-path "$data_root" || return 1
+    cat <<EOF || return 1
 # Managed initial configuration; updates preserve these bytes.
 [general]
 config_strict = true
 disable_colors = true
-data_path = "$DATA"
+data_path = "$data_root"
 use_middle_proxy = false
 log_level = "normal"
-beobachten_file = "$DATA/state/beobachten.txt"
-quota_state_path = "$DATA/state/telemt.limit.json"
+beobachten_file = "$data_root/state/beobachten.txt"
+quota_state_path = "$data_root/state/telemt.limit.json"
 unknown_dc_file_log_enabled = false
-unknown_dc_log_path = "$DATA/state/unknown-dc.txt"
-proxy_secret_path = "$DATA/state/proxy-secret"
-proxy_config_v4_cache_path = "$DATA/state/proxy-config-v4.txt"
-proxy_config_v6_cache_path = "$DATA/state/proxy-config-v6.txt"
+unknown_dc_log_path = "$data_root/state/unknown-dc.txt"
+proxy_secret_path = "$data_root/state/proxy-secret"
+proxy_config_v4_cache_path = "$data_root/state/proxy-config-v4.txt"
+proxy_config_v6_cache_path = "$data_root/state/proxy-config-v6.txt"
 [general.modes]
 classic = false
 secure = true
@@ -265,14 +266,14 @@ tls = false
 [censorship]
 mask = false
 tls_emulation = false
-tls_front_dir = "$DATA/state/tls-front"
+tls_front_dir = "$data_root/state/tls-front"
 [logging]
 destination = "stderr"
 [network]
 ipv4 = true
 ipv6 = false
 prefer = 4
-cache_public_ip_path = "$DATA/state/public_ip.txt"
+cache_public_ip_path = "$data_root/state/public_ip.txt"
 [server]
 port = 18080
 proxy_protocol = false
@@ -298,7 +299,7 @@ host = "$DOMAIN"
 public_addr = "$PUBLIC_IP:443"
 [web.vhosts.decoy]
 mode = "static_directory"
-directory = "$DATA/public"
+directory = "$data_root/public"
 index = "index.html"
 [[web.vhosts.profiles]]
 user = "web-user"
@@ -313,6 +314,23 @@ EOF
     else
         say 'type = "direct"'
     fi
+}
+
+write_managed_decoy() {
+    local directory=$1
+    helper safe-path "$directory/index.html" || return 1
+    [[ -d $directory && ! -L $directory && ! -e $directory/index.html && ! -L $directory/index.html ]] || return 1
+    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$directory/index.html" || return 1
+    chmod 0440 "$directory/index.html"
+}
+
+prepare_compatibility_data() {
+    local root=$1
+    # Only a new private child of this transaction's temporary directory.
+    [[ $root == "$TMP/compat-data" && ! -e $root && ! -L $root ]] || return 1
+    helper safe-path "$root" || return 1
+    install -d -m 0700 "$root" "$root/state" "$root/public" || return 1
+    write_managed_decoy "$root/public"
 }
 
 generate_unit() {
@@ -656,8 +674,8 @@ install_manager() {
     fetch_release || die 'Latest stable release unavailable'
     download_candidate
     secret=$(openssl rand -hex 16)
-    generate_config "$secret" >"$TMP/fresh.toml"
-    install -d -m 0700 "$TMP/compat-data"
+    prepare_compatibility_data "$TMP/compat-data" || die 'Unable to stage managed decoy; no certificate issuance attempted'
+    generate_config "$secret" "$TMP/compat-data" >"$TMP/fresh.toml" || die 'Unable to stage managed config; no certificate issuance attempted'
     candidate_compatibility "$CANDIDATE" "$TMP/fresh.toml" "$TMP/compat-data" ||
         die 'Candidate incompatible with strict managed WEB configuration; no certificate issuance attempted'
     ensure_certificate
@@ -672,11 +690,11 @@ install_manager() {
     install -d -m 0750 -o telemt -g telemt "$DATA/state"
     install -d -m 0700 "$STATE"
     track_file "$DATA/public/index.html"
-    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$DATA/public/index.html"
+    write_managed_decoy "$DATA/public" || die 'Unable to create managed decoy'
     chown root:telemt "$DATA/public/index.html"
     chmod 0440 "$DATA/public/index.html"
     track_file "$CONFIG"
-    cp -- "$TMP/fresh.toml" "$CONFIG"
+    generate_config "$secret" "$DATA" >"$CONFIG" || die 'Unable to create final managed config'
     track_file "$STATE/web-link.txt"
     printf 'tg://webproxy?server=%s&secret=dd%s\n' "$DOMAIN" "$secret" >"$STATE/web-link.txt"
     chmod 0600 "$STATE/web-link.txt"
