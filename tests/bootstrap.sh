@@ -71,15 +71,21 @@ rejected() {
 }
 pair_hash() { sha256sum "$INSTALL_DIR/telemt-web-manager.sh" "$INSTALL_DIR/lib/safety.py"; }
 python3 - "$ROOT/install.sh" <<'PY'
-import os, pathlib, subprocess, sys
+import os, pathlib, subprocess, sys, tempfile
 # CI has real root privileges. Some cloud containers have an unmapped nobody UID.
 try:
- result = subprocess.run(['bash',sys.argv[1],'--no-start'], capture_output=True, preexec_fn=lambda: os.setuid(65534))
+ # The runner's checkout ancestors may be private to its UID. Root refusal must
+ # execute the script, rather than accidentally assert a checkout read failure.
+ with tempfile.TemporaryDirectory(prefix='telemt-root-check.') as readable:
+  directory = pathlib.Path(readable); directory.chmod(0o755)
+  script = directory / 'install.sh'
+  script.write_bytes(pathlib.Path(sys.argv[1]).read_bytes()); script.chmod(0o644)
+  result = subprocess.run(['bash',str(script),'--no-start'], cwd='/tmp', capture_output=True, preexec_fn=lambda: os.setuid(65534))
 except subprocess.SubprocessError:
  if os.environ.get('GITHUB_ACTIONS') == 'true': raise
  print('SKIP - cloud UID mapping prevents non-root subprocess; CI must execute root refusal')
 else:
- assert result.returncode and b'Run the manager installer as root' in result.stderr
+ assert result.returncode and b'Run the manager installer as root' in result.stderr, result.stderr.decode()
  print('ok - bootstrap root requirement enforced before downloads')
 PY
 run_bootstrap
