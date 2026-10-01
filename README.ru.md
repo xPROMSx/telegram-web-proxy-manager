@@ -122,6 +122,10 @@ Telemt WEB Manager проверяется на схеме Nginx `stream` / `ssl_
 CI использует проверенный официальный бинарник Telemt и настоящий Nginx.
 Операции systemd и Certbot проверяются с имитацией. Проверка на тестовом VPS ещё требуется.
 
+Включённый conntrack control требует пакет Ubuntu `conntrack`, iptables/ip6tables/nft
+и CAP_NET_ADMIN. Preflight проверяет `conntrack` в PATH root-консоли и в стандартном
+runtime PATH systemd до установки. Менеджер не устанавливает недостающие пакеты.
+
 ## Расширенная / ручная установка
 
 Изучи доверенный checkout (или checkout PR для acceptance) и установи оба файла.
@@ -144,7 +148,7 @@ install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
 ```bash
 apt-get update
 apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
-  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables
+  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables conntrack
 ```
 
 В пакетной установке Nginx для stream обычно нужен `libnginx-mod-stream`;

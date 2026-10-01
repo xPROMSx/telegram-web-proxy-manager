@@ -350,3 +350,24 @@ with fresh orchestration, missing-directory/index negatives and both egress
 profiles. See [operations](OPERATIONS.md#live-acceptance-fixes-mime-data-and-release-compatibility)
 for ordering, coverage gap and rollback boundaries. These checks still do not
 replace real systemd/ACME/Telegram acceptance on a disposable VPS.
+
+## Telemt 3.5.7 conntrack runtime dependency
+
+The annotated 3.5.7 tag resolves to `4ca7418442478cd92f9e861c21977a81b249efc8`.
+[`probe_runtime_support` / `effective_conntrack_enabled`](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/conntrack_control.rs)
+require enabled inline control, CAP_NET_ADMIN, a detected nft/iptables backend and
+`conntrack` discoverable on PATH. Explicitly enabled but unavailable control emits
+the startup warning and disables runtime features. The generated tracked-mode
+contract intentionally enables this control, so missing `conntrack` is a preflight
+error, not a new nonfatal journal exception. Ubuntu's package is `conntrack`.
+
+The pinned [configuration reference](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/docs/Config_params/CONFIG_PARAMS.en.md#serverconntrack_control)
+describes optional pressure-driven table deletes using `conntrack -D`; the exact
+3.5.7 source additionally gates the entire enabled worker on binary availability.
+Tracked mode does not install notrack rules, but still uses this runtime gate.
+
+The [hot-reload diff](https://github.com/telemt/telemt/blob/4ca7418442478cd92f9e861c21977a81b249efc8/src/config/hot_reload/diff.rs)
+emits `censorship settings changed; restart required` when comparing censorship
+settings. That WARN alone does not establish an invalid manager runtime contract
+and remains a normal warning. Live readiness/path checks had already succeeded;
+the unavailable conntrack-control record was the late health failure source.

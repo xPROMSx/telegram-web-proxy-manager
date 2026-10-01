@@ -118,6 +118,11 @@ are not automatically supported. Xray and 3x-ui configuration/database are not m
 CI uses the verified official Telemt binary and real Nginx traffic tests.
 Systemd and Certbot lifecycle operations use mocks. Live VPS acceptance is still required.
 
+The enabled conntrack-control contract requires the Ubuntu `conntrack` package,
+iptables/ip6tables/nft and CAP_NET_ADMIN. Preflight checks `conntrack` on both
+the root shell PATH and systemd's default runtime PATH before installation work;
+the manager does not install missing packages.
+
 ## Advanced / manual installation
 
 Review a trusted checkout (or the PR checkout during acceptance) and install both
@@ -140,7 +145,7 @@ manager dependencies deliberately, without replacing the working Nginx stack:
 ```bash
 apt-get update
 apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
-  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables
+  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables conntrack
 ```
 
 On a clean package Nginx, stream usually needs `libnginx-mod-stream`; match modules

@@ -22,6 +22,7 @@ LOCK=/run/lock/telemt-web-manager.lock
 TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' RELEASE='' CANDIDATE=''
 ARMED=0 INSTALLING=0 NGINX_CHANGED=0
 CERT_ONLY=0 PLAN_MODE=web
+FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0
 declare -a CHANGED=() ORIGINAL=()
 
 say() { printf '%s\n' "$*"; }
@@ -114,7 +115,18 @@ track_file() {
 rollback() {
     local index failed=0
     say 'Rolling back managed changes.' >&2
-    if (( INSTALLING && ! CERT_ONLY )); then systemctl disable --now telemt.service >/dev/null 2>&1 || true; fi
+    if (( INSTALLING && ! CERT_ONLY )); then
+        if (( FRESH_SERVICE_ATTEMPTED )); then
+            if ! systemctl disable --now telemt.service; then
+                say "CRITICAL: Telemt stop failed; fresh state retained. Review $FRESH_JOURNAL" >&2
+                return 1
+            fi
+        fi
+        if [[ -n $FRESH_JOURNAL ]] && ! helper fresh-verify "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
+            say "CRITICAL: fresh ownership/process/mount validation failed; state retained. Review $FRESH_JOURNAL" >&2
+            return 1
+        fi
+    fi
     for ((index=${#CHANGED[@]}-1; index>=0; index--)); do
         if [[ -n ${ORIGINAL[index]} ]]; then
             atomic_copy "${ORIGINAL[index]}" "${CHANGED[index]}" || failed=1
@@ -130,7 +142,12 @@ rollback() {
         restart_service && wait_ready 90 || failed=1
     fi
     if (( NGINX_CHANGED )); then nginx_test && nginx_reload || failed=1; fi
-    if (( failed )); then say "CRITICAL: rollback incomplete; restore using $BACKUP/files.tsv" >&2; fi
+    if (( INSTALLING && ! CERT_ONLY )) && [[ -n $FRESH_JOURNAL ]]; then
+        if (( ! failed )) && helper fresh-cleanup-dirs "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
+            helper fresh-cleanup-account "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE" || failed=1
+        else failed=1; fi
+    fi
+    if (( failed )); then say "CRITICAL: rollback incomplete; review $BACKUP/files.tsv and ${FRESH_JOURNAL:-the backup} for manual recovery" >&2; fi
     return "$failed"
 }
 
@@ -162,9 +179,15 @@ preflight() {
     source /etc/os-release
     [[ $ID == ubuntu && ( $VERSION_ID == 24.04 || $VERSION_ID == 26.04 ) ]] || die 'Supported OS: Ubuntu 24.04 / 26.04'
     case $(uname -m) in x86_64|aarch64|arm64) ;; *) die 'Unsupported architecture';; esac
-    local dep
-    for dep in curl tar openssl jq dig python3 nginx certbot flock systemctl ss sha256sum timeout iptables ip6tables nft; do need "$dep"; done
+    check_dependencies
+}
+
+check_dependencies() {
+    local dep service_path
+    for dep in curl tar openssl jq dig python3 nginx certbot flock systemctl ss sha256sum timeout iptables ip6tables nft conntrack getent useradd userdel groupdel systemd-path; do need "$dep"; done
     python3 -c 'import tomllib' || die 'Python 3.11+ required'
+    service_path=$(systemd-path search-binaries-default) || die 'Cannot determine systemd runtime PATH'
+    PATH="$service_path" command -v conntrack >/dev/null || die 'conntrack unavailable on the systemd runtime PATH (see README)'
 }
 
 fetch_release() {
@@ -663,6 +686,9 @@ install_manager() {
         helper safe-path "$path" || die 'Unsafe install path'
         [[ ! -e $path && ! -L $path ]] || die 'Existing Telemt files found; automatic adoption not possible; manual review required'
     done
+    if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
+        die 'Existing telemt account/group needs manual review'
+    fi
     [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || die 'Existing Telemt unit found'
     [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || die 'Private ports already occupied'
     dns_preflight
@@ -685,10 +711,15 @@ install_manager() {
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         die 'Existing telemt account/group needs manual review'
     fi
-    useradd --system --user-group --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin telemt
-    install -d -m 0750 -o root -g telemt "$CONFIG_DIR" "$DATA" "$DATA/public"
-    install -d -m 0750 -o telemt -g telemt "$DATA/state"
-    install -d -m 0700 "$STATE"
+    FRESH_JOURNAL="$BACKUP/fresh-ownership.json"
+    helper fresh-init "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"
+    helper fresh-account-create "$FRESH_JOURNAL" "$DATA"
+    for path in "$CONFIG_DIR" "$DATA" "$DATA/public" "$DATA/state"; do
+        helper fresh-mkdir "$FRESH_JOURNAL" "$path" 0750
+        if [[ $path == "$DATA/state" ]]; then chown telemt:telemt "$path";
+        else chown root:telemt "$path"; fi
+    done
+    helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700
     track_file "$DATA/public/index.html"
     write_managed_decoy "$DATA/public" || die 'Unable to create managed decoy'
     chown root:telemt "$DATA/public/index.html"
@@ -706,6 +737,7 @@ install_manager() {
     track_file "$UNIT"; generate_unit >"$UNIT"; chmod 0644 "$UNIT"
     systemctl daemon-reload
     since=$(now)
+    FRESH_SERVICE_ATTEMPTED=1
     systemctl enable --now telemt.service
     wait_ready 90 || die 'Telemt did not become ready'
     apply_nginx

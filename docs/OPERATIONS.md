@@ -186,6 +186,24 @@ to destinations; `nginx-plan.json` records changed originals and include hashes;
 TOML and are never automatically deleted. SIGINT/TERM/HUP and ordinary failures
 trigger rollback. SIGKILL, power loss and disk failure require manual recovery.
 
+Fresh-install rollback records successful account creation (exact passwd/group
+records, UID/GID and home/shell) and created directory device/inode identities in
+`fresh-ownership.json` inside the private backup. Critical creation/recording windows
+block catchable signals. Existing paths/accounts are never adopted. An unsuccessful
+partial useradd is not ownership proof and requires manual recovery.
+
+A failed fresh activation first stops/disables Telemt, verifies that no process has
+the recorded UID, validates account/directory identities and refuses mount points
+(including same-device bind mounts). It removes/restores tracked files, reloads
+systemd and restores Nginx before recursively removing only recorded fresh roots.
+Cleanup uses directory file descriptors and O_NOFOLLOW; runtime symlinks are unlinked,
+never traversed. Account deletion uses neither force nor recursive-home options;
+private-group removal handles userdel already having removed it. Stop, identity,
+mount or cleanup failures emit CRITICAL and retain the backup evidence for manual
+recovery. Successfully issued certificates and committed manager ACME webroot,
+marker and renewal vhost remain outside this cleanup. A clean retry reuses valid
+manager-owned webroot certificate state without unnecessary issuance.
+
 ## Check and repair
 
 `--check` leaves managed configuration/services unchanged. It reports versions,
@@ -212,8 +230,13 @@ and foreign units/drop-ins need manual review.
 protections, restricted address families/realtime/SUID/namespaces, W^X and personality.
 Limits: 65536 descriptors, 4096 tasks, MemoryMax=1G. Review VPS capacity/workload;
 external unit edits require review. CAP_NET_ADMIN remains for upstream conntrack
-cleanup even in tracked mode. The known 3.5.9 missing-chain warning is classified
-narrowly; other conntrack errors fail. Evidence is in upstream notes.
+cleanup even in tracked mode. Telemt 3.5.7 requires `conntrack` on its PATH;
+Ubuntu provides it in the `conntrack` package. Preflight checks it and the account
+creation/deletion tools (`getent`, `useradd`, `userdel`, `groupdel`) before temporary
+transaction setup, release queries or ACME. `systemd-path search-binaries-default`
+verifies runtime discovery without changing the generated service PATH. The known
+3.5.9 missing-chain warning is classified narrowly; other conntrack errors fail.
+Evidence is in upstream notes.
 
 Fresh TOML sets `general.config_strict = true`, `disable_colors = true`, and
 `data_path = /var/lib/telemt`. Colors are disabled for deterministic systemd logs;
@@ -239,6 +262,9 @@ for file in install.sh telemt-web-manager.sh tests/*.sh; do bash -n "$file"; don
 shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
+bash tests/fresh-rollback.sh # late journal failure, ACME preservation/retry, partial failures
+sudo bash tests/fresh-account.sh # disposable runner only: real account/runtime cleanup
+bash tests/preflight.sh # Missing conntrack/account tools before transaction dispatch
 bash tests/download.sh   # Mock download, bad digest, symlink, redaction
 bash tests/contracts.sh  # Strict config, writable paths, unit
 bash tests/locks.sh      # Shared/exclusive races, unsafe lock paths
@@ -285,9 +311,10 @@ If the certificate is still needed, retain persistent ACME vhost/webroot/hook or
 first move renewal to another strategy. Removing them can break renewal;
 certificates are not automatically deleted.
 
-Failed fresh installs can intentionally leave accounts, empty directories and
-issued certificates. Accounts/certs are never automatically removed; inspect
-leftovers and backups before retrying.
+Failed fresh installs remove only transaction-owned Telemt directories/accounts
+after service, identity and mount checks. Committed certificates and ACME renewal
+state remain. Unsafe or incomplete rollback emits CRITICAL and retains the private
+ownership journal/backups; inspect them before manual recovery or retry.
 
 ## Live acceptance fixes: MIME data and release compatibility
 

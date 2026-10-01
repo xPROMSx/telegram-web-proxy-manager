@@ -13,13 +13,20 @@ jobs:
         with:
           persist-credentials: false
       - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables conntrack passwd
+      - name: Telemt conntrack dependency and default systemd runtime PATH
+        run: |
+          command -v conntrack
+          systemd-path search-binaries-default
+          env -i PATH="$(systemd-path search-binaries-default)" conntrack --version
       - name: Bash syntax
         run: for file in install.sh telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
       - name: ShellCheck
         run: shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
       - name: Unit and fixture tests (no root, no production access)
-        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh
+        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/fresh-rollback.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh && bash tests/preflight.sh
+      - name: Real fresh account and owned runtime-state rollback (temporary root-owned fixtures)
+        run: sudo bash tests/fresh-account.sh
       - name: Published Telemt configuration contract (SHA256 verified)
         run: bash tests/upstream.sh
       - name: Real latest-stable Telemt fresh pre-certificate staging and negative regressions

@@ -5,8 +5,15 @@ cd -- "$(dirname -- "$0")/.."
 ROOT=$PWD
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
+eval "$(declare -f ensure_certificate | sed '1s/ensure_certificate/official_ensure_certificate/')"
 SANDBOX=$(mktemp -d)
-trap 'rm -rf -- "$SANDBOX"' EXIT
+fixture_cleanup() {
+    local result=$?
+    if (( result )) && [[ -f $SANDBOX/failure.log ]]; then cat "$SANDBOX/failure.log" >&2; fi
+    rm -rf -- "$SANDBOX"
+    exit "$result"
+}
+trap fixture_cleanup EXIT
 BIN="$SANDBOX/telemt" CONFIG_DIR="$SANDBOX/etc-telemt" DATA="$SANDBOX/data"
 CONFIG="$CONFIG_DIR/telemt.toml" UNIT="$SANDBOX/telemt.service" STATE="$SANDBOX/state"
 BACKUP_ROOT="$SANDBOX/backups" NGINX_ROOT="$SANDBOX/nginx" TMP="$SANDBOX/tmp"
@@ -67,8 +74,10 @@ download_candidate() {
     else printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; fi
     chmod 0755 "$CANDIDATE"
 }
-getent() { return 2; }
-useradd() { return 0; }
+export FIXTURE_ACCOUNTS="$SANDBOX/accounts"
+mkdir "$SANDBOX/account-tools"
+for tool in getent useradd userdel groupdel; do ln -s "$ROOT/tests/account_fixture.py" "$SANDBOX/account-tools/$tool"; done
+export PATH="$SANDBOX/account-tools:$PATH"
 chown() { return 0; }
 install() {
     local -a args=()
@@ -100,6 +109,120 @@ path_health() { printf ok >"$SANDBOX/path-health"; }
 recent_logs() { printf ok >"$SANDBOX/log-health"; }
 SOCKS=${FIXTURE_SOCKS:-direct}
 socks_probe() { return 0; } # Config selection only; egress probes have separate coverage.
+if [[ -n ${FIXTURE_FAILURE:-} ]]; then
+    # The account commands remain inert; certificate/Nginx transaction and fresh
+    # orchestration below are production code, including the EXIT rollback trap.
+    [[ -f $NGINX_ROOT/sites-enabled/80.conf ]]
+    AGREE_TOS=1
+    ss() { if [[ $* == *'sport = :80'* ]]; then printf 'recognized nginx listener\n'; fi; }
+    # Called by the production function captured via declare -f above.
+    # shellcheck disable=SC2317
+    certbot() {
+        mkdir -p "$CERT_ROOT/renewal" "$CERT_ROOT/live/$DOMAIN" "$CERT_ROOT/archive/$DOMAIN"
+        printf '[renewalparams]\nauthenticator = webroot\nwebroot_path = %s,\n' \
+            "$ACME_ROOT" >"$CERT_ROOT/renewal/$DOMAIN.conf"
+        printf 'inert fixture certificate\n' >"$CERT_ROOT/live/$DOMAIN/fullchain.pem"
+        printf 'inert fixture key\n' >"$CERT_ROOT/live/$DOMAIN/privkey.pem"
+        chmod 0600 "$CERT_ROOT/live/$DOMAIN/privkey.pem"
+        cp "$CERT_ROOT/live/$DOMAIN/fullchain.pem" "$CERT_ROOT/archive/$DOMAIN/fullchain1.pem"
+        cp "$CERT_ROOT/live/$DOMAIN/privkey.pem" "$CERT_ROOT/archive/$DOMAIN/privkey1.pem"
+        printf issued >>"$SANDBOX/issuance-count"
+    }
+    ensure_certificate() {
+        certificate_stage
+        official_ensure_certificate
+        find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort >"$SANDBOX/post-acme-nginx"
+        find "$CERT_ROOT" "$ACME_ROOT" -type f -exec sha256sum {} + | sort >"$SANDBOX/post-acme-assets"
+    }
+    systemctl() {
+        if [[ $* == *FragmentPath* && -f $UNIT ]]; then printf '%s\n' "$UNIT";
+        elif [[ $* == 'enable --now telemt.service' ]]; then
+            ln -s "$UNIT" "$SANDBOX/service-enabled"
+            printf running >"$SANDBOX/service-running"
+        elif [[ $* == 'disable --now telemt.service' ]]; then
+            if [[ $FIXTURE_FAILURE == stop ]]; then return 1; fi
+            rm -f "$SANDBOX/service-enabled" "$SANDBOX/service-running"
+        fi
+        return 0
+    }
+    wait_ready() {
+        [[ -f $SANDBOX/final-validated && -f $SANDBOX/service-running ]]
+        printf ok >"$SANDBOX/readiness"
+        mkdir "$DATA/state/nested"
+        printf cache >"$DATA/state/nested/runtime-cache"
+        ln -s "$SANDBOX/unrelated" "$DATA/state/escape"
+    }
+    recent_logs() {
+        printf ok >"$SANDBOX/log-health"
+        if [[ $FIXTURE_FAILURE == identity ]]; then
+            sed -i 's/424242/424243/' "$FIXTURE_ACCOUNTS/passwd"
+        fi
+        [[ $FIXTURE_FAILURE == none ]]
+    }
+    helper() {
+        if [[ $1 == fresh-mkdir ]]; then
+            if [[ $FIXTURE_FAILURE == after-user || ( $FIXTURE_FAILURE == directories && $3 == "$DATA/public" ) ]]; then return 1; fi
+        elif [[ $1 == fresh-cleanup-dirs && $FIXTURE_FAILURE == cleanup ]]; then return 1;
+        fi
+        python3 "$HELPER" "$@"
+    }
+    mkdir "$SANDBOX/unrelated"
+    printf keep >"$SANDBOX/unrelated/keep"
+    case $FIXTURE_FAILURE in
+        userdel) export FIXTURE_USERDEL_FAIL=1;;
+        groupdel) export FIXTURE_GROUPDEL_FAIL=1;;
+        partial-useradd) export FIXTURE_PARTIAL_USERADD=1;;
+        preexisting-user)
+            mkdir -p "$FIXTURE_ACCOUNTS"
+            printf 'telemt:x:424242:424242::/preexisting:/bin/sh\n' >"$FIXTURE_ACCOUNTS/passwd";;
+        preexisting-path) mkdir "$DATA"; printf keep >"$DATA/preexisting";;
+    esac
+    set +e
+    (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$SANDBOX/failure.log" 2>&1
+    result=$?
+    set -e
+    [[ $result != 0 && $(cat "$SANDBOX/unrelated/keep") == keep ]]
+    case $FIXTURE_FAILURE in
+        preexisting-user|preexisting-path)
+            [[ ! -e $SANDBOX/certificate-attempt && ! -e $SANDBOX/issuance-count ]]
+            if grep -Eq '^(userdel|groupdel) ' "$FIXTURE_ACCOUNTS/commands" 2>/dev/null; then exit 1; fi
+            if [[ $FIXTURE_FAILURE == preexisting-user ]]; then [[ -f $FIXTURE_ACCOUNTS/passwd ]];
+            else [[ $(cat "$DATA/preexisting") == keep ]]; fi
+            printf 'ok - %s refused before issuance; no preexisting state adopted/deleted\n' "$FIXTURE_FAILURE"
+            exit 0;;
+    esac
+    [[ -f $ACME_ROOT/.telemt-web-manager && -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]]
+    [[ $(cat "$SANDBOX/issuance-count") == issued ]]
+    cmp -s "$SANDBOX/post-acme-assets" <(find "$CERT_ROOT" "$ACME_ROOT" -type f -exec sha256sum {} + | sort)
+    case $FIXTURE_FAILURE in
+        late|after-user|directories)
+            [[ ! -e $BIN && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $STATE && ! -e $UNIT && ! -e $RENEW_HOOK ]]
+            [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group ]]
+            [[ ! -e $SANDBOX/service-enabled && ! -e $SANDBOX/service-running && ! -e $NGINX_ROOT/conf.d/telemt-web-manager.conf ]]
+            cmp -s "$SANDBOX/post-acme-nginx" <(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
+            if grep -q CRITICAL "$SANDBOX/failure.log"; then exit 1; fi
+            if [[ $FIXTURE_FAILURE == late ]]; then
+                [[ -f $SANDBOX/final-validated && -f $SANDBOX/readiness && -f $SANDBOX/path-health && -f $SANDBOX/log-health ]]
+                grep -q 'Post-install health failed' "$SANDBOX/failure.log"
+                printf 'ok - late journal failure removes unit/enable link/process/binary/TOML/WEB/vhost/fresh directories/account; restores all Nginx bytes; preserves committed ACME\n'
+                FIXTURE_FAILURE=none
+                mkdir "$TMP"
+                (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$SANDBOX/retry.log" 2>&1
+                [[ -f $STATE/manifest.json && -f $RENEW_HOOK && -f $BIN && -f $CONFIG && -f $UNIT && -f $FIXTURE_ACCOUNTS/passwd && -f $FIXTURE_ACCOUNTS/group ]]
+                [[ $(cat "$SANDBOX/issuance-count") == issued ]]
+                printf 'ok - clean retry reuses valid managed webroot certificate without Certbot reissuance; final manifest/deploy hook created\n'
+            else printf 'ok - %s partial creation rolls back owned directories/user/group; unrelated paths and committed ACME survive\n' "$FIXTURE_FAILURE"; fi;;
+        cleanup|userdel|groupdel|identity|partial-useradd|stop)
+            grep -q CRITICAL "$SANDBOX/failure.log"
+            [[ -f $(find "$BACKUP_ROOT" -name fresh-ownership.json -print -quit) ]]
+            if [[ $FIXTURE_FAILURE == groupdel || $FIXTURE_FAILURE == partial-useradd ]]; then [[ -f $FIXTURE_ACCOUNTS/group ]];
+            else [[ -f $FIXTURE_ACCOUNTS/passwd ]]; fi
+            if [[ $FIXTURE_FAILURE == stop || $FIXTURE_FAILURE == identity ]]; then [[ -f $BIN && -f $CONFIG && -f $UNIT ]]; fi
+            printf 'ok - %s failure is CRITICAL, fails closed and retains ownership proof/state for manual recovery; ACME preserved\n' "$FIXTURE_FAILURE";;
+        *) exit 1;;
+    esac
+    exit 0
+fi
 if [[ ${FIXTURE_INCOMPATIBLE:-0} == 1 || -n ${FIXTURE_MISSING_STATIC:-} ]]; then
     set +e
     (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$SANDBOX/reject.log" 2>&1
@@ -112,6 +235,8 @@ if [[ ${FIXTURE_INCOMPATIBLE:-0} == 1 || -n ${FIXTURE_MISSING_STATIC:-} ]]; then
 fi
 install_manager >"$SANDBOX/manager.log" 2>&1
 [[ -f $BIN && -f $UNIT && -f $CONFIG && -f $STATE/manifest.json && -f $RENEW_HOOK ]]
+for directory in "$CONFIG_DIR" "$DATA" "$DATA/public" "$DATA/state"; do [[ $(stat -c %a "$directory") == 750 ]]; done
+[[ $(stat -c %a "$STATE") == 700 ]]
 [[ $(stat -c %a "$CONFIG") == 640 && $(stat -c %a "$STATE/web-link.txt") == 600 ]]
 cmp -s "$RENEW_HOOK" <(generate_renewal_hook)
 [[ $(stat -c %a "$RENEW_HOOK") == 750 ]]

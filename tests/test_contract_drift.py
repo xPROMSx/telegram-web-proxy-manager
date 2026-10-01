@@ -64,6 +64,16 @@ class ConntrackTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.classify(text)[0], 1)
 
+    def test_live_357_missing_conntrack_and_censorship_warning(self):
+        unavailable = ("WARN telemt::conntrack_control: conntrack control explicitly enabled but unavailable; disabling runtime features "
+                       "has_cap_net_admin=true backend_available=true conntrack_binary_available=false configured_backend=Auto")
+        censorship = "WARN telemt::config::hot_reload::diff: config reload: censorship settings changed; restart required"
+        result, report = self.classify(unavailable + "\n" + censorship, version="3.5.7", os="ubuntu:26.04")
+        self.assertEqual(result, 1)
+        self.assertIn("failures=1, warnings=1, known_nonfatal=0", report)
+        self.assertEqual(self.classify(censorship, version="3.5.7")[0], 0)
+        self.assertEqual(self.classify(unavailable, version="3.5.9")[0], 1)
+
     def test_journal_boundaries_and_redaction(self):
         for extra, expected in (("", 0), ("\nINFO additional unexpected stderr", 1),
                                 ("\nPermission denied", 1)):
