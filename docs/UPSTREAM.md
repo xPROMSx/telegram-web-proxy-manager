@@ -56,12 +56,11 @@ Upstream также публикует `.sha256` assets. Менеджер исп
 SHA256. Это проверка целостности относительно GitHub, **не независимая подпись**.
 Если digest исчезнет, установка/обновление прекращаются.
 
-Fresh install запрашивает latest при каждом запуске, но отказывается автоматически
-создавать конфигурацию для ещё не исследованного релиза. Для нового релиза нужно
-обновить version gate и contract test. После второго review binary update тоже
-ограничен audited release 3.5.9: успешный healthcheck будущей версии сам по себе
-не доказывает совместимость её runtime write paths. До нового source audit
-неизвестный релиз требует manual review, существующий TOML не меняется.
+Установка и обновление выбирают официальный latest stable. Точное ограничение
+3.5.9 из предыдущего review заменено проверками контрактов: SemVer, управляемый
+WEB TOML, writable paths, положительный healthcheck и отклонение неизвестного
+ключа, затем systemd/readiness/listener/path/log проверки с rollback.
+Source audit ниже относится к базе 3.5.9, а не к гарантии всех будущих версий.
 
 ## Повторная проверка 3x-ui-pro
 
@@ -197,7 +196,7 @@ systemd runtime persistence remain live-acceptance tasks, not CI claims.
   outside the exact insertions. Certificate/private-key ownership, safe archive
   targets and matching public keys are verified before use.
 - Future-release healthcheck success cannot prove future write-path compatibility;
-  unknown runtime releases now require another source audit instead of auto-adoption.
+  runtime compatibility is now checked directly and enforced by the systemd sandbox.
 
 Existing safeguards retained: HTTPS-only release/redirect protocols, exact official
 asset URL and unambiguous digest, no candidate execution before verification,
@@ -207,7 +206,7 @@ No production VPS or secrets were used. See both READMEs for intentional boundar
 
 ## Third review, 2026-10-01: conntrack evidence
 
-Official GitHub API and refs were rechecked: stable remains **3.5.9**, Telemt
+At the third review, official GitHub API and refs reported stable **3.5.9**, Telemt
 main/peeled tag is `e3f62db3474fdad12b4b9a20bdbac59b26b311bb`, and 3x-ui-pro
 main remains `a2c430cd6dec7c86d873dcda3544a61e7ac41144`. Version and topology
 support have not been expanded.
@@ -279,9 +278,9 @@ schemas. Load now validates:
 New manifests record the public IPv4 and detect drift from it. Older schema-1
 manifests did not record the original IP; they validate the supported IPv4:443
 shape but cannot prove its historical value. There is no automatic manifest/TOML
-migration. Unknown installed runtimes are rejected after ownership/permission
-checks, before binary healthcheck. Every load also runs the audited installed
-binary's suppressed strict healthcheck, covering unknown keys and invalid tuning.
+migration. Installed runtimes require valid SemVer after ownership/permission
+checks. Every load runs suppressed strict compatibility probes against private
+TOML copies, covering unknown keys and invalid tuning without an exact-version gate.
 
 Session limits, weights and unrelated timeouts remain tunable. Inactive caches
 are not forced to cosmetic equality. Safe explicit/default equivalences are
@@ -309,3 +308,21 @@ parser is section-aware, rejects duplicate/foreign maps and checks lineage path
 options when present. The manifest's strategy must agree. Check/update/repair
 never invoke Certbot or change its state. See [OPERATIONS.md](OPERATIONS.md)
 for deliberate recovery and remaining live-acceptance requirements.
+
+## Live acceptance follow-up, 1 October 2026
+
+Official API now reports latest stable **3.5.7**, target revision
+`4ca7418442478cd92f9e861c21977a81b249efc8`. Releases 3.5.8 and 3.5.9 are
+prereleases; 3.5.9 still records `e3f62db3474fdad12b4b9a20bdbac59b26b311bb`.
+The reviewed 3x-ui-pro main remains
+`a2c430cd6dec7c86d873dcda3544a61e7ac41144`. Release flags are queried at runtime,
+not embedded in eligibility logic. CI verifies official digests for both 3.5.7
+and the historical 3.5.9 reference and exercises their strict direct/SOCKS configs.
+
+Fresh Ubuntu 26 acceptance exposed standard mime.types data incorrectly treated
+as directives and the exact-version gate incorrectly calling older stable 3.5.7
+a new unaudited release. See [operations](OPERATIONS.md#live-acceptance-fixes-mime-data-and-release-compatibility)
+for the context-aware grammar, package-byte coverage gap and contract-based
+pre-issuance/activation checks. Future releases are conditionally evaluated, not
+guaranteed compatible. The historical source/path audit above remains evidence
+for its recorded baseline; no future source-code properties are claimed.

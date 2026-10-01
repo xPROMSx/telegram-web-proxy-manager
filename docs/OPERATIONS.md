@@ -168,9 +168,10 @@ Matching versions report `already up to date`, then check health. Otherwise the
 verified candidate runs `healthcheck` on the **current config** before backup,
 atomic binary replacement and restart. TOML stays byte-for-byte unchanged; binary
 updates do not modify Nginx, cert or unit. There are no automatic TOML migrations.
-Validation failure stops the update. Runtime/write-path auditing covers only 3.5.9:
-newer latest releases require source audit and an updated version gate even if
-their candidate might accept TOML. Older manager configs with quota outside
+Validation failure stops the update. There is no major/minor/exact-version allowlist.
+SemVer comparison refuses downgrades, including a release reclassified as prerelease.
+Candidates must pass managed WEB/write-path validation and strict-parser probes;
+systemd enforces the writable boundary, and runtime failures trigger rollback. Older manager configs with quota outside
 `state` require manual review; updates do not add strict mode or rewrite paths.
 TOML hashes are checked before/after candidate healthcheck and before activation.
 
@@ -284,3 +285,42 @@ certificates are not automatically deleted.
 Failed fresh installs can intentionally leave accounts, empty directories and
 issued certificates. Accounts/certs are never automatically removed; inspect
 leftovers and backups before retrying.
+
+## Live acceptance fixes: MIME data and release compatibility
+
+A normal Ubuntu nginx.conf includes mime.types. Earlier real-Nginx tests used a
+synthetic main config without this include: upstream heredocs were covered but
+package-owned configuration was omitted. CI now copies the installed package's
+actual mime.types bytes into each isolated trusted Nginx tree, parses both plans,
+asserts its snapshot hash, then runs real Nginx with it, including both pinned
+3x-ui-pro topologies. No production config or include trust expansion is needed.
+
+The parser marks flat types{} entries as data records. Generic directive traversal
+and include expansion cannot see them as listen/server_name/include/etc. Ordinary
+directive-name restrictions and map{} grammar are retained. Nested MIME blocks
+are refused. Every included source still participates in integrity snapshots.
+
+Fresh install verifies official stable metadata, asset/digest/archive and binary
+SemVer, then stages the exact intended TOML before Certbot or persistent setup.
+Semantic WEB/write-path checks, positive healthcheck and unknown-key rejection
+run on private copies. Hash checks reject candidate changes; the original TOML
+is not passed as a writable CLI input. A temporary working directory is used
+before DATA exists; if a candidate requires unavailable paths, it is refused
+before issuance. The same staged TOML is copied unchanged into the installation
+and revalidated there, followed by systemd foreground startup, bounded readiness,
+owned listener, UID/capabilities, HTTP/TLS/SOCKS and journal checks.
+
+Updates validate the installed runtime/configuration, compare SemVer, refuse an
+older stable, preserve equal-version behavior, validate the newer candidate on
+current TOML copies, back up and atomically activate it. Startup/path/log/hash
+failures restore the previous binary. Config, unit, certificate and Nginx are
+not migrated. SemVer includes prerelease precedence and ignores build metadata
+for ordering. Normal selection rejects draft/prerelease metadata and SemVer
+prerelease tags. Pinned prerelease binaries may still be tested explicitly in CI.
+
+These checks evaluate future stable releases; they do not guarantee every future
+implementation's compatibility. Unknown schema/CLI or runtime behavior can fail
+contracts. The source audit remains evidence for the historical baseline, while
+systemd read-only paths and single-listener ownership enforce runtime boundaries.
+The exact 3.5.9 missing-chain warning exception is diagnostic evidence, not a
+release eligibility gate; it is deliberately not generalized to unknown versions.
