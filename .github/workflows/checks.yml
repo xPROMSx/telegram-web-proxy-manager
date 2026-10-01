@@ -1,0 +1,40 @@
+name: checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables
+      - name: Bash syntax
+        run: for file in telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
+      - name: ShellCheck
+        run: shellcheck -x telemt-web-manager.sh tests/*.sh
+      - name: Unit and fixture tests (no root, no production access)
+        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/download.sh
+      - name: Published Telemt configuration contract (SHA256 verified)
+        run: bash tests/upstream.sh
+      - name: Version-independent compatibility, downgrade and rollback regressions
+        run: bash tests/versions.sh && FIXTURE_VERSION=42.7.123 bash tests/fresh.sh && FIXTURE_VERSION=42.7.123 FIXTURE_INCOMPATIBLE=1 bash tests/fresh.sh
+      - name: Actual Ubuntu nf_tables missing-chain diagnostic (isolated namespace)
+        run: bash tests/conntrack.sh
+      - name: Writable state and systemd contract
+        run: bash tests/contracts.sh
+      - name: Shared check lock and exclusive mutation races
+        run: bash tests/locks.sh
+      - name: Certbot and Nginx webroot transactions
+        run: bash tests/acme.sh
+      - name: Renewal socket, deploy hook and scheduler contracts (temporary root-owned fixtures)
+        run: sudo bash tests/renewal.sh
+      - name: Real Nginx stream and TLS fixture
+        run: bash tests/nginx.sh
+      - name: Current reviewed 3x-ui-pro installer and patcher topologies
+        run: bash tests/three-x-ui.sh
