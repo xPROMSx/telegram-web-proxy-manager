@@ -40,7 +40,7 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Manager 0.1.2 menu (changes in this PR; the published release is still v0.1.1):
+Manager 0.1.2 menu:
 
 ```text
 1. Install
