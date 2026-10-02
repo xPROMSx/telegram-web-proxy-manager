@@ -3,8 +3,8 @@
 Supported Telemt: **3.5.11**.
 
 The current release and source were verified through official GitHub metadata and
-actual downloads on 2 October 2026 (Europe/Moscow). Manager SCRIPT_VERSION remains
-0.1.1. The supported release is deliberately fixed; production never queries
+actual downloads on 2 October 2026 (Europe/Moscow). Manager SCRIPT_VERSION is
+0.1.2. The supported release is deliberately fixed; production never queries
 `releases/latest` to choose a Telemt candidate.
 
 | Provenance | Verified value |
