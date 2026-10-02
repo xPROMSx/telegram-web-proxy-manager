@@ -4,12 +4,12 @@ set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
-[[ $SUPPORTED_TELEMT_VERSION == 3.5.10 ]]
+[[ $SUPPORTED_TELEMT_VERSION == 3.5.11 ]]
 python3 - "$SUPPORTED_TELEMT_VERSION" <<'PY'
 from pathlib import Path
 import sys
 version = sys.argv[1]
-for name in ('README.md', 'README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md'):
+for name in ('README.md', 'README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-COVERAGE.md'):
     assert 'Supported Telemt: **' + version + '**' in Path(name).read_text(), name
 print('ok - production supported Telemt == documented supported Telemt == ' + version)
 PY
@@ -47,7 +47,11 @@ resolved = json.loads((Path(root) / 'resolved.json').read_text())
 assert r['tag_name'] == version and not r['draft'] and not r['prerelease']
 assert r['target_commitish'] == commit
 assert ref['ref'] == 'refs/tags/' + version
+assert ref['object']['type'] == 'tag'
 assert resolved['object']['type'] == 'commit' and resolved['object']['sha'] == commit
+assert resolved['tag'] == version
+assert resolved['verification']['verified'] is True and resolved['verification']['reason'] == 'valid'
+print('ok - official annotated tag GitHub verification: verified=true, reason=valid')
 for arch, digest in (('x86_64', x86), ('aarch64', arm)):
     name = 'telemt-' + arch + '-linux-gnu.tar.gz'
     assets = [a for a in r['assets'] if a['name'] == name]

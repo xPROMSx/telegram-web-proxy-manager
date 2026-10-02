@@ -40,7 +40,7 @@ assert_download_refused 'real SHA256 mismatch against immutable production pin'
 fixture_source="$SANDBOX/official.tar.gz"
 download_candidate
 [[ -f $SANDBOX/executed ]]
-grep -q '/releases/download/3.5.10/' "$SANDBOX/requested-url"
+grep -q '/releases/download/3.5.11/' "$SANDBOX/requested-url"
 printf 'ok - downloader constructs only the pinned official URL; no latest/asset metadata selection\n'
 # An unsafe archive never reaches execution; test_safety.py separately exercises
 # the real extractor's symlink/traversal/layout refusals with no hash mock.

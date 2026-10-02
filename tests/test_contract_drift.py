@@ -13,7 +13,7 @@ from test_safety import ROOT, s
 
 
 class JournalSeverityTests(unittest.TestCase):
-    """Live 3.5.10 WARNs exposed an API-by-text/version bug, not path failure."""
+    """Historical 3.5.10 live WARNs; not healthy pinned-runtime expectations."""
     def setUp(self):
         self.journal = (ROOT / 'tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl').read_text()
         self.records = [json.loads(line)['MESSAGE'] for line in self.journal.splitlines()]

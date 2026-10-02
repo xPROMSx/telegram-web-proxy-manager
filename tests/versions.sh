@@ -57,17 +57,17 @@ assert_rejected() {
 }
 update_manager >"$sandbox/update.log" 2>&1
 [[ $(binary_version "$BIN") == "$SUPPORTED_TELEMT_VERSION" && $(sha256sum "$CONFIG") == "$before" ]]
-printf 'ok - older managed install upgrades to pinned Telemt 3.5.10 (mocked lifecycle); TOML byte-identical\n'
+printf 'ok - older managed install upgrades to pinned Telemt 3.5.11 (mocked lifecycle); TOML byte-identical\n'
 update_manager >"$sandbox/equal.log" 2>&1
 grep -q 'already up to date' "$sandbox/equal.log"
 printf 'ok - equal version reports already up to date\n'
-make_binary "$BIN" 3.5.10+unreviewed compatible
+make_binary "$BIN" 3.5.11+unreviewed compatible
 assert_rejected 'equal SemVer precedence but different exact supported version' update_manager
-grep -q 'differs from exact supported 3.5.10; manual review required' "$sandbox/refusal.log"
-[[ $(binary_version "$BIN") == 3.5.10+unreviewed ]]
+grep -q 'differs from exact supported 3.5.11; manual review required' "$sandbox/refusal.log"
+[[ $(binary_version "$BIN") == 3.5.11+unreviewed ]]
 make_binary "$BIN" 42.7.123 compatible
 assert_rejected 'installed newer than supported target; no automatic downgrade' update_manager
-grep -q 'Installed Telemt 42.7.123 is newer than supported 3.5.10; automatic downgrade refused' "$sandbox/refusal.log"
+grep -q 'Installed Telemt 42.7.123 is newer than supported 3.5.11; automatic downgrade refused' "$sandbox/refusal.log"
 [[ $(binary_version "$BIN") == 42.7.123 ]]
 make_binary "$BIN" 3.5.9 compatible
 for behavior in incompatible noop mutate; do
@@ -95,7 +95,7 @@ listener_ready() { return 0; }
 openssl() { return 0; }
 make_binary "$BIN" "$SUPPORTED_TELEMT_VERSION" compatible
 check_manager >"$sandbox/check.log" 2>&1
-grep -q 'installed Telemt: 3.5.10; supported Telemt: 3.5.10' "$sandbox/check.log"
+grep -q 'installed Telemt: 3.5.11; supported Telemt: 3.5.11' "$sandbox/check.log"
 grep -q 'Check result: OK' "$sandbox/check.log"
 make_binary "$BIN" 42.7.123 compatible
 assert_rejected 'check newer installation requires reviewed manager/manual review' check_manager

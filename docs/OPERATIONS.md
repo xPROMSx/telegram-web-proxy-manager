@@ -5,7 +5,7 @@
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
 
-Supported Telemt: **3.5.10**. See [upstream provenance](UPSTREAM.md) and the
+Supported Telemt: **3.5.11**. See [upstream provenance](UPSTREAM.md) and the
 [REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
 
 ## Nginx requirements
@@ -172,7 +172,7 @@ verified candidate runs `healthcheck` on the **current config** before backup,
 atomic binary replacement and restart. TOML stays byte-for-byte unchanged; binary
 updates do not modify Nginx, cert or unit. There are no automatic TOML migrations.
 Validation failure stops the update. The only download target is the reviewed
-3.5.10 pin, with embedded official asset hashes. Older compatible managed installs
+3.5.11 pin, with embedded official asset hashes. Older compatible managed installs
 can upgrade to it; newer installs refuse before download and require manual review
 or a newer reviewed manager. Equal SemVer precedence with a different exact version
 (such as an unreviewed build suffix) also refuses. Future releases require an explicit
@@ -217,7 +217,7 @@ manager-owned webroot certificate state without unnecessary issuance.
 systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/TLS,
 expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
 lines are not printed. Root is required; private temporary diagnostics are deleted.
-Version reporting is local: manager, installed Telemt and supported Telemt 3.5.10.
+Version reporting is local: manager, installed Telemt and supported Telemt 3.5.11.
 A mismatch reports unsupported status and returns nonzero; no latest-release query
 is made. WARN records only contribute a diagnostic count. ERROR/FATAL and genuine
 Rust panic records fail; malformed journal transport or unsafe controls fail closed.
@@ -243,7 +243,7 @@ and foreign units/drop-ins need manual review.
 protections, restricted address families/realtime/SUID/namespaces, W^X and personality.
 Limits: 65536 descriptors, 4096 tasks, MemoryMax=1G. Review VPS capacity/workload;
 external unit edits require review. CAP_NET_ADMIN remains for upstream conntrack
-cleanup even in tracked mode. Telemt 3.5.10 requires `conntrack` on its PATH;
+cleanup even in tracked mode. Telemt 3.5.11 requires `conntrack` on its PATH;
 Ubuntu provides it in the `conntrack` package. Preflight checks it and the account
 creation/deletion tools (`getent`, `useradd`, `userdel`, `groupdel`) before temporary
 transaction setup, downloads or ACME. `systemd-path search-binaries-default`
@@ -367,7 +367,7 @@ and rollback policy is unchanged.
 
 The v0.1.0 coverage gap was the combination of a real binary and fresh ordering:
 `upstream.sh` pre-created DATA/public/index.html, while `fresh.sh` mocked healthcheck.
-`staging.sh` now verifies the official pinned 3.5.10 digest and runs the actual
+`staging.sh` now verifies the official pinned 3.5.11 digest and runs the actual
 binary through fresh orchestration in direct and SOCKS modes. It proves the old
 absent-directory state and a missing index fail, usable staging succeeds, strict
 unknown keys fail, final paths never contain staging, config semantics match,
@@ -375,13 +375,17 @@ and incompatible/missing-decoy candidates never reach even the mocked Certbot
 boundary. OS/account/systemd/ACME actions remain fixtures; this is not live issuance.
 
 Updates validate the installed runtime/configuration and compare it with the fixed
-3.5.10 target. Equal versions keep the health checks; older compatible managed
+3.5.11 target. Equal versions keep the health checks; older compatible managed
 installs upgrade, while newer ones refuse without downloading or modifying files.
 Failures restore the old binary; config, unit, certificate and Nginx are not migrated.
 No compatibility promise is made for future releases. The real runtime smoke
 starts the exact pin with real Linux helpers and CAP_NET_ADMIN in a separate
-network namespace. It verifies process-owned listener, HTTP index, actual logs,
-fatal classifier negatives, clean shutdown and firewall state. It does not start
+network namespace. It first proves owned chains absent, verifies process-owned
+listener/HTTP index again after a measured >=10-second dwell, and refuses pinned
+conntrack reconciliation/retry/shutdown failure fragments in actual captured logs.
+Production WARN classification stays generic; the seven 3.5.10 WARN records remain
+historical regression input. Fatal classifier negatives, clean shutdown and
+firewall state checks remain. It does not start
 systemd or perform ACME issuance. See the coverage inventory for every CI step.
 
 ## Manager bootstrap
@@ -412,7 +416,7 @@ The bootstrap script itself is fetched from main in the quick command; review it
 or download it before execution if desired. The program pair is never installed
 from mutable main. To test an unpublished PR/commit, use the advanced/manual
 installation workflow with its reviewed immutable checkout.
-The manager's release channel is independent from the fixed Telemt 3.5.10 pin.
+The manager's release channel is independent from the fixed Telemt 3.5.11 pin.
 
 Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
 Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then

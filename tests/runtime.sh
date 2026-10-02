@@ -38,7 +38,20 @@ PY
         fi
     }
     trap stop_on_failure EXIT
+    owned_pattern='telemt_conntrack(_a|_b)?|TELEMT_NOTRACK|TELEMT_NT_[AB]'
+    # Pinned upstream contract only; production WARN severity stays generic.
+    failure_patterns=(-e 'Failed to reconcile conntrack firewall policy'
+        -e 'Initial conntrack firewall reconciliation failed'
+        -e 'background retries remain active'
+        -e 'Failed to clear conntrack firewall policy during shutdown'
+        -e 'Conntrack firewall cleanup did not complete successfully')
     nft list ruleset >"$fixture/nft-before"
+    iptables-save >"$fixture/iptables-before"
+    ip6tables-save >"$fixture/ip6tables-before"
+    if grep -Eiq "$owned_pattern" "$fixture/nft-before" "$fixture/iptables-before" "$fixture/ip6tables-before"; then
+        die 'Fresh namespace unexpectedly contains Telemt-owned firewall state'
+    fi
+    printf 'ok - REAL pre-start nft/IPv4/IPv6 inspection: Telemt-owned chains absent (old recovery trigger)\n'
     # Upstream's "stderr" tracing layer uses the fmt default stdout writer;
     # the MAESTRO startup banner uses stderr. Capture both as journald does.
     # Do not inherit the Cloud executor's RUST_LOG=...error filter.
@@ -63,9 +76,25 @@ PY
     (( ready )) || die 'Real listener/HTTP did not become ready'
     cmp -s "$fixture/http-body" "$fixture/data/public/index.html"
     printf 'ok - REAL pinned listener owned by Telemt PID; real HTTP 200 serves generated managed index\n'
-    # A one-shot process/config check is insufficient: allow retries to run.
-    sleep 5
+    # Old actor retries after 1s, 2s, 4s, then backs off to a 30s cap.
+    # HTTP readiness alone could mask permanently failed reconciliation.
+    dwell_started=$(python3 -c 'import time; print(time.monotonic_ns())')
+    sleep 10
     kill -0 "$pid" || die 'Real Telemt died after initial HTTP'
+    ss -H -ltnp 'sport = :18080' | grep -Fq "pid=$pid,"
+    curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
+        http://127.0.0.1:18080/ -o "$fixture/http-body"
+    cmp -s "$fixture/http-body" "$fixture/data/public/index.html"
+    python3 - "$dwell_started" <<'PY'
+import sys, time
+elapsed = time.monotonic_ns() - int(sys.argv[1])
+assert elapsed >= 10_000_000_000, 'minimum ten-second post-readiness dwell required'
+print(f'ok - REAL post-readiness runtime dwell {elapsed / 1e9:.3f}s >= 10s; PID/listener/HTTP index remain healthy')
+PY
+    if grep -Fq "${failure_patterns[@]}" "$fixture/stderr"; then
+        die 'Pinned runtime has conntrack reconciliation/retry failure'
+    fi
+    printf 'ok - actual pinned startup/retry output: NO conntrack reconciliation failure/retry fragments\n'
     helper classify <"$fixture/stderr" >"$fixture/startup-summary"
     cat "$fixture/startup-summary"
     grep -Eq 'errors=0, warnings=[1-9][0-9]*' "$fixture/startup-summary"
@@ -74,8 +103,7 @@ from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
 # Print only these verified, secret-free fragments of actual captured output.
-for fragment in ('config reload: censorship settings changed; restart required',
-                 "Chain 'TELEMT_NOTRACK' does not exist"):
+for fragment in ('config reload: censorship settings changed; restart required',):
     if fragment in text: print('Observed actual startup WARN fragment: ' + fragment)
 PY
     printf 'ok - REAL startup stderr consumed by production classifier; observed WARNs permit healthy runtime\n'
@@ -95,10 +123,14 @@ PY
     wait "$pid"
     pid=''
     helper classify <"$fixture/stderr"
+    if grep -Fq "${failure_patterns[@]}" "$fixture/stderr"; then
+        die 'Pinned runtime has conntrack startup/retry/shutdown failure'
+    fi
+    printf 'ok - actual completed pinned log: NO conntrack reconciliation/retry/shutdown failure fragments\n'
     nft list ruleset >"$fixture/nft-after"
     iptables-save >"$fixture/iptables-after"
     ip6tables-save >"$fixture/ip6tables-after"
-    if grep -Ei 'telemt_conntrack(_a|_b)?|TELEMT_NOTRACK|TELEMT_NT_[AB]' \
+    if grep -Eiq "$owned_pattern" \
         "$fixture/nft-after" "$fixture/iptables-after" "$fixture/ip6tables-after"; then
         die 'Unexpected Telemt-owned firewall state after shutdown'
     fi

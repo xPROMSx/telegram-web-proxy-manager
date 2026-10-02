@@ -1,6 +1,6 @@
 # CI coverage truth table
 
-Supported Telemt: **3.5.10**. This inventory describes `.github/workflows/checks.yml`.
+Supported Telemt: **3.5.11**. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means
 both occur in the named step. Static unit/config text inspection is not a running
 systemd service or a real process capability test. Real filesystem ownership here
@@ -61,7 +61,12 @@ The runtime step has no mocked helpers, process, socket, HTTP or capability resu
 It starts the actual official digest-verified pin with production-generated config
 and index in a new network namespace. It checks real namespace identity and kernel
 capabilities, real helpers, PID-owned listener, HTTP body, actual merged stdout/
-stderr, clean exit and nft/IPv4/IPv6 firewall inspection. Fatal injection tests the
+stderr, absent owned chains before startup, measured >=10-second post-readiness
+dwell with a second actual listener/HTTP check, and absence of pinned conntrack
+reconciliation/retry/shutdown failure fragments. Clean exit and nft/IPv4/IPv6
+inspection follow. These absence assertions are upstream runtime contracts, not
+production WARN exceptions. The seven 3.5.10 WARNs remain historical classifier
+regressions, not healthy 3.5.11 runtime expectations. Fatal injection tests the
 production classifier on captured output; it does not inject a runtime service
 crash. The smoke runs as root in the disposable Actions namespace, not as the
 production telemt account under the full systemd sandbox. It never proves systemd

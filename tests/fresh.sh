@@ -109,6 +109,7 @@ candidate_healthcheck() {
 }
 wait_ready() { [[ -f $SANDBOX/final-validated ]]; printf ok >"$SANDBOX/readiness"; }
 path_health() { printf ok >"$SANDBOX/path-health"; }
+# Historical 3.5.10 journal transport fixture, not pinned runtime expectations.
 journalctl() { cat "$ROOT/tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl"; }
 recent_logs() { printf ok >"$SANDBOX/log-health"; official_recent_logs "$@"; }
 SOCKS=${FIXTURE_SOCKS:-direct}

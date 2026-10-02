@@ -96,7 +96,7 @@ realip and stream/ssl_preread modules. x86_64 or aarch64, one recognized Nginx S
 IPv4 `:443`, optional existing `[::]:443`, outgoing PROXY protocol and an HTTP
 `conf.d/*.conf` include. The manager adds a loopback TLS frontend and an IPv4-only
 Telemt WEB listener. Telegram egress is direct or unauthenticated SOCKS5.
-Supported Telemt: **3.5.10**. Fresh installs and updates use only this reviewed
+Supported Telemt: **3.5.11**. Fresh installs and updates use only this reviewed
 release and embedded official SHA256 values. Older managed installs must pass
 compatibility checks; newer installs are never downgraded. Supporting a future
 release requires a new reviewed manager version. `--check` reports installed and
