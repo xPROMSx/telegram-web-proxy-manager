@@ -458,3 +458,71 @@ bootstrap launches the menu after releasing its lock; noninteractive use or
 `--no-start` only installs the program files. CI uses root-owned temporary paths,
 release/download fixtures and a fake menu, including a failure injected after
 directory exchange; no production paths or release operations are tested.
+
+## Managed uninstall
+
+Manager 0.1.2 adds `--uninstall --confirm-uninstall` and menu item 5, followed by
+Exit as item 6. The interactive confirmation is the exact word `UNINSTALL`;
+only then is certificate deletion offered with default N. `--delete-certificate`
+requires both uninstall and explicit confirmation. This removes Telemt, not the
+manager, and does not adopt or replace manual/unmanaged installations.
+
+Ownership validation is separate from the normal installation health loader.
+The complete schema-1 manifest, exact generated unit without drop-ins, exact WEB
+vhost/map/upstream, managed configuration/link, safe exclusive roots and exact
+private UID/GID are required. Unknown schema, links/hardlinks, mounted managed
+roots, changed entries, shared account ownership or supplementary groups refuse
+before destructive mutation. A stopped/failed Telemt service or near-expiry
+certificate is removable; certificate identity/key/renewal ownership and a valid,
+recognized active Nginx remain required. No arbitrary firewall rule deletion is
+performed. Residual Telemt-named firewall state after stop causes rollback and
+manual review.
+
+The exclusive manager lock covers the transaction. A canonical root-only backup
+records binary/TOML/unit/data/manifest/link, Nginx sources and edit plan, account
+UID/GID, ownership/modes/hashes and prior enabled/active state. A second private
+snapshot after stop captures the final runtime data. The service is stopped and
+disabled; remaining UID processes are refused. Nginx source hashes/include set
+are rechecked, exact WEB integration removed atomically, tested and reloaded.
+Only then are managed files removed with no-follow identity checks, systemd
+reloaded, and the account/private group removed. Final absence checks cover the
+binary/unit/config/data/manifest/link/account, private 18080/7444 listeners, WEB
+integration and Telemt-owned firewall names. Manager program/launcher and backups
+are retained.
+
+Catchable INT/TERM/HUP and failures before commit restore files, Nginx, account
+identity and prior enabled state, and restart Telemt if it had been active.
+Rollback never claims to make a previously broken service healthy. If an identity
+was reused/changed or restoration fails, preserve the backup and perform manual
+recovery; the manager reports CRITICAL. SIGKILL, power loss, disk failure and
+concurrent manual root mutation remain manual-recovery boundaries. There is no
+persistent “rollback last action” interface.
+
+Certificate preservation is default. Schema-1
+`/var/lib/telemt-web-manager/certificate.json` (root-owned 0600 in a 0700 directory)
+contains domain, exact cert name, renewal kind and managed ACME webroot only—no
+private key. New installs persist it after certificate validation; uninstall of
+v0.1.1 can create it only from the proven manifest and current certificate
+contracts. Keeping a webroot lineage also keeps the exact ACME marker/webroot,
+ACME HTTP vhost and deploy hook. Standalone renewal retains its free-port-80
+contract. Certbot timers/accounts are not removed.
+
+Install → uninstall keeping the certificate → fresh Install of the same domain
+revalidates the independent record, paths/key/hostname and supported renewal
+state, then reuses the lineage. Missing, malformed or mismatched ownership is not
+adopted just because the hostname matches. Fresh rollback retains validated
+certificate-only state, while still removing its deployment and owned account.
+Preservation avoids unnecessary ACME issuance and rate-limit consumption.
+
+Explicit certificate deletion is a separate phase after core uninstall commits.
+It validates all explicit Certbot lineage paths and the installed `delete`
+interface, then uses `certbot delete --non-interactive --cert-name DOMAIN`.
+No recursive Certbot directory removal is used. Only after confirmed lineage
+absence can unused exact manager ACME assets and certificate ownership state be
+removed. In-use/changed challenge state is refused. The exact canonical deploy
+hook is removed only with the last supported manager-owned lineage. Explicit
+references to its hook/webroot/lineage from another renewal or Nginx source
+refuse certificate cleanup before Certbot deletion. Nginx is tested
+before/after removal; a failed activation restores the previous ACME vhost.
+Failure reports “Telemt uninstall succeeded. Certificate cleanup failed or
+requires manual review” and retains backup evidence; Telemt is not resurrected.

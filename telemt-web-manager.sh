@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=0.1.1
+readonly SCRIPT_VERSION=0.1.2
 readonly SUPPORTED_TELEMT_VERSION=3.5.11
 readonly SUPPORTED_TELEMT_COMMIT=94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d
 readonly TELEMT_SHA256_X86_64=529e1821bae1d01150347c2bb4c6a555432fcdc10aa454bacb78438e5875f8bf
@@ -24,7 +24,8 @@ NGINX_ROOT=/etc/nginx
 BACKUP_ROOT=/root/telemt-backups
 LOCK=/run/lock/telemt-web-manager.lock
 TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' RELEASE='' CANDIDATE=''
-ARMED=0 INSTALLING=0 NGINX_CHANGED=0
+ARMED=0 INSTALLING=0 NGINX_CHANGED=0 UNINSTALLING=0
+CONFIRM_UNINSTALL=0 DELETE_CERTIFICATE=0 CERT_CLEANUP_RUNNING=0 UNINSTALL_ENABLED='' UNINSTALL_ACTIVE=''
 CERT_ONLY=0 PLAN_MODE=web
 FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0
 declare -a CHANGED=() ORIGINAL=()
@@ -118,6 +119,7 @@ track_file() {
 
 rollback() {
     local index failed=0
+    if (( UNINSTALLING )); then uninstall_rollback; return; fi
     say 'Rolling back managed changes.' >&2
     if (( INSTALLING && ! CERT_ONLY )); then
         if (( FRESH_SERVICE_ATTEMPTED )); then
@@ -159,6 +161,9 @@ cleanup() {
     local code=$?
     trap - EXIT INT TERM HUP
     if (( ARMED )); then rollback || code=1; fi
+    if (( CERT_CLEANUP_RUNNING )); then
+        say "Telemt uninstall succeeded. Certificate cleanup interrupted or requires manual review. Backup: $BACKUP" >&2
+    fi
     if [[ -n $TMP && -d $TMP ]]; then rm -rf -- "$TMP"; fi
     exit "$code"
 }
@@ -450,7 +455,9 @@ nginx_plan() {
 }
 
 build_nginx_plan() {
-    if [[ $PLAN_MODE == acme ]]; then
+    if [[ $PLAN_MODE == uninstall ]]; then
+        helper nginx-uninstall-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
+    elif [[ $PLAN_MODE == acme ]]; then
         helper acme-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
     else
         helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
@@ -474,7 +481,9 @@ apply_nginx() {
             chown --reference="$path" "$TMP/nginx-stage"
         fi
         NGINX_CHANGED=1
-        atomic_copy "$TMP/nginx-stage" "$path"
+        if [[ $(jq --argjson i "$index" '.edits[$i].content == null' "$TMP/nginx-plan.json") == true ]]; then
+            helper planned-unlink "$TMP/nginx-plan.json" "$path"
+        else atomic_copy "$TMP/nginx-stage" "$path"; fi
         index=$((index+1))
     done < <(jq -r '.edits[].path' "$TMP/nginx-plan.json")
     nginx_test || die 'Nginx validation failed; restoring backup'
@@ -515,6 +524,7 @@ ensure_certificate() {
     fi
     validate_certificate
     certificate_renewal_contract "$issued"
+    write_certificate_state
     renewal_scheduler_status
 }
 
@@ -556,6 +566,10 @@ certificate_renewal_contract() {
     local freshly_issued=${1:-0} kind expected='' sockets
     kind=$(helper renewal-kind "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT") ||
         die 'Certificate renewal settings are unsupported; preserve Certbot assets and review docs/OPERATIONS.md'
+    if [[ -e $STATE/certificate.json || -L $STATE/certificate.json ]]; then
+        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || die 'Certificate ownership record mismatch'
+        expected=$(jq -er .acme_webroot "$STATE/certificate.json")
+    fi
     if [[ -f $STATE/manifest.json ]]; then
         [[ $(jq -er .domain "$STATE/manifest.json") == "$DOMAIN" ]] || die 'Certificate domain differs from managed manifest'
         expected=$(jq -r '.acme_webroot // ""' "$STATE/manifest.json")
@@ -564,10 +578,12 @@ certificate_renewal_contract() {
         [[ ! -f $STATE/manifest.json || $expected == "$ACME_ROOT" ]] || die 'Manifest renewal webroot changed'
         helper acme-state "$NGINX_ROOT" "$DOMAIN" "$ACME_ROOT" ||
             die 'Managed webroot renewal is incomplete; certificate retained. Restore the audited ACME vhost/webroot/marker or repair renewal manually; see docs/OPERATIONS.md'
+        [[ $freshly_issued == 1 || -f $STATE/manifest.json || -f $STATE/certificate.json ]] ||
+            die 'Existing certificate has no manager ownership evidence; automatic adoption refused'
         nginx_port_owned 80 || die 'Managed webroot renewal needs the recognized Nginx listening on port 80'
     else
         [[ -z $expected ]] || die 'Managed webroot certificate changed to standalone; manual review required'
-        [[ $freshly_issued == 1 || -f $STATE/manifest.json ]] ||
+        [[ $freshly_issued == 1 || -f $STATE/manifest.json || -f $STATE/certificate.json ]] ||
             die 'Existing certificate has no manager ownership evidence; automatic adoption refused. Preserve Certbot assets; see docs/OPERATIONS.md'
         # ss includes IPv4 and IPv6, including wildcard and loopback listeners.
         # Any listener is outside the audited free-port standalone contract.
@@ -580,7 +596,9 @@ certificate_renewal_contract() {
 validate_certificate() {
     local cert="$CERT_ROOT/live/$DOMAIN/fullchain.pem" key="$CERT_ROOT/live/$DOMAIN/privkey.pem"
     helper certificate-paths "$CERT_ROOT" "$DOMAIN" || die 'Unsafe certificate ownership/paths'
-    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || die 'Certificate expires within 7 days'
+    if [[ ${1:-health} != identity ]]; then
+        openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || die 'Certificate expires within 7 days'
+    fi
     openssl x509 -in "$cert" -noout -checkhost "$DOMAIN" | grep -q 'does match certificate' || die 'Certificate hostname mismatch'
     [[ -r $key ]] || die 'Certificate key unreadable'
     [[ $(openssl x509 -in "$cert" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum) == \
@@ -623,6 +641,8 @@ issue_webroot_certificate() {
     # Separate transaction: successful issuance keeps the renewal vhost even if
     # a later Telemt installation fails. Failure restores only ACME mutations.
     CERT_ONLY=1 INSTALLING=1 PLAN_MODE=acme
+    # Separate certificate subshell deliberately isolates its tracked edits.
+    # shellcheck disable=SC2030
     CHANGED=() ORIGINAL=()
     trap cleanup EXIT
     trap 'exit 130' INT
@@ -678,10 +698,18 @@ install_manager() {
     fi
     [[ -n $DOMAIN && -n $PUBLIC_IP ]] || prompt_install
     local path secret since
-    for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$STATE" "$RENEW_HOOK"; do
+    for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR"; do
         helper safe-path "$path" || die 'Unsafe install path'
         [[ ! -e $path && ! -L $path ]] || die 'Existing Telemt files found; automatic adoption not possible; manual review required'
     done
+    if [[ -e $STATE || -L $STATE ]]; then
+        helper certificate-only-state "$STATE" || die 'Existing manager state is not certificate-only; adoption refused'
+        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || die 'Preserved certificate ownership mismatch'
+    fi
+    if [[ -e $RENEW_HOOK || -L $RENEW_HOOK ]]; then
+        [[ -f $STATE/certificate.json ]] || die 'Existing deploy hook has no certificate ownership evidence'
+        renewal_deploy_hook_contract
+    fi
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         die 'Existing telemt account/group needs manual review'
     fi
@@ -714,7 +742,7 @@ install_manager() {
         if [[ $path == "$DATA/state" ]]; then chown telemt:telemt "$path";
         else chown root:telemt "$path"; fi
     done
-    helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700
+    if [[ ! -e $STATE ]]; then helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700; fi
     track_file "$DATA/public/index.html"
     write_managed_decoy "$DATA/public" || die 'Unable to create managed decoy'
     chown root:telemt "$DATA/public/index.html"
@@ -738,9 +766,11 @@ install_manager() {
     apply_nginx
     if ! path_health || ! recent_logs "$since"; then die 'Post-install health failed'; fi
     install -d -m 0755 "$(dirname "$RENEW_HOOK")"
-    track_file "$RENEW_HOOK"
-    generate_renewal_hook >"$RENEW_HOOK"
-    chmod 0750 "$RENEW_HOOK"
+    if [[ ! -e $RENEW_HOOK ]]; then
+        track_file "$RENEW_HOOK"
+        generate_renewal_hook >"$RENEW_HOOK"
+        chmod 0750 "$RENEW_HOOK"
+    fi
     renewal_deploy_hook_contract
     track_file "$STATE/manifest.json"
     jq -n --arg domain "$DOMAIN" --arg public_ip "$PUBLIC_IP" --arg unit "$(sha256sum "$UNIT" | cut -d' ' -f1)" \
@@ -858,12 +888,176 @@ repair_manager() {
     fi
 }
 
+# Uninstall uses identity contracts; it never requires Telemt readiness/HTTP.
+write_certificate_state() {
+    helper certificate-record-stage "$TMP/certificate.json" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT"
+    helper safe-path "$STATE" || die 'Unsafe certificate state directory'
+    if [[ ! -e $STATE ]]; then install -d -m 0700 "$STATE"; fi
+    [[ $(stat -c %a "$STATE") == 700 ]] || die 'Unsafe certificate state permissions'
+    if [[ -e $STATE/certificate.json || -L $STATE/certificate.json ]]; then
+        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || die 'Certificate ownership record mismatch'
+    else
+        atomic_copy "$TMP/certificate.json" "$STATE/certificate.json"
+    fi
+}
+
+uninstall_load() {
+    [[ -e $STATE/manifest.json || -L $STATE/manifest.json ]] || {
+        say 'No manager-owned Telemt installation found. Unmanaged Telemt is not removed automatically.'
+        return 2
+    }
+    helper uninstall-plan "$TMP/uninstall-plan.json" "$BIN" "$CONFIG" "$UNIT" "$DATA" "$STATE" "$NGINX_ROOT" "$CERT_ROOT" "$ACME_ROOT" ||
+        die 'Managed ownership/identity cannot be proven; no uninstall changes made'
+    DOMAIN=$(jq -er '.certificate.domain' "$TMP/uninstall-plan.json")
+    [[ $(systemctl show telemt.service -p FragmentPath --value) == "$UNIT" &&
+       -z $(systemctl show telemt.service -p DropInPaths --value) ]] || die 'Unexpected unit/drop-in; uninstall refused'
+    generate_unit >"$TMP/expected-unit"
+    cmp -s "$UNIT" "$TMP/expected-unit" || die 'Unit differs from exact manager contract'
+    if ! nginx_test || ! systemctl is-active --quiet nginx || ! nginx_runtime_identity; then die 'Nginx identity/configuration requires review'; fi
+    validate_certificate identity
+    certificate_renewal_contract
+    renewal_deploy_hook_contract
+    PLAN_MODE=uninstall
+    nginx_plan
+    UNINSTALL_ENABLED=$(systemctl is-enabled telemt.service || true)
+    UNINSTALL_ACTIVE=$(systemctl show telemt.service -p ActiveState --value)
+    [[ $UNINSTALL_ENABLED == enabled || $UNINSTALL_ENABLED == disabled ]] || die 'Ambiguous service enabled state'
+    [[ $UNINSTALL_ACTIVE == active || $UNINSTALL_ACTIVE == inactive || $UNINSTALL_ACTIVE == failed ]] || die 'Service transition in progress; retry after review'
+}
+
+uninstall_firewall_absent() {
+    nft list ruleset >"$TMP/nft-final" && iptables-save >"$TMP/iptables-final" && ip6tables-save >"$TMP/ip6tables-final" || return 1
+    ! grep -Eq 'telemt_conntrack(_a|_b)?|TELEMT_NOTRACK|TELEMT_NT_[AB]' "$TMP/nft-final" "$TMP/iptables-final" "$TMP/ip6tables-final"
+}
+
+uninstall_quiet() {
+    helper uninstall-quiet "$BACKUP" || return 1
+    [[ -z $(ss -H -ltn 'sport = :18080') ]] || return 1
+    uninstall_firewall_absent
+}
+
+uninstall_remove_files() { helper uninstall-remove "$BACKUP"; }
+uninstall_remove_account() { helper uninstall-account-remove "$BACKUP"; }
+
+# The issuance subshell has its own edit arrays; these are the parent transaction.
+# shellcheck disable=SC2031
+uninstall_rollback() {
+    local failed=0 index
+    say 'Rolling back managed uninstall.' >&2
+    helper uninstall-restore "$BACKUP" || failed=1
+    if (( ! failed )); then
+        for ((index=${#CHANGED[@]}-1; index>=0; index--)); do
+            if [[ -n ${ORIGINAL[index]} ]]; then atomic_copy "${ORIGINAL[index]}" "${CHANGED[index]}" || failed=1
+            else helper safe-path "${CHANGED[index]}" && rm -f -- "${CHANGED[index]}" || failed=1; fi
+        done
+        systemctl daemon-reload || failed=1
+        if [[ $UNINSTALL_ENABLED == enabled ]]; then systemctl enable telemt.service || failed=1
+        else systemctl disable telemt.service || failed=1; fi
+        if (( NGINX_CHANGED )); then nginx_test && nginx_reload || failed=1; fi
+        if [[ $UNINSTALL_ACTIVE == active ]]; then systemctl start telemt.service || failed=1; fi
+    fi
+    if (( failed )); then say "CRITICAL: uninstall rollback incomplete; retain $BACKUP for manual recovery" >&2; fi
+    return "$failed"
+}
+
+uninstall_final() {
+    local path
+    for path in "$BIN" "$CONFIG_DIR" "$UNIT" "$DATA" "$STATE/manifest.json" "$STATE/web-link.txt"; do
+        [[ ! -e $path && ! -L $path ]] || return 1
+    done
+    if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then return 1; fi
+    [[ -z $(systemctl show telemt.service -p FragmentPath --value) &&
+       -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || return 1
+    uninstall_firewall_absent && nginx_test && systemctl is-active --quiet nginx || return 1
+    PLAN_MODE=web
+    build_nginx_plan "$TMP/absent-plan.json" || return 1
+    [[ $(jq '.edits | length' "$TMP/absent-plan.json") == 2 ]] || return 1
+    [[ -x $BASE_DIR/telemt-web-manager.sh && -f $HELPER ]] || return 1
+    helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT"
+}
+
+# Certificate cleanup is deliberately outside the committed Telemt transaction.
+delete_managed_certificate() {
+    helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || return 1
+    validate_certificate identity
+    renewal_deploy_hook_contract
+    # Verify the installed Certbot exposes this bounded deletion interface.
+    certbot delete --help >"$TMP/certbot-delete-help" 2>&1 || return 1
+    grep -q -- '--cert-name' "$TMP/certbot-delete-help" || return 1
+    nginx_test || return 1
+    helper certificate-cleanup-plan "$TMP/certificate-cleanup.json" "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" "$RENEW_HOOK" || return 1
+    cp "$TMP/certificate-cleanup.json" "$BACKUP/certificate-cleanup.json" || return 1
+    if [[ -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]]; then
+        cp -p "$NGINX_ROOT/conf.d/telemt-web-manager-acme.conf" "$BACKUP/acme-vhost" || return 1
+    fi
+    certbot delete --non-interactive --cert-name "$DOMAIN" >"$BACKUP/certificate-delete.log" 2>&1 || return 1
+    [[ ! -e $CERT_ROOT/live/$DOMAIN && ! -L $CERT_ROOT/live/$DOMAIN &&
+       ! -e $CERT_ROOT/archive/$DOMAIN && ! -L $CERT_ROOT/archive/$DOMAIN &&
+       ! -e $CERT_ROOT/renewal/$DOMAIN.conf && ! -L $CERT_ROOT/renewal/$DOMAIN.conf ]] || return 1
+    helper certificate-cleanup-remove "$TMP/certificate-cleanup.json" || return 1
+    if ! nginx_test || ! nginx_reload; then
+        if [[ -f $BACKUP/acme-vhost ]]; then
+            atomic_copy "$BACKUP/acme-vhost" "$NGINX_ROOT/conf.d/telemt-web-manager-acme.conf"
+            if nginx_test; then nginx_reload || true; fi
+        fi
+        return 1
+    fi
+}
+
+uninstall_manager() {
+    local status=0 answer dep
+    for dep in groupadd find iptables-save ip6tables-save; do need "$dep"; done
+    uninstall_load || status=$?
+    if (( status == 2 )); then return 1; fi
+    (( status == 0 )) || return "$status"
+    say "Managed Telemt deployment: $DOMAIN; service telemt.service; config $CONFIG; data $DATA. Certificate: preserve by default. Manager remains installed."
+    if (( ! CONFIRM_UNINSTALL )); then
+        [[ -t 0 ]] || die 'Use --uninstall --confirm-uninstall; certificate is preserved by default'
+        read -r -p 'Type UNINSTALL to remove the managed Telemt deployment: ' answer
+        [[ $answer == UNINSTALL ]] || { say 'Uninstall cancelled.'; return; }
+        read -r -p "Delete the Let's Encrypt certificate for $DOMAIN too? [y/N] " answer
+        if [[ $answer == y || $answer == Y ]]; then DELETE_CERTIFICATE=1; fi
+    fi
+    backup_begin
+    backup_nginx_context
+    helper uninstall-backup "$TMP/uninstall-plan.json" "$BACKUP"
+    cp -p "$BACKUP/uninstall.json" "$BACKUP/initial-uninstall.json"
+    printf '%s\n%s\n' "$UNINSTALL_ENABLED" "$UNINSTALL_ACTIVE" >"$BACKUP/service-state"
+    cp "$TMP/certificate.json" "$BACKUP/certificate-ownership.json" 2>/dev/null ||
+        helper certificate-record-stage "$BACKUP/certificate-ownership.json" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT"
+    UNINSTALLING=1 ARMED=1
+    if [[ ! -e $STATE/certificate.json ]]; then
+        track_file "$STATE/certificate.json"
+        write_certificate_state
+    fi
+    if ! cmp -s "$UNIT" "$TMP/expected-unit" ||
+        [[ $(systemctl show telemt.service -p FragmentPath --value) != "$UNIT" ||
+           -n $(systemctl show telemt.service -p DropInPaths --value) ]]; then die 'Unit identity changed before stop'; fi
+    systemctl disable --now telemt.service || die 'Telemt stop/disable failed'
+    uninstall_quiet || die 'Owned process/listener/firewall state remains; uninstall rolled back'
+    helper uninstall-refresh "$BACKUP" || die 'Unable to snapshot stopped runtime; uninstall rolled back'
+    apply_nginx
+    uninstall_remove_files || die 'Managed file removal failed'
+    systemctl daemon-reload
+    uninstall_remove_account || die 'Managed account cleanup failed'
+    uninstall_final || die 'Final uninstall absence/renewal validation failed'
+    ARMED=0 UNINSTALLING=0
+    say 'Telemt uninstall succeeded. Manager and backups retained; certificate preserved.'
+    if (( DELETE_CERTIFICATE )); then
+        CERT_CLEANUP_RUNNING=1
+        if (trap - EXIT; delete_managed_certificate); then CERT_CLEANUP_RUNNING=0; say 'Exact managed certificate and unused renewal assets removed.'
+        else CERT_CLEANUP_RUNNING=0; say "Telemt uninstall succeeded. Certificate cleanup failed or requires manual review. Ownership/backup evidence: $BACKUP" >&2; return 1; fi
+    fi
+}
+
 usage() {
     cat <<EOF
 Telemt WEB Manager $SCRIPT_VERSION
-Usage: $0 --install|--update|--check|--repair|--help
+Usage: $0 --install|--update|--check|--repair|--uninstall|--help
 Install options: --domain proxy.example.com --public-ip 203.0.113.10
                  [--socks 127.0.0.1:1080] [--email ADDRESS --agree-tos]
+Uninstall: --uninstall --confirm-uninstall [--delete-certificate]
+Certificate preserved by default; only proven manager-owned Telemt is removed.
 Without arguments: interactive menu (requires TTY).
 Existing SNI router with proxy_protocol on and a conf.d HTTP include required.
 Check is read-only. Repair only restarts/reloads verified managed services.
@@ -875,20 +1069,26 @@ main() {
     while (( $# )); do
         case $1 in
             --help) usage; return;;
-            --install|--update|--check|--repair) [[ -z $action ]] || die 'Choose one action'; action=$1; shift;;
+            --install|--update|--check|--repair|--uninstall) [[ -z $action ]] || die 'Choose one action'; action=$1; shift;;
             --domain|--public-ip|--socks|--email)
                 (( $# >= 2 )) || die 'Missing option value'
                 case $1 in --domain) DOMAIN=$2;; --public-ip) PUBLIC_IP=$2;; --socks) SOCKS=$2;; --email) EMAIL=$2;; esac
                 shift 2;;
+            --confirm-uninstall) CONFIRM_UNINSTALL=1; shift;;
+            --delete-certificate) DELETE_CERTIFICATE=1; shift;;
             --agree-tos) AGREE_TOS=1; shift;;
             *) die 'Unknown option; see --help';;
         esac
     done
     if [[ -z $action ]]; then
         [[ -t 0 ]] || die 'No interactive terminal; specify an action'
-        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Exit\n'
+        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Uninstall Telemt\n6. Exit\n'
         read -r -p '> ' choice
-        case $choice in 1) action=--install;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) return;; *) die 'Invalid selection';; esac
+        case $choice in 1) action=--install;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=--uninstall;; 6) return;; *) die 'Invalid selection';; esac
+    fi
+    if (( CONFIRM_UNINSTALL || DELETE_CERTIFICATE )); then
+        [[ $action == --uninstall ]] || die 'Uninstall flags require --uninstall'
+        (( ! DELETE_CERTIFICATE || CONFIRM_UNINSTALL )) || die '--delete-certificate requires --confirm-uninstall'
     fi
     preflight
     TMP=$(mktemp -d /tmp/telemt-web-manager.XXXXXXXX)
@@ -898,7 +1098,7 @@ main() {
     if [[ $action == --check ]]; then
         take_lock shared
     else take_lock; fi
-    case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; esac
+    case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; --uninstall) uninstall_manager;; esac
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

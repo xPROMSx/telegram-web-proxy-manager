@@ -89,3 +89,31 @@ SOCKS/Telegram egress and native Telegram iOS/Desktop clients. CAP_NET_ADMIN rem
 broad network authority. Warnings can accompany operational degradation, so their
 counts deserve review even when objective readiness succeeds. Rollback cannot
 promise restoration of unrelated external changes or already-issued certificates.
+
+## Managed uninstall and certificate reuse (0.1.2)
+
+`tests/test_uninstall.py` adds read-only reverse-plan byte preservation, changed
+or shared stream/vhost refusals, source-hash rechecks, fd/no-follow tree
+backup/removal/restore, mount/link refusals and strict certificate-record parsing.
+`sudo bash tests/uninstall.sh` runs root-owned temporary fixtures with inert NSS,
+service/listener/firewall/issuance boundaries and an explicitly fixture-scoped
+ownership scanner. It executes install → uninstall keep certificate → fresh
+same-domain Install for standalone and webroot, asserting zero new issuance and
+unchanged lineage/key/renewal bytes. Certificate deletion uses the installed real
+Certbot CLI with private config/work/log directories and local self-signed
+lineages; it never issues against Let's Encrypt.
+
+The same suite checks stopped/near-expiry removal, exact-lineage delete and foreign
+lineage/account preservation, deletion failure without Telemt resurrection,
+rollback after stop/Nginx/file/account boundaries and a representative TERM.
+Missing/malformed/unknown manifest, changed vhost/map/unit/drop-in, unsafe link,
+ambiguous account, mismatched certificate state/lineage, shared UID files and lock
+contention refuse before mutation. A real same-device bind mount is rejected in a private mount namespace; the
+focused Python fixture also checks mount-table handling. Existing bootstrap signal stress, pin/provenance, real
+Telemt/nft/HTTP runtime, root account, renewal, topology and all other suites remain.
+
+These orchestration fixtures do not claim live systemd lifecycle, host firewall
+coexistence, public ACME issuance/renewal or Telegram client acceptance. The
+unchanged separate real runtime/Nginx tests cover their existing narrower
+contracts. Cloud root emulation cannot substitute for native root UID/GID checks;
+hosted Actions must run the new suite without skip/fallback/continue-on-error.

@@ -89,6 +89,33 @@ it does not update the manager or rewrite TOML.
 changed files. To update the manager itself, rerun the quick installation command.
 This preserves the existing Telemt deployment.
 
+## Managed Telemt uninstall (manager 0.1.2)
+
+```bash
+telemt-web-manager --uninstall --confirm-uninstall
+# Optional, explicit certificate deletion:
+telemt-web-manager --uninstall --confirm-uninstall --delete-certificate
+```
+
+The menu includes **Uninstall Telemt** and requires typing `UNINSTALL`; certificate
+removal is a separate `[y/N]` question. Uninstall removes only a deployment proven
+manager-owned by its manifest, exact unit/Nginx/configuration contracts, paths and
+private account identity. It can remove a stopped or unhealthy Telemt service.
+Missing/ambiguous ownership causes refusal; arbitrary/manual Telemt is never removed.
+Unmanaged replacement/adoption is outside this feature.
+
+The manager itself stays in `/opt/telemt-web-manager` with its launcher. Private
+backups in `/root/telemt-backups` are retained. Certificate preservation is the
+default: the lineage, renewal config, independent root-only `certificate.json`,
+and required ACME webroot/vhost/deploy hook remain. A fresh same-domain Install
+validates and reuses that manager-owned certificate without a new ACME order.
+Preserving a valid lineage avoids unnecessary issuance and rate-limit consumption.
+
+Explicit deletion uses Certbot's exact-lineage deletion interface after Telemt
+uninstall commits. It never removes the Certbot account or another lineage. If
+certificate cleanup fails, Telemt remains uninstalled and ownership/backup evidence
+is retained for manual review. [Transaction and recovery details](docs/OPERATIONS.md#managed-uninstall).
+
 ## Requirements and supported environment
 
 Ubuntu 24.04/26.04, systemd, Bash 5+, Python 3.11+, active Nginx with SSL, HTTP/2,
