@@ -79,33 +79,90 @@ rejected() {
 }
 pair_hash() { sha256sum "$INSTALL_DIR/telemt-web-manager.sh" "$INSTALL_DIR/lib/safety.py"; }
 python3 - "$ROOT/install.sh" "$SANDBOX" <<'PY'
-import os, signal, subprocess, sys, time
+import json, os, signal, subprocess, sys, time
 from pathlib import Path
 script, root = sys.argv[1:]
 root = Path(root)
 marker = root / 'download-started'
+# The foreground child installs handlers before atomically publishing readiness.
+# There is no parent-written marker followed by a still-pending child spawn.
+child = """
+import json, os, signal, sys
+from pathlib import Path
+def interrupted(signum, frame):
+    sys.exit(128 + signum)
+for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(sig, interrupted)
+marker = Path(sys.argv[1])
+staged = marker.with_suffix('.ready')
+staged.write_text(json.dumps(dict(temporary=sys.argv[2], pid=os.getpid(), pgid=os.getpgrp())))
+os.replace(staged, marker)
+while True:
+    signal.pause()
+"""
 code = ('source "$1"; INSTALL_DIR="$2/opt/signal-fixture"; LAUNCHER="$2/bin/signal-fixture"; '
         'BOOTSTRAP_LOCK="$2/lock/signal-fixture"; '
         'bootstrap_download() { printf "%s" "$BOOTSTRAP_TMP" >"$2"; '
-        'printf "%s" "$BOOTSTRAP_TMP" >"$SIGNAL_MARKER"; sleep 30; }; '
-        'SIGNAL_MARKER="$2/download-started"; '
+        'command python3 -c "$SIGNAL_CHILD" "$SIGNAL_MARKER" "$BOOTSTRAP_TMP"; }; '
+        'SIGNAL_MARKER="$2/download-started"; SIGNAL_CHILD="$3"; '
         'bootstrap_main --no-start')
-p = subprocess.Popen(['bash','-c',code,'fixture',script,str(root)],
-                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-try:
-    for _ in range(100):
-        if marker.exists(): break
-        if p.poll() is not None: raise AssertionError(p.communicate())
-        time.sleep(0.02)
-    assert marker.exists(), 'download not reached'
-    temporary = Path(marker.read_text())
-    os.killpg(p.pid, signal.SIGTERM)
-    p.communicate(timeout=10)
-    assert p.returncode and not temporary.exists()
-    assert not (root / 'opt/signal-fixture').exists() and not (root / 'bin/signal-fixture').exists()
-finally:
-    if p.poll() is None: os.killpg(p.pid, signal.SIGKILL); p.wait()
-print('ok - interrupted download cleans private temporary files without installation mutation')
+install = root / 'opt/signal-fixture'
+launcher = root / 'bin/signal-fixture'
+def snapshot():
+    paths = [launcher, install, *install.rglob('*')] if install.exists() else [launcher, install]
+    return {str(path): (path.stat().st_mode, path.stat().st_uid, path.stat().st_gid,
+                       path.read_bytes() if path.is_file() else None)
+            for path in paths if path.exists()}
+for sig, expected in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 143)):
+    longest = 0
+    for iteration in range(30):
+        # Cover both a fresh install and interrupted update of an existing pair.
+        if iteration == 15:
+            (install / 'lib').mkdir(parents=True)
+            (install / 'telemt-web-manager.sh').write_text('existing manager\n')
+            (install / 'lib/safety.py').write_text('existing helper\n')
+            launcher.write_text('existing launcher\n')
+        before = snapshot()
+        marker.unlink(missing_ok=True)
+        p = subprocess.Popen(['bash','-c',code,'fixture',script,str(root),child],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 10
+            while not marker.exists():
+                if p.poll() is not None: raise AssertionError(p.communicate())
+                assert time.monotonic() < deadline, 'blocking child not ready'
+                time.sleep(0.001)  # Poll readiness, never delay an already-ready interruption.
+            ready = json.loads(marker.read_text())
+            temporary = Path(ready['temporary'])
+            assert ready['pid'] != p.pid and ready['pgid'] == p.pid
+            assert os.getpgid(ready['pid']) == p.pid, 'child must be alive in bootstrap process group'
+            started = time.monotonic()
+            os.killpg(p.pid, sig)
+            stdout, stderr = p.communicate(timeout=10)
+            elapsed = time.monotonic() - started
+            longest = max(longest, elapsed)
+            assert p.returncode == expected, (sig.name, p.returncode, stdout, stderr)
+            assert not temporary.exists(), 'bootstrap temporary state survived interruption'
+            assert snapshot() == before, 'installation or launcher mutated during download'
+            try:
+                os.killpg(p.pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise AssertionError('bootstrap process group still contains an orphan child')
+        finally:
+            # Also clean descendants if the parent has exited but a failure left its child.
+            try: os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            p.communicate(timeout=10)
+    print(f'ok - synchronized {sig.name}: 30 interruptions, exit={expected}, '
+          f'max exit={longest:.3f}s; temporary cleanup, unchanged fresh/existing pair and launcher, no orphan child')
+    # Reset only these fixture paths before the next signal's fresh-install cases.
+    if install.exists():
+        import shutil
+        shutil.rmtree(install)
+        launcher.unlink()
+print('ok - synchronized bootstrap signal stress: 90 cycles; SIGINT/SIGTERM/SIGHUP; no timeouts or persistent mutation')
 PY
 python3 - "$ROOT/install.sh" <<'PY'
 import os, pathlib, subprocess, sys, tempfile
