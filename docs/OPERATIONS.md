@@ -298,8 +298,10 @@ bash tests/three-x-ui.sh  # Internet + Nginx: both full upstream configurations
 
 Fixtures use TEST-NET/example.com, no production credentials. Secrets are generated
 only in temporary environments and never printed. Ubuntu 24.04 CI uses real Nginx
-stream/PROXY/TLS and canonical X-Forwarded-For. Fixtures do not replace live acceptance
-on Ubuntu 26.04, arm64 and Telegram clients.
+stream/PROXY/TLS and canonical X-Forwarded-For. Fixtures do not replace live acceptance.
+Successful 0.1.2 acceptance on Ubuntu 26.04.1 LTS x86_64 is recorded in the
+[primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation);
+it does not establish arm64 or all Telegram client/topology combinations.
 
 Both 3x-ui-pro scripts are downloaded at the pinned commit, Git blob hashes checked,
 and Nginx heredocs rendered with inert values. Installer/patcher are never executed.

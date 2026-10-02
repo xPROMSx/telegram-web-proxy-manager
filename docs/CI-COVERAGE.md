@@ -80,9 +80,12 @@ The dependency step runs real conntrack under real systemd default PATH, not a
 Telemt service. Contract tests inspect generated TOML/unit text only. Nginx tests
 run actual Nginx/TLS/HTTP with a Python origin, not a running Telemt; ACME content
 serving there is real, issuance is not performed. SOCKS configuration syntax is
-checked by real Telemt healthcheck; actual SOCKS egress remains untested.
+checked by real Telemt healthcheck; actual SOCKS egress is not exercised by CI.
 
-CI does not prove complete end-to-end VPS behavior. Live acceptance must cover the
+CI does not prove complete end-to-end VPS behavior. Successful 0.1.2 live acceptance
+on Ubuntu 26.04.1 LTS x86_64 is recorded in the
+[primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation).
+Deployment-specific acceptance must cover the
 telemt UID and complete systemd sandbox, actual host netfilter coexistence, restart/
 repair and state persistence, real DNS/ACME renewal, public IPv4 TLS routing, real
 SOCKS/Telegram egress and native Telegram iOS/Desktop clients. CAP_NET_ADMIN remains

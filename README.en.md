@@ -173,10 +173,19 @@ Certbot/Let's Encrypt and SOCKS5/Xray: installation, rollback/reinstallation,
 This does not validate every topology or architecture. [CI coverage and its boundaries](docs/CI-COVERAGE.md)
 are documented separately; verify reachability and renewal on your own host.
 
-This acceptance history applies to v0.1.1. The new 0.1.2 Uninstall path, including
-certificate preservation and same-domain fresh installation, still needs its own
-live acceptance before the 0.1.2 release. CI does not replace it; this PR creates
-no release or tag.
+That history applies to v0.1.1. Live acceptance of 0.1.2 also completed successfully
+on **Ubuntu 26.04.1 LTS x86_64** with systemd, Nginx, Certbot/Let's Encrypt and
+SOCKS5/Xray. Transactional managed Uninstall and the runtime-race fix were verified:
+only static DATA anchors are saved before stop; mutable runtime is captured in the
+authoritative stopped snapshot. Certificates are preserved by default; the live
+scenario verified explicit deletion without changing unrelated lineages and fresh
+same-domain installation with a new real Let's Encrypt certificate. Successful
+checks included `certbot renew --dry-run`, `--check`, manual Telemt restart and a
+Telegram WEB proxy connection; the link remained unchanged across restart and the
+service stayed active/running with `NRestarts=0`. The warning
+`config reload: censorship settings changed; restart required` was observed with
+`errors=0`, passing checks and a working WEB proxy. This acceptance does not validate
+every configuration; the PR creates no release or tag.
 
 ## Advanced / manual installation
 
