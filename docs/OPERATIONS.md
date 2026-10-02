@@ -1,6 +1,6 @@
 # Operations, security and recovery
 
-[English front page](../README.md) | [Русская главная](../README.ru.md) | [Upstream audit](UPSTREAM.md)
+[Русская главная](../README.md) | [English front page](../README.en.md) | [Upstream audit](UPSTREAM.md)
 
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
@@ -320,13 +320,19 @@ executable binary. Restore TOML deliberately from the matching backup (root:tele
 0640). After unit restoration run `systemctl daemon-reload`. Always run `nginx -t`
 before reload.
 
-There is no automatic `--uninstall`. Run `systemctl disable --now telemt.service`,
-then manually remove only manager files, its exact SNI entry and `twm_frontend`.
-Validate/reload Nginx. Preserve unrelated routes, certs, x-ui DB, firewall and backups.
-Remove the `telemt` account only after confirming nothing else uses it.
+Manager 0.1.2 provides [transactional managed uninstall](#managed-uninstall):
+`--uninstall --confirm-uninstall` preserves the certificate by default.
+Manual recovery remains necessary for unsafe/ambiguous ownership or incomplete
+rollback; automatic adoption/removal of an unmanaged deployment is refused.
+After reviewing ownership and dependencies, manual removal requires stopping
+and disabling Telemt, removing only its proven owned files and exact SNI
+entry/`twm_frontend`, and validating/reloading Nginx. Preserve unrelated routes,
+certs, x-ui DB, firewall and backups. Remove the `telemt` account only after
+confirming nothing else uses it.
 If the certificate is still needed, retain persistent ACME vhost/webroot/hook or
-first move renewal to another strategy. Removing them can break renewal;
-certificates are not automatically deleted.
+first move renewal to another strategy. Removing them can break renewal.
+Certificate deletion requires the explicit managed-uninstall option
+`--delete-certificate`; never delete Certbot objects blindly.
 
 Failed fresh installs remove only transaction-owned Telemt directories/accounts
 after service, identity and mount checks. Committed certificates and ACME renewal
@@ -458,6 +464,36 @@ bootstrap launches the menu after releasing its lock; noninteractive use or
 `--no-start` only installs the program files. CI uses root-owned temporary paths,
 release/download fixtures and a fake menu, including a failure injected after
 directory exchange; no production paths or release operations are tested.
+
+## Advanced / manual installation
+
+Review a trusted checkout (use the reviewed PR commit for an unpublished PR) and install both
+files. This path does not install the convenient launcher:
+
+```bash
+git clone https://github.com/xPROMSx/telemt-web-manager.git
+cd telemt-web-manager
+bash -n telemt-web-manager.sh
+shellcheck telemt-web-manager.sh
+install -d -m 0755 /opt/telemt-web-manager/lib
+install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
+install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
+/opt/telemt-web-manager/telemt-web-manager.sh
+```
+
+Keep the installation root-owned and unwritable by others. Install missing
+manager dependencies deliberately, without replacing the working Nginx stack:
+
+```bash
+apt-get update
+apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
+  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables conntrack
+```
+
+On a clean package Nginx, stream usually needs `libnginx-mod-stream`; match modules
+to the installed Nginx and verify `nginx -t`. The manager checks dependencies.
+Bootstrap options: `--version v0.1.1` selects a published release; `--no-start`
+suppresses the menu. See [manager bootstrap](#manager-bootstrap).
 
 ## Managed uninstall
 

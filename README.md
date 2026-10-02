@@ -1,205 +1,199 @@
 # Telemt WEB Manager
 
-English | [Русский](README.ru.md)
+Русский | [English](README.en.md)
 
-A conservative Bash manager for [Telemt WEB Proxy](https://github.com/telemt/telemt)
-behind an existing Nginx SNI router. Install, update, check and repair deployments
-with direct or optional SOCKS5 egress. For Ubuntu VPS hosts already sharing HTTPS
-port 443 through Nginx `stream` / `ssl_preread`.
+Bash-менеджер для установки и обслуживания [Telemt WEB Proxy](https://github.com/telemt/telemt)
+на Ubuntu VPS с существующим SNI-маршрутизатором Nginx.
+Добавляет WEB-прокси на общий HTTPS-порт 443 с прямым выходом к Telegram или через SOCKS5.
 
-## Features
+## Возможности
 
-- Interactive menu and non-interactive commands.
-- Recognized Nginx integration with existing routes preserved.
-- Official release SHA256 verification and configuration validation.
-- Health checks, bounded startup readiness and automatic transaction rollback.
-- Hardened systemd service; existing TOML preserved during updates.
+- Установка поверх инфраструктуры [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro)
+  с распознаваемой схемой Nginx `stream` / `ssl_preread`: существующие маршруты,
+  конфигурация Xray, настройки и база данных 3x-ui сохраняются.
+- Install, Update, Check, Repair и Uninstall Telemt через меню или команды без диалога.
+- HTTPS с Let's Encrypt/Certbot: HTTP-01 на свободном порту 80 или через управляемый webroot Nginx.
+- Проверка официального SHA256 Telemt, конфигурации и работоспособности; откат при ошибке установки/обновления.
+- systemd-сервис с ограничениями доступа; сохранение TOML при обновлении Telemt.
 
-## Quick installation
+Совместимость с 3x-ui-pro проверяется на конфигурациях установщика и патчера ревизии
+`a2c430cd6dec7c86d873dcda3544a61e7ac41144`. Это не официальная интеграция:
+произвольные, изменённые и будущие схемы требуют отдельной проверки.
 
-Run in a **root shell**, initially on a disposable test VPS:
+## Быстрая установка
+
+Выполни в **root-консоли** на сервере, отвечающем [требованиям ниже](#требования-и-ограничения):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh)
 ```
 
-The installer installs the manager and opens its menu when stdin/stdout are a TTY.
-It needs Bash, curl, CA certificates and Python 3.11+; it does not install packages
-or change Telemt, Nginx, Certbot or Xray. Review the script first if preferred.
+Установщик устанавливает только менеджер и команду запуска, затем открывает меню
+в интерактивном терминале. Недостающие пакеты нужно установить заранее.
+Telemt устанавливается отдельно через Install в меню.
 
-Both program files come from one published manager release resolved to a commit.
-The highest stable SemVer is selected; if none exists, the highest prerelease is
-used. Automatic manager downgrades are refused. Testing an unpublished commit
-uses the advanced/manual workflow below. [Release policy and recovery](docs/OPERATIONS.md#manager-bootstrap).
+## Первый запуск
 
-## First run
-
-Open the menu again after installation:
+Повторно открыть меню:
 
 ```bash
 telemt-web-manager
 ```
 
-Choose Install and supply your WEB domain, public IPv4 and optional SOCKS5 address.
-DNS must contain exactly one matching A record, with no CNAME or AAAA.
-Ports `127.0.0.1:7444` and `127.0.0.1:18080` must be free.
-For a new certificate the menu asks for an ACME email and agreement consent.
+Меню менеджера 0.1.2 (изменения в этом PR; опубликованный релиз пока v0.1.1):
 
-The private Telegram link is saved in
-`/var/lib/telemt-web-manager/web-link.txt` (0600). Telemt also logs links to journald.
-Treat the link, config, journals and backups as secrets.
-
-## Common examples
-
-Replace the example domain and TEST-NET address with your own values.
-
-Direct egress:
-
-```bash
-telemt-web-manager --install \
-  --domain proxy.example.com \
-  --public-ip 203.0.113.10
+```text
+1. Install
+2. Update
+3. Check
+4. Repair
+5. Uninstall Telemt
+6. Exit
 ```
 
-SOCKS5 egress:
+| Функция | Назначение |
+| --- | --- |
+| Install | Установить Telemt, настроить его systemd-сервис, сертификат и интеграцию с распознанным Nginx. |
+| Update | Обновить **бинарник Telemt** до поддерживаемой версии с проверками и откатом при ошибке. Менеджер и TOML не обновляются. |
+| Check | Проверить управляемые файлы, версии, сервис, HTTP/TLS, SOCKS5 и продление сертификата без изменения конфигурации и сервисов. |
+| Repair | Перезапустить проверенный Telemt и перечитать проверенную конфигурацию Nginx. Изменённые или повреждённые файлы не воссоздаются. |
+| Uninstall Telemt | Транзакционно удалить только доказанно управляемую установку Telemt и её WEB-интеграцию с Nginx; менеджер остаётся, сертификат по умолчанию сохраняется. |
+| Exit | Выйти из меню. |
+
+В меню удаление требует ввода точного слова `UNINSTALL`, затем отдельно спрашивает
+об удалении сертификата: `Delete the Let's Encrypt certificate for DOMAIN too? [y/N]`.
+Любой другой ответ на первое подтверждение отменяет операцию; сертификат по умолчанию сохраняется.
+[Границы транзакции и восстановление](docs/OPERATIONS.md#managed-uninstall).
+
+Для первой установки выбери **Install** и укажи WEB-домен, публичный IPv4 и,
+при необходимости, адрес SOCKS5. В DNS нужна ровно одна A-запись с этим IPv4,
+без CNAME и AAAA. Порты `127.0.0.1:7444` и `127.0.0.1:18080` должны быть свободны.
+Для нового сертификата потребуются email ACME и согласие с условиями.
+
+Ссылка Telegram сохраняется в `/var/lib/telemt-web-manager/web-link.txt` с правами
+0600. Telemt также пишет ссылки в journald. Ссылка, конфиг, журналы и резервные
+копии содержат секреты; не публикуй их.
+
+Для обновления **самого менеджера** закрой ранее открытые меню и повтори команду
+быстрой установки. Существующая установка Telemt сохраняется.
+Менеджер берётся из опубликованного релиза, оба файла - из одного commit SHA;
+автоматическое понижение версии запрещено.
+[Выбор релиза и параметры установщика](docs/OPERATIONS.md#manager-bootstrap).
+
+## Команды без диалога
+
+Выполняются от root. Замени пример домена и тестовый IPv4 своими значениями:
 
 ```bash
-telemt-web-manager --install \
-  --domain proxy.example.com \
-  --public-ip 203.0.113.10 \
-  --socks 127.0.0.1:1080
-```
+telemt-web-manager --install --domain proxy.example.com --public-ip 203.0.113.10
+# Для SOCKS5 добавь к установке: --socks 127.0.0.1:1080
+# Для нового сертификата добавь: --email operator@example.com --agree-tos
 
-For new non-interactive certificate issuance, append
-`--email operator@example.com --agree-tos` after reviewing the ACME subscriber
-agreement. An unrelated existing certificate is not automatically adopted.
-
-## Update, check and repair
-
-```bash
 telemt-web-manager --update
 telemt-web-manager --check
 telemt-web-manager --repair
-```
 
-`--update` updates the **Telemt binary**, with validation and rollback;
-it does not update the manager or rewrite TOML.
-`--check` validates managed files, configuration, renewal state and service health.
-`--repair` restarts/reloads only verified managed services, without reconstructing
-changed files. To update the manager itself, rerun the quick installation command.
-This preserves the existing Telemt deployment.
-
-## Managed Telemt uninstall (manager 0.1.2)
-
-```bash
+# Удалить управляемый Telemt, сохранив сертификат:
 telemt-web-manager --uninstall --confirm-uninstall
-# Optional, explicit certificate deletion:
+# Дополнительно явно удалить его сертификат:
 telemt-web-manager --uninstall --confirm-uninstall --delete-certificate
 ```
 
-The menu includes **Uninstall Telemt** and requires typing `UNINSTALL`; certificate
-removal is a separate `[y/N]` question. Uninstall removes only a deployment proven
-manager-owned by its manifest, exact unit/Nginx/configuration contracts, paths and
-private account identity. It can remove a stopped or unhealthy Telemt service.
-Missing/ambiguous ownership causes refusal; arbitrary/manual Telemt is never removed.
-Unmanaged replacement/adoption is outside this feature.
+Перед `--agree-tos` ознакомься с соглашением ACME. Посторонние установки Telemt
+и сертификаты автоматически не принимаются под управление.
 
-The manager itself stays in `/opt/telemt-web-manager` with its launcher. Private
-backups in `/root/telemt-backups` are retained. Certificate preservation is the
-default: the lineage, renewal config, independent root-only `certificate.json`,
-and required ACME webroot/vhost/deploy hook remain. A fresh same-domain Install
-validates and reuses that manager-owned certificate without a new ACME order.
-Preserving a valid lineage avoids unnecessary issuance and rate-limit consumption.
+## Удаление управляемого Telemt (0.1.2)
 
-Explicit deletion uses Certbot's exact-lineage deletion interface after Telemt
-uninstall commits. It never removes the Certbot account or another lineage. If
-certificate cleanup fails, Telemt remains uninstalled and ownership/backup evidence
-is retained for manual review. [Transaction and recovery details](docs/OPERATIONS.md#managed-uninstall).
+Uninstall удаляет только установку, владение которой подтверждают manifest,
+точные контракты unit/Nginx/конфигурации, безопасные пути и отдельная учётная запись.
+Работающий Telemt не требуется. Отсутствующие или неоднозначные сведения о владении
+вызывают отказ; произвольный ручной Telemt не удаляется и не принимается под управление.
 
-## Requirements and supported environment
+Удаляются бинарник Telemt, unit, конфигурация/данные, manifest, WEB-ссылка,
+учётная запись/группа и точный WEB route/upstream/vhost Nginx. Сам менеджер
+в `/opt/telemt-web-manager` и launcher остаются, как и приватные резервные копии
+в `/root/telemt-backups`. Посторонние маршруты и сервисы Nginx сохраняются.
 
-Ubuntu 24.04/26.04, systemd, Bash 5+, Python 3.11+, active Nginx with SSL, HTTP/2,
-realip and stream/ssl_preread modules. x86_64 or aarch64, one recognized Nginx SNI map/router,
-IPv4 `:443`, optional existing `[::]:443`, outgoing PROXY protocol and an HTTP
-`conf.d/*.conf` include. The manager adds a loopback TLS frontend and an IPv4-only
-Telemt WEB listener. Telegram egress is direct or unauthenticated SOCKS5.
-Supported Telemt: **3.5.11**. Fresh installs and updates use only this reviewed
-release and embedded official SHA256 values. Older managed installs must pass
-compatibility checks; newer installs are never downgraded. Supporting a future
-release requires a new reviewed manager version. `--check` reports installed and
-supported versions locally. WARN is diagnostic; genuine ERROR/FATAL/panic and
-failed objective health checks cause failure. [CI coverage](docs/CI-COVERAGE.md).
+По умолчанию сохраняются lineage, настройки продления, независимый root-only
+`/var/lib/telemt-web-manager/certificate.json` и необходимые ACME webroot/vhost/deploy hook.
+Новая Install того же домена проверяет сведения о владении, ключ, hostname и контракт
+продления и повторно использует управляемый сертификат без нового ACME-заказа.
+Это избегает лишнего выпуска и расходования лимитов. Чужой сертификат не принимается
+под управление только из-за совпадения домена.
 
-HTTP-01 uses standalone on free port 80, or a persistent managed webroot when
-port 80 belongs to the recognized Nginx redirect topology. Nginx is never stopped.
-Verify external port 80/443 reachability and certificate renewal yourself.
-Standalone renewal requires port 80 to remain free; `--check` fails on a conflict
-and verifies the manager's deploy hook. No known Certbot timer produces a warning
-to verify cron/custom scheduling manually.
+`--delete-certificate` допустим только с `--uninstall --confirm-uninstall`.
+Штатный интерфейс Certbot удаляет только точный управляемый lineage после завершения
+основной транзакции. Аккаунт Certbot и другие сертификаты остаются. Ошибка этой
+отдельной фазы не возвращает Telemt; сведения о владении и резервная копия остаются
+для ручной проверки. Замена неуправляемого Telemt в эту функцию не входит.
 
-## Tested 3x-ui-pro compatibility
+## Требования и ограничения
 
-Telemt WEB Manager is tested against the Nginx `stream` / `ssl_preread` topology
-generated by [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) at revision
-`a2c430cd6dec7c86d873dcda3544a61e7ac41144`, using both installer and patcher fixtures.
-This is not an official integration. Arbitrary custom or future configurations
-are not automatically supported. Xray and 3x-ui configuration/database are not modified.
+- **Ubuntu 24.04/26.04**, x86_64 или aarch64, systemd, Bash 5+, Python 3.11+.
+  Для установщика нужны также curl и CA-сертификаты.
+- Supported Telemt: **3.5.11** (поддерживаемая версия). Установка и обновление используют только этот
+  проверенный релиз с фиксированными официальными SHA256. Старые управляемые
+  установки проходят проверки совместимости; более новые не понижаются.
+  Для будущего Telemt потребуется новая проверенная версия менеджера.
+- Работающий Nginx с SSL, HTTP/2, realip и `stream` / `ssl_preread`;
+  один распознаваемый SNI map/router, IPv4 `:443`, исходящий PROXY protocol
+  и HTTP include `conf.d/*.conf`. Существующий `[::]:443` сохраняется.
+  Менеджер добавляет локальный TLS frontend и IPv4 WEB listener Telemt.
+- Certbot и внешняя доступность портов 80/443. HTTP-01 использует standalone
+  на свободном порту 80 или постоянный webroot при распознанной схеме
+  HTTP-редиректов Nginx. Nginx не останавливается.
+  Для standalone порт 80 должен оставаться свободным; конфликт вызывает отказ.
+  Проверь продление через `certbot renew --dry-run`. Новое расписание не создаётся:
+  если известный таймер Certbot не найден, проверь cron/своё расписание вручную.
+- Выход к Telegram прямой или через SOCKS5 без авторизации. SOCKS5 с авторизацией,
+  IPv6 SOCKS5, AAAA для WEB-домена и нестандартная маршрутизация HTTP-80
+  автоматически не поддерживаются.
+- Включённый conntrack control требует `conntrack`, iptables/ip6tables/nft
+  и `CAP_NET_ADMIN`. До установки проверяется доступность `conntrack`
+  в PATH root и стандартном PATH systemd. Менеджер не устанавливает пакеты.
+  `CAP_NET_ADMIN` даёт сервису широкие сетевые полномочия.
+- Неизвестная схема Nginx, изменённые управляемые файлы или несовместимая
+  конфигурация вызывают отказ. Автоматической миграции TOML и настройки firewall/UFW нет.
+  Не редактируй конфигурацию параллельно с операциями менеджера.
+- WARN в журнале диагностический; ERROR/FATAL/panic и отказ проверок
+  работоспособности вызывают ошибку. Предупреждения всё равно стоит изучать.
+- После ошибки выпуска сертификат может сохраниться, а состояние продления
+  оказаться неполным. Повторная установка откажет; используй
+  [восстановление ACME](docs/OPERATIONS.md#certificate-recovery), не удаляй объекты Certbot вслепую.
+- SIGINT/TERM/HUP запускают откат транзакции. Отключение питания, SIGKILL,
+  сбой диска и внешние изменения root требуют ручного восстановления.
+  Резервные копии в `/root/telemt-backups/` приватные и автоматически не удаляются.
 
-CI uses the verified official Telemt binary and real Nginx traffic tests.
-Systemd and Certbot lifecycle operations use mocks. Live VPS acceptance is still required.
+## Проверено на VPS
 
-The enabled conntrack-control contract requires the Ubuntu `conntrack` package,
-iptables/ip6tables/nft and CAP_NET_ADMIN. Preflight checks `conntrack` on both
-the root shell PATH and systemd's default runtime PATH before installation work;
-the manager does not install missing packages.
+По [описанию релиза v0.1.1](https://github.com/xPROMSx/telemt-web-manager/releases/tag/v0.1.1),
+live-проверка выполнена на **Ubuntu 26.04.1 LTS x86_64** с Nginx, systemd,
+Certbot/Let's Encrypt и SOCKS5/Xray: установка, откат и повторная установка,
+`--check`, перезапуск Telemt, renewal dry-run, перезагрузка VPS и подключение Telegram WEB proxy.
+Это не подтверждение всех конфигураций и архитектур. CI и его границы описаны
+[отдельно](docs/CI-COVERAGE.md); доступность и продление нужно проверить на своём сервере.
 
-## Advanced / manual installation
+Эта история относится к v0.1.1. Новый путь Uninstall в 0.1.2, включая сохранение
+сертификата и новую установку того же домена, ещё требует собственной live-проверки
+перед выпуском 0.1.2. CI не заменяет её; этот PR не создаёт релиз или тег.
 
-Review a trusted checkout (or the PR checkout during acceptance) and install both
-files. This path does not install the convenient launcher:
+## Расширенная / ручная установка
 
-```bash
-git clone https://github.com/xPROMSx/telemt-web-manager.git
-cd telemt-web-manager
-bash -n telemt-web-manager.sh
-shellcheck telemt-web-manager.sh
-install -d -m 0755 /opt/telemt-web-manager/lib
-install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
-install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
-/opt/telemt-web-manager/telemt-web-manager.sh
-```
+Для проверенного checkout или неопубликованного PR используй
+[ручную установку](docs/OPERATIONS.md#advanced--manual-installation).
+Нужны оба файла менеджера: `telemt-web-manager.sh` и `lib/safety.py`.
+Этот способ не создаёт короткую команду запуска. Каталог установки должен
+принадлежать root и быть недоступным для записи другим. Список зависимостей,
+проверки и параметры установщика приведены в инструкции.
 
-Keep the installation root-owned and unwritable by others. Install missing
-manager dependencies deliberately, without replacing the working Nginx stack:
+## Техническая документация
 
-```bash
-apt-get update
-apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
-  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables conntrack
-```
+Подробные документы на английском:
 
-On a clean package Nginx, stream usually needs `libnginx-mod-stream`; match modules
-to the installed Nginx and verify `nginx -t`. The manager checks dependencies.
-Bootstrap options: `--version v0.1.0` selects a published release; `--no-start`
-suppresses the menu. See [operations](docs/OPERATIONS.md#manager-bootstrap).
+- [Архитектура, Nginx, SOCKS5, ACME, безопасность и восстановление](docs/OPERATIONS.md).
+- [Исследование upstream и контракты Telemt](docs/UPSTREAM.md).
+- [Покрытие CI и границы проверок](docs/CI-COVERAGE.md).
 
-## Technical documentation
+## Лицензия
 
-- [Upstream audit and version/configuration contracts](docs/UPSTREAM.md).
-- [Architecture, security, ACME recovery, tests and operations](docs/OPERATIONS.md).
-
-## Important limitations
-
-- Unknown Nginx topology or incompatible/changed managed runtime contracts fail closed.
-- Unrelated existing Telemt installations and certificates require manual review.
-- No firewall/UFW changes, automatic TOML migrations or automatic uninstall.
-- WEB AAAA, authenticated/IPv6 SOCKS and custom HTTP-80 routing require manual review.
-- A certificate can survive failed issuance post-validation. Retry refuses missing
-  managed renewal state; see the recovery guide. Never blindly delete Certbot assets.
-- SIGINT/TERM/HUP trigger transactional rollback. Power loss, SIGKILL, disk failure
-  and concurrent root edits remain manual recovery boundaries.
-
-## License and independence
-
-[MIT License](LICENSE). Independent project, not affiliated with, endorsed by,
-or part of Telemt, 3x-ui or 3x-ui-pro.
+[MIT](LICENSE). Независимый проект, официально не связанный с Telemt, 3x-ui или 3x-ui-pro.
