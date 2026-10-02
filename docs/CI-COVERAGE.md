@@ -95,6 +95,8 @@ promise restoration of unrelated external changes or already-issued certificates
 `tests/test_uninstall.py` adds read-only reverse-plan byte preservation, changed
 or shared stream/vhost refusals, source-hash rechecks, fd/no-follow tree
 backup/removal/restore, mount/link refusals and strict certificate-record parsing.
+Direct INT/TERM/HUP cleanup checks preserve signal exit codes after successful
+rollback and report rollback failures explicitly.
 `sudo bash tests/uninstall.sh` runs root-owned temporary fixtures with inert NSS,
 service/listener/firewall/issuance boundaries and an explicitly fixture-scoped
 ownership scanner. It executes install → uninstall keep certificate → fresh
@@ -105,11 +107,14 @@ lineages; it never issues against Let's Encrypt.
 
 The same suite checks stopped/near-expiry removal, exact-lineage delete and foreign
 lineage/account preservation, deletion failure without Telemt resurrection,
-rollback after stop/Nginx/file/account boundaries and a representative TERM.
+rollback after stop/Nginx/file/account boundaries and a representative TERM,
+including legacy certificate-state migration and partial group deletion. A real
+process with the managed numeric UID proves refusal without killing that process.
 Missing/malformed/unknown manifest, changed vhost/map/unit/drop-in, unsafe link,
 ambiguous account, mismatched certificate state/lineage, shared UID files and lock
-contention refuse before mutation. A real same-device bind mount is rejected in a private mount namespace; the
-focused Python fixture also checks mount-table handling. Existing bootstrap signal stress, pin/provenance, real
+contention refuse before mutation. A real same-device bind mount is rejected in a
+private mount namespace; the focused Python fixture also checks mount-table
+handling. Existing bootstrap signal stress, pin/provenance, real
 Telemt/nft/HTTP runtime, root account, renewal, topology and all other suites remain.
 
 These orchestration fixtures do not claim live systemd lifecycle, host firewall

@@ -119,7 +119,8 @@ track_file() {
 
 rollback() {
     local index failed=0
-    if (( UNINSTALLING )); then uninstall_rollback; return; fi
+    # In an EXIT trap, bare return can reuse the pre-trap signal status.
+    if (( UNINSTALLING )); then uninstall_rollback; return "$?"; fi
     say 'Rolling back managed changes.' >&2
     if (( INSTALLING && ! CERT_ONLY )); then
         if (( FRESH_SERVICE_ATTEMPTED )); then

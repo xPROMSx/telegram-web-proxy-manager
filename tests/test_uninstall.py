@@ -122,6 +122,19 @@ class UninstallTests(unittest.TestCase):
             self.assertNotEqual(result.returncode,0)
             self.assertIn('require',result.stderr)
 
+    def test_signal_cleanup_preserves_exit_status_after_successful_rollback(self):
+        # Bash bare `return` in an EXIT trap can reuse the pre-trap status,
+        # falsely reporting a successful rollback as failed. No files/services.
+        code=('source "$1"; ARMED=1 UNINSTALLING=1 ROLLBACK_STATUS=$2; '
+              'uninstall_rollback() { return "$ROLLBACK_STATUS"; }; '
+              'trap cleanup EXIT; trap "exit $4" "$3"; kill -s "$3" "$BASHPID"')
+        for signal, expected in (('INT',130),('TERM',143),('HUP',143)):
+            for rollback_status in (0,1):
+                result=subprocess.run(['bash','-c',code,'fixture',
+                    str(ROOT/'telemt-web-manager.sh'),str(rollback_status),signal,str(expected)],
+                    capture_output=True,text=True)
+                self.assertEqual(result.returncode, expected if rollback_status == 0 else 1)
+
     def test_menu_uninstall_cancel_never_creates_backup(self):
         import pty
         import select
