@@ -94,18 +94,12 @@ class SafetyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 s.dns_check("203.0.113.10", aaaa, "203.0.113.10")
 
-    def test_known_warning_narrow_classification(self):
-        line = "WARN Failed to reconcile conntrack firewall policy error=startup recovery failed: iptables v1.8.11 (nf_tables): Chain 'TELEMT_NOTRACK' does not exist"
+    def test_warning_payload_does_not_override_structural_severity(self):
+        line = "WARN Failed to reconcile conntrack firewall policy error=startup recovery failed: iptables v1.8.11 (nf_tables): Chain 'TELEMT_NOTRACK' does not exist; Permission denied"
         with contextlib.redirect_stdout(io.StringIO()):
-            backend = "iptables v1.8.11 (nf_tables)"
-            self.assertEqual(s.classify("3.5.9", "ubuntu:26.04", backend, line), 0)
-            self.assertEqual(s.classify("3.5.9", "ubuntu:24.04", backend, line), 0)
-            for version, os, backend in (("3.6.0", "ubuntu:26.04", "nf_tables"),
-                                         ("3.5.9", "ubuntu:22.04", "nf_tables"),
-                                         ("3.5.9", "ubuntu:26.04", "legacy")):
-                self.assertEqual(s.classify(version, os, backend, line), 1)
-            self.assertEqual(s.classify("3.5.9", "ubuntu:26.04", "nf_tables", line + "; Permission denied"), 1)
-            self.assertEqual(s.classify("3.5.9", "ubuntu:26.04", "nf_tables", "ERROR Operation not permitted"), 1)
+            self.assertEqual(s.classify(line), 0)
+            self.assertEqual(s.classify('ERROR WARN ' + line), 1)
+            self.assertEqual(s.classify('FATAL WARN ' + line), 1)
 
     def test_hostname_injection_refused(self):
         for host in ("../example.com", "x;example.com", 'x".example.com', "a\n.example.com"):

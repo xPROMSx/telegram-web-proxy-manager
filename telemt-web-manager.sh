@@ -4,7 +4,11 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=0.1.0
+readonly SCRIPT_VERSION=0.1.1
+readonly SUPPORTED_TELEMT_VERSION=3.5.11
+readonly SUPPORTED_TELEMT_COMMIT=94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d
+readonly TELEMT_SHA256_X86_64=529e1821bae1d01150347c2bb4c6a555432fcdc10aa454bacb78438e5875f8bf
+readonly TELEMT_SHA256_AARCH64=937fd952720200fd7a4f092241110b84619cf8058a7c7411fa1040c106a4b65d
 BASE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HELPER="$BASE_DIR/lib/safety.py"
 BIN=/usr/local/bin/telemt
@@ -22,6 +26,7 @@ LOCK=/run/lock/telemt-web-manager.lock
 TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' RELEASE='' CANDIDATE=''
 ARMED=0 INSTALLING=0 NGINX_CHANGED=0
 CERT_ONLY=0 PLAN_MODE=web
+FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0
 declare -a CHANGED=() ORIGINAL=()
 
 say() { printf '%s\n' "$*"; }
@@ -114,7 +119,18 @@ track_file() {
 rollback() {
     local index failed=0
     say 'Rolling back managed changes.' >&2
-    if (( INSTALLING && ! CERT_ONLY )); then systemctl disable --now telemt.service >/dev/null 2>&1 || true; fi
+    if (( INSTALLING && ! CERT_ONLY )); then
+        if (( FRESH_SERVICE_ATTEMPTED )); then
+            if ! systemctl disable --now telemt.service; then
+                say "CRITICAL: Telemt stop failed; fresh state retained. Review $FRESH_JOURNAL" >&2
+                return 1
+            fi
+        fi
+        if [[ -n $FRESH_JOURNAL ]] && ! helper fresh-verify "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
+            say "CRITICAL: fresh ownership/process/mount validation failed; state retained. Review $FRESH_JOURNAL" >&2
+            return 1
+        fi
+    fi
     for ((index=${#CHANGED[@]}-1; index>=0; index--)); do
         if [[ -n ${ORIGINAL[index]} ]]; then
             atomic_copy "${ORIGINAL[index]}" "${CHANGED[index]}" || failed=1
@@ -130,7 +146,12 @@ rollback() {
         restart_service && wait_ready 90 || failed=1
     fi
     if (( NGINX_CHANGED )); then nginx_test && nginx_reload || failed=1; fi
-    if (( failed )); then say "CRITICAL: rollback incomplete; restore using $BACKUP/files.tsv" >&2; fi
+    if (( INSTALLING && ! CERT_ONLY )) && [[ -n $FRESH_JOURNAL ]]; then
+        if (( ! failed )) && helper fresh-cleanup-dirs "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
+            helper fresh-cleanup-account "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE" || failed=1
+        else failed=1; fi
+    fi
+    if (( failed )); then say "CRITICAL: rollback incomplete; review $BACKUP/files.tsv and ${FRESH_JOURNAL:-the backup} for manual recovery" >&2; fi
     return "$failed"
 }
 
@@ -162,33 +183,36 @@ preflight() {
     source /etc/os-release
     [[ $ID == ubuntu && ( $VERSION_ID == 24.04 || $VERSION_ID == 26.04 ) ]] || die 'Supported OS: Ubuntu 24.04 / 26.04'
     case $(uname -m) in x86_64|aarch64|arm64) ;; *) die 'Unsupported architecture';; esac
-    local dep
-    for dep in curl tar openssl jq dig python3 nginx certbot flock systemctl ss sha256sum timeout iptables ip6tables nft; do need "$dep"; done
-    python3 -c 'import tomllib' || die 'Python 3.11+ required'
+    check_dependencies
 }
 
-fetch_release() {
-    curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 --retry 2 \
-        https://api.github.com/repos/telemt/telemt/releases/latest -o "$TMP/release.json" || return 1
-    RELEASE=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$TMP/release.json") || return 1
-    helper semver "$RELEASE" stable
+check_dependencies() {
+    local dep service_path
+    for dep in curl tar openssl jq dig python3 nginx certbot flock systemctl ss sha256sum timeout iptables ip6tables nft conntrack getent useradd userdel groupdel systemd-path; do need "$dep"; done
+    python3 -c 'import tomllib' || die 'Python 3.11+ required'
+    service_path=$(systemd-path search-binaries-default) || die 'Cannot determine systemd runtime PATH'
+    PATH="$service_path" command -v conntrack >/dev/null || die 'conntrack unavailable on the systemd runtime PATH (see README)'
 }
 
 download_candidate() {
     local arch asset url digest actual
-    arch=$(uname -m); [[ $arch != arm64 ]] || arch=aarch64
+    RELEASE=$SUPPORTED_TELEMT_VERSION
+    arch=$(uname -m)
+    case $arch in
+        x86_64) digest=$TELEMT_SHA256_X86_64;;
+        aarch64|arm64) arch=aarch64; digest=$TELEMT_SHA256_AARCH64;;
+        *) die 'Unsupported architecture';;
+    esac
     asset="telemt-$arch-linux-gnu.tar.gz"
-    jq -e --arg name "$asset" '[.assets[] | select(.name == $name)] | length == 1' "$TMP/release.json" >/dev/null || die 'Ambiguous/missing release asset'
-    url=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' "$TMP/release.json")
-    digest=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' "$TMP/release.json")
-    [[ $url == "https://github.com/telemt/telemt/releases/download/$RELEASE/$asset" && $digest =~ ^sha256:[a-f0-9]{64}$ ]] || die 'Official SHA256 digest/asset URL unavailable'
+    url="https://github.com/telemt/telemt/releases/download/$SUPPORTED_TELEMT_VERSION/$asset"
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --max-filesize 134217728 --retry 2 "$url" -o "$TMP/asset.tar.gz"
     actual=$(sha256sum "$TMP/asset.tar.gz"); actual=${actual%% *}
-    [[ sha256:$actual == "$digest" ]] || die 'SHA256 mismatch; candidate will not execute'
+    [[ $actual == "$digest" ]] || die 'Pinned SHA256 mismatch; candidate will not execute'
+    say "Verified Telemt $SUPPORTED_TELEMT_VERSION $asset SHA256: $actual; release commit: $SUPPORTED_TELEMT_COMMIT"
     timeout 60 python3 "$HELPER" extract-binary "$TMP/asset.tar.gz" "$TMP/telemt" || die 'Unknown/unsafe/oversized archive layout'
     chmod 0755 "$TMP/telemt"
     CANDIDATE="$TMP/telemt"
-    [[ $(binary_version "$CANDIDATE") == "$RELEASE" ]] || die 'Candidate version mismatch'
+    [[ $(binary_version "$CANDIDATE") == "$SUPPORTED_TELEMT_VERSION" ]] || die 'Candidate differs from supported Telemt version'
 }
 
 
@@ -207,20 +231,20 @@ candidate_healthcheck() {
 }
 
 candidate_compatibility() {
-    local binary=$1 config=$2 cwd=${3:-$DATA} before copy probe
+    local binary=$1 config=$2 data_root=${3:-$DATA} before copy probe
     binary_version "$binary" >/dev/null || return 1
     helper config-info "$config" >/dev/null || return 1
-    helper runtime-contract "$config" "$DATA" || return 1
+    helper runtime-contract "$config" "$data_root" || return 1
     before=$(sha256sum "$config"); before=${before%% *}
     copy=$(mktemp "$TMP/compat-config.XXXXXXXX") || return 1
     probe=$(mktemp "$TMP/compat-probe.XXXXXXXX") || return 1
     cp -- "$config" "$copy" || return 1
-    candidate_healthcheck "$binary" "$copy" "$cwd" || return 1
+    candidate_healthcheck "$binary" "$copy" "$data_root" || return 1
     [[ $(sha256sum "$copy" | cut -d' ' -f1) == "$before" ]] || return 1
     # Prove strict parsing of the supplied file, not merely a zero CLI exit.
     printf '__telemt_web_manager_unknown_contract = true\n' >"$probe"
     cat "$copy" >>"$probe"
-    if candidate_healthcheck "$binary" "$probe" "$cwd"; then return 1; fi
+    if candidate_healthcheck "$binary" "$probe" "$data_root"; then return 1; fi
     [[ $(sha256sum "$config" | cut -d' ' -f1) == "$before" ]] || return 1
     rm -f -- "$copy" "$probe"
 }
@@ -242,22 +266,23 @@ socks_probe() {
 }
 
 generate_config() {
-    local secret=$1
-    cat <<EOF
+    local secret=$1 data_root=${2:-$DATA}
+    helper safe-path "$data_root" || return 1
+    cat <<EOF || return 1
 # Managed initial configuration; updates preserve these bytes.
 [general]
 config_strict = true
 disable_colors = true
-data_path = "$DATA"
+data_path = "$data_root"
 use_middle_proxy = false
 log_level = "normal"
-beobachten_file = "$DATA/state/beobachten.txt"
-quota_state_path = "$DATA/state/telemt.limit.json"
+beobachten_file = "$data_root/state/beobachten.txt"
+quota_state_path = "$data_root/state/telemt.limit.json"
 unknown_dc_file_log_enabled = false
-unknown_dc_log_path = "$DATA/state/unknown-dc.txt"
-proxy_secret_path = "$DATA/state/proxy-secret"
-proxy_config_v4_cache_path = "$DATA/state/proxy-config-v4.txt"
-proxy_config_v6_cache_path = "$DATA/state/proxy-config-v6.txt"
+unknown_dc_log_path = "$data_root/state/unknown-dc.txt"
+proxy_secret_path = "$data_root/state/proxy-secret"
+proxy_config_v4_cache_path = "$data_root/state/proxy-config-v4.txt"
+proxy_config_v6_cache_path = "$data_root/state/proxy-config-v6.txt"
 [general.modes]
 classic = false
 secure = true
@@ -265,14 +290,14 @@ tls = false
 [censorship]
 mask = false
 tls_emulation = false
-tls_front_dir = "$DATA/state/tls-front"
+tls_front_dir = "$data_root/state/tls-front"
 [logging]
 destination = "stderr"
 [network]
 ipv4 = true
 ipv6 = false
 prefer = 4
-cache_public_ip_path = "$DATA/state/public_ip.txt"
+cache_public_ip_path = "$data_root/state/public_ip.txt"
 [server]
 port = 18080
 proxy_protocol = false
@@ -298,7 +323,7 @@ host = "$DOMAIN"
 public_addr = "$PUBLIC_IP:443"
 [web.vhosts.decoy]
 mode = "static_directory"
-directory = "$DATA/public"
+directory = "$data_root/public"
 index = "index.html"
 [[web.vhosts.profiles]]
 user = "web-user"
@@ -313,6 +338,23 @@ EOF
     else
         say 'type = "direct"'
     fi
+}
+
+write_managed_decoy() {
+    local directory=$1
+    helper safe-path "$directory/index.html" || return 1
+    [[ -d $directory && ! -L $directory && ! -e $directory/index.html && ! -L $directory/index.html ]] || return 1
+    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$directory/index.html" || return 1
+    chmod 0440 "$directory/index.html"
+}
+
+prepare_compatibility_data() {
+    local root=$1
+    # Only a new private child of this transaction's temporary directory.
+    [[ $root == "$TMP/compat-data" && ! -e $root && ! -L $root ]] || return 1
+    helper safe-path "$root" || return 1
+    install -d -m 0700 "$root" "$root/state" "$root/public" || return 1
+    write_managed_decoy "$root/public"
 }
 
 generate_unit() {
@@ -398,14 +440,9 @@ path_health() {
 }
 
 recent_logs() {
-    local since=$1 version os backend
-    version=$(binary_version "$BIN") || return 1
-    # shellcheck source=/dev/null
-    source /etc/os-release
-    os="$ID:$VERSION_ID"
-    backend=$(iptables --version 2>/dev/null || true)
+    local since=$1
     journalctl -u telemt.service --since "@$since" --no-pager -o json |
-        helper classify-journal "$version" "$os" "$backend"
+        helper classify-journal
 }
 
 nginx_plan() {
@@ -645,6 +682,9 @@ install_manager() {
         helper safe-path "$path" || die 'Unsafe install path'
         [[ ! -e $path && ! -L $path ]] || die 'Existing Telemt files found; automatic adoption not possible; manual review required'
     done
+    if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
+        die 'Existing telemt account/group needs manual review'
+    fi
     [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || die 'Existing Telemt unit found'
     [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || die 'Private ports already occupied'
     dns_preflight
@@ -653,11 +693,10 @@ install_manager() {
     systemctl is-active --quiet nginx || die 'Nginx must be active'
     nginx_runtime_identity || die 'Nginx process/config/443 ownership is ambiguous'
     nginx_plan
-    fetch_release || die 'Latest stable release unavailable'
     download_candidate
     secret=$(openssl rand -hex 16)
-    generate_config "$secret" >"$TMP/fresh.toml"
-    install -d -m 0700 "$TMP/compat-data"
+    prepare_compatibility_data "$TMP/compat-data" || die 'Unable to stage managed decoy; no certificate issuance attempted'
+    generate_config "$secret" "$TMP/compat-data" >"$TMP/fresh.toml" || die 'Unable to stage managed config; no certificate issuance attempted'
     candidate_compatibility "$CANDIDATE" "$TMP/fresh.toml" "$TMP/compat-data" ||
         die 'Candidate incompatible with strict managed WEB configuration; no certificate issuance attempted'
     ensure_certificate
@@ -667,16 +706,21 @@ install_manager() {
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         die 'Existing telemt account/group needs manual review'
     fi
-    useradd --system --user-group --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin telemt
-    install -d -m 0750 -o root -g telemt "$CONFIG_DIR" "$DATA" "$DATA/public"
-    install -d -m 0750 -o telemt -g telemt "$DATA/state"
-    install -d -m 0700 "$STATE"
+    FRESH_JOURNAL="$BACKUP/fresh-ownership.json"
+    helper fresh-init "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"
+    helper fresh-account-create "$FRESH_JOURNAL" "$DATA"
+    for path in "$CONFIG_DIR" "$DATA" "$DATA/public" "$DATA/state"; do
+        helper fresh-mkdir "$FRESH_JOURNAL" "$path" 0750
+        if [[ $path == "$DATA/state" ]]; then chown telemt:telemt "$path";
+        else chown root:telemt "$path"; fi
+    done
+    helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700
     track_file "$DATA/public/index.html"
-    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$DATA/public/index.html"
+    write_managed_decoy "$DATA/public" || die 'Unable to create managed decoy'
     chown root:telemt "$DATA/public/index.html"
     chmod 0440 "$DATA/public/index.html"
     track_file "$CONFIG"
-    cp -- "$TMP/fresh.toml" "$CONFIG"
+    generate_config "$secret" "$DATA" >"$CONFIG" || die 'Unable to create final managed config'
     track_file "$STATE/web-link.txt"
     printf 'tg://webproxy?server=%s&secret=dd%s\n' "$DOMAIN" "$secret" >"$STATE/web-link.txt"
     chmod 0600 "$STATE/web-link.txt"
@@ -688,6 +732,7 @@ install_manager() {
     track_file "$UNIT"; generate_unit >"$UNIT"; chmod 0644 "$UNIT"
     systemctl daemon-reload
     since=$(now)
+    FRESH_SERVICE_ATTEMPTED=1
     systemctl enable --now telemt.service
     wait_ready 90 || die 'Telemt did not become ready'
     apply_nginx
@@ -736,6 +781,7 @@ load_installation() {
 
 update_transaction() {
     local current=$1 since config_hash
+    [[ $RELEASE == "$SUPPORTED_TELEMT_VERSION" ]] || die 'Update target differs from supported Telemt version'
     if [[ $current == "$RELEASE" ]]; then say 'already up to date'; return 0; fi
     config_hash=$(sha256sum "$CONFIG")
     candidate_compatibility "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
@@ -761,10 +807,13 @@ update_manager() {
     load_installation
     local current comparison
     current=$(binary_version "$BIN") || die 'Unknown installed binary version'
-    fetch_release || die 'Latest stable release unavailable'
+    RELEASE=$SUPPORTED_TELEMT_VERSION
     comparison=$(helper version-compare "$RELEASE" "$current") || die 'Invalid release/installed SemVer'
-    if [[ $comparison == 0 ]]; then say 'already up to date'; path_health; return; fi
-    [[ $comparison == 1 ]] || die "Latest stable $RELEASE is older than installed $current; automatic downgrade refused"
+    if [[ $comparison == 0 ]]; then
+        [[ $current == "$RELEASE" ]] || die "Installed Telemt $current differs from exact supported $RELEASE; manual review required"
+        say 'already up to date'; path_health; return
+    fi
+    [[ $comparison == 1 ]] || die "Installed Telemt $current is newer than supported $RELEASE; automatic downgrade refused; use a newer reviewed manager/manual review"
     path_health || die 'Existing installation unhealthy; update refused'
     download_candidate
     update_transaction "$current"
@@ -773,9 +822,13 @@ update_manager() {
 check_manager() {
     load_installation
     renewal_scheduler_status
-    local failed=0 pid cert
-    say "Manager: $SCRIPT_VERSION; installed Telemt: $(binary_version "$BIN")"
-    if fetch_release; then say "Latest stable: $RELEASE"; else say 'Latest release unavailable'; failed=1; fi
+    local failed=0 pid cert current
+    current=$(binary_version "$BIN") || return 1
+    say "Manager: $SCRIPT_VERSION; installed Telemt: $current; supported Telemt: $SUPPORTED_TELEMT_VERSION"
+    if [[ $current != "$SUPPORTED_TELEMT_VERSION" ]]; then
+        say 'Installed version differs from this manager audited target; use --update for an older managed version, or a newer reviewed manager/manual review for a newer version.'
+        failed=1
+    fi
     systemctl show telemt.service -p ActiveState -p SubState -p NRestarts -p User -p Group -p MainPID -p AmbientCapabilities -p CapabilityBoundingSet
     pid=$(systemctl show telemt.service -p MainPID --value)
     if [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/status ]]; then

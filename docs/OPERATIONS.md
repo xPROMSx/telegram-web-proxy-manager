@@ -5,6 +5,9 @@
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
 
+Supported Telemt: **3.5.11**. See [upstream provenance](UPSTREAM.md) and the
+[REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
+
 ## Nginx requirements
 
 The manager parses the include tree rather than doing regex substitutions.
@@ -168,8 +171,12 @@ Matching versions report `already up to date`, then check health. Otherwise the
 verified candidate runs `healthcheck` on the **current config** before backup,
 atomic binary replacement and restart. TOML stays byte-for-byte unchanged; binary
 updates do not modify Nginx, cert or unit. There are no automatic TOML migrations.
-Validation failure stops the update. There is no major/minor/exact-version allowlist.
-SemVer comparison refuses downgrades, including a release reclassified as prerelease.
+Validation failure stops the update. The only download target is the reviewed
+3.5.11 pin, with embedded official asset hashes. Older compatible managed installs
+can upgrade to it; newer installs refuse before download and require manual review
+or a newer reviewed manager. Equal SemVer precedence with a different exact version
+(such as an unreviewed build suffix) also refuses. Future releases require an explicit
+manager change.
 Candidates must pass managed WEB/write-path validation and strict-parser probes;
 systemd enforces the writable boundary, and runtime failures trigger rollback. Older manager configs with quota outside
 `state` require manual review; updates do not add strict mode or rewrite paths.
@@ -186,13 +193,37 @@ to destinations; `nginx-plan.json` records changed originals and include hashes;
 TOML and are never automatically deleted. SIGINT/TERM/HUP and ordinary failures
 trigger rollback. SIGKILL, power loss and disk failure require manual recovery.
 
+Fresh-install rollback records successful account creation (exact passwd/group
+records, UID/GID and home/shell) and created directory device/inode identities in
+`fresh-ownership.json` inside the private backup. Critical creation/recording windows
+block catchable signals. Existing paths/accounts are never adopted. An unsuccessful
+partial useradd is not ownership proof and requires manual recovery.
+
+A failed fresh activation first stops/disables Telemt, verifies that no process has
+the recorded UID, validates account/directory identities and refuses mount points
+(including same-device bind mounts). It removes/restores tracked files, reloads
+systemd and restores Nginx before recursively removing only recorded fresh roots.
+Cleanup uses directory file descriptors and O_NOFOLLOW; runtime symlinks are unlinked,
+never traversed. Account deletion uses neither force nor recursive-home options;
+private-group removal handles userdel already having removed it. Stop, identity,
+mount or cleanup failures emit CRITICAL and retain the backup evidence for manual
+recovery. Successfully issued certificates and committed manager ACME webroot,
+marker and renewal vhost remain outside this cleanup. A clean retry reuses valid
+manager-owned webroot certificate state without unnecessary issuance.
+
 ## Check and repair
 
 `--check` leaves managed configuration/services unchanged. It reports versions,
 systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/TLS,
 expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
 lines are not printed. Root is required; private temporary diagnostics are deleted.
-Unavailable GitHub latest yields an unknown latest version and nonzero result.
+Version reporting is local: manager, installed Telemt and supported Telemt 3.5.11.
+A mismatch reports unsupported status and returns nonzero; no latest-release query
+is made. WARN records only contribute a diagnostic count. ERROR/FATAL and genuine
+Rust panic records fail; malformed journal transport or unsafe controls fail closed.
+Payload words such as `error=`, `conntrack` or `Permission denied` cannot promote
+a WARN. Every line of multiline records is checked for structured fatal prefixes.
+The unlevelled upstream `MAESTRO: ` banner is diagnostic and never printed.
 
 Check safely creates/opens the common lock and takes shared flock, including the
 first invocation after reboot. Several checks may coexist; mutations take exclusive
@@ -212,8 +243,14 @@ and foreign units/drop-ins need manual review.
 protections, restricted address families/realtime/SUID/namespaces, W^X and personality.
 Limits: 65536 descriptors, 4096 tasks, MemoryMax=1G. Review VPS capacity/workload;
 external unit edits require review. CAP_NET_ADMIN remains for upstream conntrack
-cleanup even in tracked mode. The known 3.5.9 missing-chain warning is classified
-narrowly; other conntrack errors fail. Evidence is in upstream notes.
+cleanup even in tracked mode. Telemt 3.5.11 requires `conntrack` on its PATH;
+Ubuntu provides it in the `conntrack` package. Preflight checks it and the account
+creation/deletion tools (`getent`, `useradd`, `userdel`, `groupdel`) before temporary
+transaction setup, downloads or ACME. `systemd-path search-binaries-default`
+verifies runtime discovery without changing the generated service PATH. Generated
+conntrack policy remains inline enabled and tracked. All WARNs are diagnostic;
+actual ERROR/FATAL/panic records and objective health failures still fail.
+Evidence is in upstream notes.
 
 Fresh TOML sets `general.config_strict = true`, `disable_colors = true`, and
 `data_path = /var/lib/telemt`. Colors are disabled for deterministic systemd logs;
@@ -235,16 +272,25 @@ the process before persistence completes.
 ## Tests
 
 ```bash
-for file in telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
-shellcheck -x telemt-web-manager.sh tests/*.sh
+for file in install.sh telemt-web-manager.sh tests/*.sh; do bash -n "$file"; done
+shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
-bash tests/download.sh   # Mock download, bad digest, symlink, redaction
+bash tests/fresh-rollback.sh # late journal failure, ACME preservation/retry, partial failures
+sudo bash tests/fresh-account.sh # disposable runner only: real account/runtime cleanup
+bash tests/preflight.sh # Missing conntrack/account tools before transaction dispatch
+bash tests/download.sh   # Real pinned download; mocked bad-digest/URL/version negatives
 bash tests/contracts.sh  # Strict config, writable paths, unit
 bash tests/locks.sh      # Shared/exclusive races, unsafe lock paths
 bash tests/acme.sh       # Certbot mocks, refusal, rollback, renewal/idempotence
 sudo bash tests/renewal.sh # Root-owned hook, standalone sockets, scheduler visibility
-bash tests/upstream.sh   # Internet: official release asset and SHA256
+bash tests/pinned.sh     # Official pin metadata, both asset digests, docs agreement
+bash tests/upstream.sh   # Real pinned binary config healthcheck; no process startup
+bash tests/staging.sh    # Real config healthcheck; lifecycle/path/journal transport mocked
+sudo bash tests/runtime.sh # Disposable runner: actual Telemt, isolated net namespace
+bash tests/pinned.sh --versions # With TELEMT_TEST_EVIDENCE_DIR from all three layers
+bash tests/bootstrap_versions.sh # SemVer, installed parser and paginated release fixtures
+sudo bash tests/bootstrap.sh # Root-owned isolated bootstrap atomicity/release/TTY fixtures
 bash tests/conntrack.sh  # CI: sudo + isolated namespace, actual Noble nf_tables
 bash tests/nginx.sh      # nginx + libnginx-mod-stream; private ports
 bash tests/three-x-ui.sh  # Internet + Nginx: both full upstream configurations
@@ -282,9 +328,10 @@ If the certificate is still needed, retain persistent ACME vhost/webroot/hook or
 first move renewal to another strategy. Removing them can break renewal;
 certificates are not automatically deleted.
 
-Failed fresh installs can intentionally leave accounts, empty directories and
-issued certificates. Accounts/certs are never automatically removed; inspect
-leftovers and backups before retrying.
+Failed fresh installs remove only transaction-owned Telemt directories/accounts
+after service, identity and mount checks. Committed certificates and ACME renewal
+state remain. Unsafe or incomplete rollback emits CRITICAL and retains the private
+ownership journal/backups; inspect them before manual recovery or retry.
 
 ## Live acceptance fixes: MIME data and release compatibility
 
@@ -300,27 +347,114 @@ and include expansion cannot see them as listen/server_name/include/etc. Ordinar
 directive-name restrictions and map{} grammar are retained. Nested MIME blocks
 are refused. Every included source still participates in integrity snapshots.
 
-Fresh install verifies official stable metadata, asset/digest/archive and binary
-SemVer, then stages the exact intended TOML before Certbot or persistent setup.
+Fresh install verifies the pinned official asset, embedded digest, archive and exact
+binary version before constructing a private, usable compatibility filesystem under
+`$TMP/compat-data`: `state`, `public` and the same immutable `public/index.html`
+used in production. One parameterized TOML generator and one decoy writer create
+both stages. Only the data-root prefix changes; secret, hostname, listener,
+upstream and every other setting stay identical.
+
+The pre-certificate candidate contract takes its expected data root explicitly.
 Semantic WEB/write-path checks, positive healthcheck and unknown-key rejection
-run on private copies. Hash checks reject candidate changes; the original TOML
-is not passed as a writable CLI input. A temporary working directory is used
-before DATA exists; if a candidate requires unavailable paths, it is refused
-before issuance. The same staged TOML is copied unchanged into the installation
-and revalidated there, followed by systemd foreground startup, bounded readiness,
-owned listener, UID/capabilities, HTTP/TLS/SOCKS and journal checks.
+run on private copies, with hash checks rejecting mutation. Production paths,
+accounts, unit, manifest and permanent WEB integration are not created at this
+stage. Only a compatible staged candidate can reach Certbot. After certificate
+issuance and transaction setup, real managed directories/index and final TOML
+are created. The same candidate validates the exact final config on private
+copies before binary activation, followed by readiness, path and journal checks.
+Temporary data is removed by normal cleanup. Post-issuance certificate retention
+and rollback policy is unchanged.
 
-Updates validate the installed runtime/configuration, compare SemVer, refuse an
-older stable, preserve equal-version behavior, validate the newer candidate on
-current TOML copies, back up and atomically activate it. Startup/path/log/hash
-failures restore the previous binary. Config, unit, certificate and Nginx are
-not migrated. SemVer includes prerelease precedence and ignores build metadata
-for ordering. Normal selection rejects draft/prerelease metadata and SemVer
-prerelease tags. Pinned prerelease binaries may still be tested explicitly in CI.
+The v0.1.0 coverage gap was the combination of a real binary and fresh ordering:
+`upstream.sh` pre-created DATA/public/index.html, while `fresh.sh` mocked healthcheck.
+`staging.sh` now verifies the official pinned 3.5.11 digest and runs the actual
+binary through fresh orchestration in direct and SOCKS modes. It proves the old
+absent-directory state and a missing index fail, usable staging succeeds, strict
+unknown keys fail, final paths never contain staging, config semantics match,
+and incompatible/missing-decoy candidates never reach even the mocked Certbot
+boundary. OS/account/systemd/ACME actions remain fixtures; this is not live issuance.
 
-These checks evaluate future stable releases; they do not guarantee every future
-implementation's compatibility. Unknown schema/CLI or runtime behavior can fail
-contracts. The source audit remains evidence for the historical baseline, while
-systemd read-only paths and single-listener ownership enforce runtime boundaries.
-The exact 3.5.9 missing-chain warning exception is diagnostic evidence, not a
-release eligibility gate; it is deliberately not generalized to unknown versions.
+Updates validate the installed runtime/configuration and compare it with the fixed
+3.5.11 target. Equal versions keep the health checks; older compatible managed
+installs upgrade, while newer ones refuse without downloading or modifying files.
+Failures restore the old binary; config, unit, certificate and Nginx are not migrated.
+No compatibility promise is made for future releases. The real runtime smoke
+starts the exact pin with real Linux helpers and CAP_NET_ADMIN in a separate
+network namespace. It first proves owned chains absent, verifies process-owned
+listener/HTTP index again after a measured >=10-second dwell, and refuses pinned
+conntrack reconciliation/retry/shutdown failure fragments in actual captured logs.
+Production WARN classification stays generic; the seven 3.5.10 WARN records remain
+historical regression input. Fatal classifier negatives, clean shutdown and
+firewall state checks remain. It does not start
+systemd or perform ACME issuance. See the coverage inventory for every CI step.
+
+## Manager bootstrap
+
+`install.sh` installs only the manager program pair and a fixed-path launcher.
+It resolves releases from `xPROMSx/telemt-web-manager`, ignores drafts, prefers
+the highest published stable SemVer, and uses the highest prerelease only while
+no stable exists. SemVer prerelease tags are never classified as stable even if
+GitHub's prerelease flag is false; a plain core tag flagged prerelease is supported.
+Duplicate JSON fields fail closed. Release pages are enumerated with 100 entries
+per page until a short page, up to 20 pages. A full twentieth page, failed page, malformed metadata or duplicate tag
+causes refusal rather than selection from an incomplete/ambiguous history.
+Publication timestamps validate published status but never decide precedence.
+Core and numeric prerelease identifiers compare by digit length then ASCII digits,
+without bounded integer conversion. Build metadata is accepted but ignored for
+precedence; distinct highest tags of equal precedence require explicit `--version`.
+The existing explicit-tag surface accepts a prerelease or a build suffix, not
+both together. Default discovery retains its existing support for both suffixes;
+ambiguities outside the explicit surface require manual review.
+`--version v0.1.0` selects an explicit published tag, including prereleases.
+The tag is resolved through official Git objects to a commit SHA; annotated tag
+objects must identify the exact requested object SHA;
+both files are fetched over HTTPS from that same immutable commit. Metadata
+cannot supply an arbitrary download URL or repository. Release ambiguity, unsafe
+ref syntax, failed/empty downloads, Bash/Python syntax errors all cause refusal.
+
+The bootstrap script itself is fetched from main in the quick command; review it
+or download it before execution if desired. The program pair is never installed
+from mutable main. To test an unpublished PR/commit, use the advanced/manual
+installation workflow with its reviewed immutable checkout.
+The manager's release channel is independent from the fixed Telemt 3.5.11 pin.
+
+Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
+Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then
+take the same exclusive lock used by the manager. Root-owned safe ancestors,
+non-symlink regular files, a recognized two-file existing installation, no extra
+files, and an absent or exact canonical launcher are required. An unrelated
+`/opt/telemt-web-manager` or `/usr/local/bin/telemt-web-manager` causes refusal.
+Manual two-file installations from previous manager versions can be updated;
+modified layouts require manual review. Under the exclusive lock, the canonical
+installed manager is read as UTF-8 text; only one exact unquoted
+`readonly SCRIPT_VERSION=MAJOR.MINOR.PATCH...` declaration immediately after the
+fixed generated prologue is accepted. Missing,
+malformed, duplicate or ambiguous declarations fail closed, including for explicit
+updates. No installed shell content is sourced, evaluated or executed.
+Downloaded file identity and declared version must also match the published tag.
+For automatic selection, a candidate below the installed SemVer is refused before
+any installation stage, directory replacement or launcher mutation. The error
+shows both versions. Equal versions can safely reinstall; newer versions update.
+An explicit valid published `--version` permits an intentional downgrade while
+retaining every validation, path, lock and rollback safeguard.
+
+The validated pair is staged beside `/opt/telemt-web-manager`. Linux `renameat2`
+exchanges whole directories atomically for updates; a fresh directory is renamed
+atomically. Launcher commit failure restores the old complete pair (or removes
+the new pair on a fresh install). If the reverse exchange itself fails, retain
+the previous pair's staging directory and report its path for manual recovery;
+never delete the sole recoverable previous pair. Catchable signals are blocked
+across this short commit window; cleanup deletes only disposable transaction stages.
+Interrupted metadata/download operations also clean their private temporary files. Unsupported exchange,
+unsafe lock, active manager or write failure causes refusal. Power loss/SIGKILL
+and concurrent root edits remain manual recovery boundaries. Both installed
+files and directories are root:root, script/launcher 0755 and helper 0644.
+The launcher executes the fixed manager path and forwards arguments.
+
+Rerun the quick command to update manager files without changing the managed
+Telemt deployment. `--update` inside the manager instead updates Telemt. Close existing idle menus before updating; the lock excludes manager actions,
+not an idle menu that has already loaded older shell functions. On a TTY
+bootstrap launches the menu after releasing its lock; noninteractive use or
+`--no-start` only installs the program files. CI uses root-owned temporary paths,
+release/download fixtures and a fake menu, including a failure injected after
+directory exchange; no production paths or release operations are tested.

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Strict, read-only parsers and staged Nginx plans. Python 3.11+ stdlib only."""
+# This canonical header is also the install.sh downloaded-pair identity marker.
 import base64
 import glob
 import hashlib
 import ipaddress
 import json
 import os
+import signal
+import subprocess
+import tempfile
+from contextlib import contextmanager
 import stat
 import tarfile
 import re
@@ -79,6 +84,221 @@ def lock_path(path):
         print(f"{info.st_dev}:{info.st_ino}")
     finally:
         os.close(fd)
+
+
+# Fresh Telemt transaction ownership; ACME assets are deliberately outside it.
+@contextmanager
+def fresh_signal_window():
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+
+
+def fresh_ledger(path):
+    safe_path(path)
+    info = Path(path).lstat()
+    require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+            and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600)
+    value = json.loads(Path(path).read_text())
+    require(value['schema'] == 1 and len(value['roots']) == 3)
+    return value
+
+
+def fresh_save(path, value):
+    safe_path(path)
+    fd, temporary = tempfile.mkstemp(dir=Path(path).parent, prefix='.fresh-ownership.')
+    try:
+        with os.fdopen(fd, 'w') as output:
+            json.dump(value, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+
+
+def fresh_init(path, *roots):
+    require(len(roots) == 3 and len(set(roots)) == 3)
+    for root in roots:
+        safe_path(root)
+        require(Path(root).is_absolute() and not os.path.lexists(root))
+    safe_path(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        json.dump(dict(schema=1, roots=list(roots), directories=[], account=None,
+                       pending_account=False, user_removed=False), output)
+
+
+def fresh_getent(database, key):
+    result = subprocess.run(['getent', database, str(key)], capture_output=True, text=True)
+    if result.returncode == 2:
+        return None
+    require(result.returncode == 0 and len(result.stdout.splitlines()) == 1)
+    return result.stdout.rstrip('\n').split(':')
+
+
+def fresh_passwd():
+    result = subprocess.run(['getent', 'passwd'], capture_output=True, text=True)
+    require(result.returncode == 0)
+    entries = [line.split(':') for line in result.stdout.splitlines()]
+    require(all(len(entry) == 7 for entry in entries))
+    return entries
+
+
+def fresh_identity(home):
+    user, group = fresh_getent('passwd', 'telemt'), fresh_getent('group', 'telemt')
+    require(user is not None and group is not None and len(user) == 7 and len(group) == 4)
+    require(user[0] == group[0] == 'telemt' and user[2].isdigit() and user[3].isdigit()
+            and group[2].isdigit() and int(user[2]) > 0 and int(user[3]) > 0
+            and user[3] == group[2] and user[5:] == [home, '/usr/sbin/nologin'] and not group[3])
+    require(fresh_getent('passwd', user[2]) == user and fresh_getent('group', group[2]) == group)
+    entries = fresh_passwd()
+    require([entry for entry in entries if entry[2] == user[2] or entry[3] == group[2]] == [user],
+            'UID/GID shared with an unrelated account')
+    return dict(user=user, group=group)
+
+
+def fresh_account_create(path, home):
+    with fresh_signal_window():
+        value = fresh_ledger(path)
+        require(home == value['roots'][1] and value['account'] is None)
+        require(fresh_getent('passwd', 'telemt') is None and fresh_getent('group', 'telemt') is None)
+        # An unsuccessful/partial useradd is not ownership proof: retain evidence
+        # and require manual review rather than guessing from paths or names.
+        value['pending_account'] = True
+        fresh_save(path, value)
+        subprocess.run(['useradd', '--system', '--user-group', '--home-dir', home,
+                        '--no-create-home', '--shell', '/usr/sbin/nologin', 'telemt'], check=True)
+        value['account'] = fresh_identity(home)
+        value['pending_account'] = False
+        fresh_save(path, value)
+
+
+def fresh_mkdir(path, directory, mode):
+    with fresh_signal_window():
+        value = fresh_ledger(path)
+        config, data, state = map(Path, value['roots'])
+        allowed = {config, data, data / 'public', data / 'state', state}
+        directory = Path(directory)
+        require(directory in allowed and directory.is_absolute() and mode in ('0750', '0700'))
+        safe_path(directory)
+        # mkdir, never install -d: existing objects are not adopted or chmod'd.
+        os.mkdir(directory, int(mode, 8))
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            value['directories'].append(dict(path=str(directory), dev=info.st_dev, ino=info.st_ino))
+            fresh_save(path, value)
+            # The manager's umask is 077. Match install -d -m semantics so
+            # Telemt can traverse root:telemt config/data/public directories.
+            os.fchmod(fd, int(mode, 8))
+        finally: os.close(fd)
+
+
+def fresh_account_quiet(value):
+    require(not value['pending_account'], 'partial account creation requires manual review')
+    account = value['account']
+    if account is None: return
+    require(fresh_identity(value['roots'][1]) == account, 'account identity changed')
+    uid = int(account['user'][2])
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit(): continue
+        try:
+            text = (process / 'status').read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        record = re.search(r'^Uid:\s+([0-9 \t]+)$', text, re.M)
+        require(record is not None and uid not in map(int, record[1].split()), 'Telemt process still present')
+
+
+def fresh_verify(path, *roots):
+    value = fresh_ledger(path)
+    require(list(roots) == value['roots'])
+    fresh_account_quiet(value)
+    allowed = set(roots) | {str(Path(roots[1]) / name) for name in ('public', 'state')}
+    # st_dev alone misses same-device bind mounts. Check the kernel mount table
+    # before touching files, including nested mounts inside runtime state.
+    mounts = []
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        field = line.split()[4]
+        mount = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), field)
+        mounts.append(Path(mount))
+    for root in map(Path, roots):
+        require(not any(mount == root or mount.is_relative_to(root) for mount in mounts), 'fresh cleanup crosses a mount')
+    for record in value['directories']:
+        directory = Path(record['path'])
+        require(str(directory) in allowed)
+        safe_path(directory.parent)
+        try: info = directory.lstat()
+        except FileNotFoundError: continue
+        owners = {0, os.geteuid()}
+        if value['account']: owners.add(int(value['account']['user'][2]))
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid in owners
+                and (info.st_dev, info.st_ino) == (record['dev'], record['ino']), 'created directory identity changed')
+    return value
+
+
+def fresh_cleanup_dirs(path, *roots):
+    value = fresh_verify(path, *roots)
+    records = {r['path']: r for r in value['directories']}
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def clear(fd, device):
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    child = os.open(entry.name, flags, dir_fd=fd)
+                    try:
+                        actual = os.fstat(child)
+                        require(actual.st_dev == device and actual.st_ino == info.st_ino)
+                        clear(child, device)
+                    finally: os.close(child)
+                    os.rmdir(entry.name, dir_fd=fd)
+                else:
+                    # Unlink symlinks and runtime files without following targets.
+                    os.unlink(entry.name, dir_fd=fd)
+
+    for root in reversed(roots):
+        if root not in records: continue
+        target = Path(root)
+        parent = os.open(target.parent, flags)
+        try:
+            try: fd = os.open(target.name, flags, dir_fd=parent)
+            except FileNotFoundError: continue
+            try:
+                info = os.fstat(fd)
+                require((info.st_dev, info.st_ino) == (records[root]['dev'], records[root]['ino']))
+                clear(fd, info.st_dev)
+            finally: os.close(fd)
+            os.rmdir(target.name, dir_fd=parent)
+        finally: os.close(parent)
+
+
+def fresh_cleanup_account(path, *roots):
+    with fresh_signal_window():
+        value = fresh_ledger(path)
+        require(list(roots) == value['roots'] and not value['pending_account'])
+        require(all(not os.path.lexists(root) for root in roots))
+        account = value['account']
+        if account is None: return
+        if not value['user_removed']:
+            fresh_account_quiet(value)
+            subprocess.run(['userdel', 'telemt'], check=True)  # Never -r or -f.
+            require(fresh_getent('passwd', 'telemt') is None)
+            value['user_removed'] = True
+            fresh_save(path, value)
+        require(fresh_getent('passwd', 'telemt') is None and fresh_getent('passwd', account['user'][2]) is None)
+        require(not any(entry[3] == account['group'][2] for entry in fresh_passwd()), 'group still used by an account')
+        group = fresh_getent('group', 'telemt')
+        if group is not None:
+            require(group == account['group'] and fresh_getent('group', group[2]) == group)
+            subprocess.run(['groupdel', 'telemt'], check=True)
+            require(fresh_getent('group', 'telemt') is None)
+        value['account'] = None
+        fresh_save(path, value)
 
 
 def certificate_paths(root, host):
@@ -705,65 +925,75 @@ def config_info(path):
         print(value)
 
 
-def classify(version, os_version, backend, text, records=None):
-    # Old configs may emit ANSI SGR; new configs disable colors explicitly.
-    # Strip only color sequences, not arbitrary control/error text.
-    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-    if records is None:
-        records = []
-        for line in text.splitlines():
-            if re.match(r"^(?:\d{4}-\d\d-\d\dT\S+\s+)?(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL|panic)\b", line, re.I):
-                records.append(line)
-            elif records:
-                records[-1] += "\n" + line
-            elif line.strip():
-                records.append(line)
-    require(all(isinstance(record, str) for record in records), "binary journal message requires review")
-    helper_version = r"1\.8\.(?:10|11)"
-    backend_ok = re.fullmatch(rf"iptables v{helper_version} \(nf_tables\)", backend) is not None
-    diagnostic = (
-        rf"(?P<tool>ip6?tables) v{helper_version} \(nf_tables\): "
-        r"Chain 'TELEMT_NOTRACK' does not exist\.?"
-        r"(?:\nTry \x60(?P=tool) -h' or '(?P=tool) --help' for more information\.)?"
-    )
-    warning = re.compile(
-        r"^(?:\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d\d:\d\d)\s+)?"
-        r"WARN\s+(?:[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*:\s+)?"
-        r"Failed to reconcile conntrack firewall policy"
-        r"(?:\s+generation=[0-9]+)?\s+error=startup recovery failed: (?P<payload>.+)$",
-        re.S,
-    )
-    known = failures = warnings = 0
+# The level is a record prefix, never a keyword in arbitrary message payload.
+LOG_PREFIX = re.compile(
+    r"^[ \t]*(?:\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d\d:\d\d)\s+)?"
+    r"(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)(?:[ \t]+|$)")
+PANIC_PREFIX = re.compile(
+    r"^[ \t]*(?:panic(?:ked)?(?:[: \t]|$)|fatal runtime error:|"
+    r"thread ['\"].+?['\"](?: \(\d+\))? panicked at\b)", re.I)
+
+
+def classify_records(records):
+    errors = warnings = 0
     for record in records:
+        require(isinstance(record, str), "binary journal message requires review")
         record = re.sub(r"\x1b\[[0-9;]*m", "", record)
-        # Severity wins even if the record also contains the known warning.
-        if re.search(r"\b(ERROR|FATAL|panic)\b(?![=])", record, re.I):
-            failures += 1
-            continue
-        if not re.search(r"\bWARN\b", record, re.I):
-            if re.search(r"Operation not permitted|Permission denied", record, re.I):
-                failures += 1
-            continue
-        match = warning.fullmatch(record)
-        diagnostics = match["payload"].split("; ") if match else []
-        expected = (version == "3.5.9" and os_version in ("ubuntu:24.04", "ubuntu:26.04")
-                    and backend_ok and diagnostics
-                    and all(re.fullmatch(diagnostic, part) for part in diagnostics))
-        if expected:
-            known += 1
-        elif re.search(r"conntrack|Operation not permitted|Permission denied", record, re.I):
-            failures += 1
-        else:
-            warnings += 1
-    print(f"logs: failures={failures}, warnings={warnings}, known_nonfatal={known}")
-    return 1 if failures else 0
+        require(not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", record),
+                "unsafe log control sequence")
+        started = False
+        for line in record.splitlines():
+            if not line.strip(): continue
+            level = LOG_PREFIX.match(line)
+            panic = PANIC_PREFIX.match(line)
+            # Check every line, even inside a journal MESSAGE: an embedded
+            # structured fatal record must not disappear as WARN continuation.
+            if level:
+                started = True
+                if level[1] in ('ERROR', 'FATAL'): errors += 1
+                elif level[1] == 'WARN': warnings += 1
+            elif panic:
+                started = True
+                errors += 1
+            elif line.startswith('MAESTRO: '):
+                # Telemt's unlevelled startup banner (including private links).
+                # Recognize its record framing, never inspect/print its payload.
+                started = True
+            else:
+                require(started, "unrecognized log record prefix")
+    print(f"logs: errors={errors}, warnings={warnings}")
+    return 1 if errors else 0
 
 
-def classify_journal(version, os_version, backend, text):
-    # Journald JSON preserves MESSAGE boundaries, including embedded newlines.
-    # A continuation that looks like INFO must not hide extra stderr.
-    records = [json.loads(line)["MESSAGE"] for line in text.splitlines() if line.strip()]
-    return classify(version, os_version, backend, "", records)
+def classify(text):
+    return classify_records([text])
+
+
+def journal_object(pairs):
+    value = {}
+    for key, item in pairs:
+        require(key not in value, "duplicate journal field")
+        value[key] = item
+    return value
+
+
+def journal_constant(_value):
+    raise ValueError("invalid JSON constant")
+
+
+def classify_journal(text):
+    records = []
+    for line in text.splitlines():
+        if not line.strip(): continue
+        item = json.loads(line, object_pairs_hook=journal_object,
+                          parse_constant=journal_constant)
+        require(isinstance(item, dict) and isinstance(item.get('MESSAGE'), str),
+                "missing/binary journal message")
+        # Trusted journald metadata distinguishes PID 1's unit lifecycle
+        # messages from Telemt stderr. Objective service checks cover its state.
+        if item.get('_PID') == '1' and item.get('_COMM') == 'systemd': continue
+        records.append(item['MESSAGE'])
+    return classify_records(records)
 
 
 def main():
@@ -791,6 +1021,18 @@ def main():
         safe_path(args[0])
     elif command == "lock-path":
         lock_path(args[0])
+    elif command == "fresh-init":
+        fresh_init(*args)
+    elif command == "fresh-account-create":
+        fresh_account_create(*args)
+    elif command == "fresh-mkdir":
+        fresh_mkdir(*args)
+    elif command == "fresh-verify":
+        fresh_verify(*args)
+    elif command == "fresh-cleanup-dirs":
+        fresh_cleanup_dirs(*args)
+    elif command == "fresh-cleanup-account":
+        fresh_cleanup_account(*args)
     elif command == "certificate-paths":
         certificate_paths(*args)
     elif command == "socks-address":
@@ -806,9 +1048,11 @@ def main():
     elif command == "acme-state":
         acme_state(*args)
     elif command == "classify":
-        return classify(*args[:3], sys.stdin.read())
+        require(not args)
+        return classify(sys.stdin.read())
     elif command == "classify-journal":
-        return classify_journal(*args[:3], sys.stdin.read())
+        require(not args)
+        return classify_journal(sys.stdin.read())
     else:
         raise ValueError("unknown helper command")
     return 0
@@ -817,7 +1061,7 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (ValueError, OSError, KeyError, TypeError, AttributeError, IndexError, tarfile.TarError):
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, IndexError, tarfile.TarError, subprocess.SubprocessError):
         # Config parse errors may contain credentials. Never echo exception text.
         print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
         sys.exit(1)

@@ -15,45 +15,30 @@
 - Контроль работоспособности, ограниченное ожидание запуска и автоматический откат.
 - Защищённый systemd-сервис; сохранение существующего TOML при обновлении.
 
-## Установка
+## Быстрая установка
 
-Выполняй в **root-консоли**, сначала на отдельном тестовом VPS.
-Требования: Ubuntu 24.04/26.04, systemd, Bash 5+, Python 3.11+, работающий
-распознаваемый маршрутизатор Nginx и модули SSL, HTTP/2, realip, stream/ssl_preread.
-Установи зависимости команд, сохранив свою рабочую сборку Nginx:
+Выполняй в **root-консоли**, сначала на отдельном тестовом VPS:
 
 ```bash
-apt-get update
-apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
-  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables
+bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh)
 ```
 
-Загрузи и изучи исходники, выполни проверки и установи оба файла:
+Установщик устанавливает менеджер и открывает меню при stdin/stdout в TTY.
+Нужны Bash, curl, CA-сертификаты и Python 3.11+. Пакеты, Telemt, Nginx, Certbot
+и Xray установщик не меняет. При желании сначала изучи скрипт.
 
-```bash
-git clone https://github.com/xPROMSx/telemt-web-manager.git
-cd telemt-web-manager
-
-bash -n telemt-web-manager.sh
-shellcheck telemt-web-manager.sh
-
-install -d -m 0755 /opt/telemt-web-manager/lib
-install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
-install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
-```
-
-Каталог `/opt/telemt-web-manager` должен принадлежать root и быть недоступным
-для записи другим пользователям. В стандартной пакетной установке Nginx для stream
-обычно нужен `libnginx-mod-stream`; согласуй модули со своей сборкой и проверь
-`nginx -t`. Менеджер проверяет зависимости, сам пакеты не устанавливает.
-Запуск через `curl | bash` не используется.
+Оба файла берутся из одного опубликованного релиза менеджера по commit SHA.
+Выбирается stable с наибольшей версией по SemVer; если stable нет — наибольший
+prerelease. Автоматическое понижение версии менеджера запрещено. Неопубликованный
+коммит проверяется по инструкции расширенной/ручной установки ниже.
+[Политика релизов и восстановление](docs/OPERATIONS.md#manager-bootstrap).
 
 ## Первый запуск
 
-Открой интерактивное меню:
+После установки меню можно открыть снова:
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh
+telemt-web-manager
 ```
 
 Выбери Install, укажи WEB-домен, публичный IPv4 и при необходимости адрес SOCKS5.
@@ -72,7 +57,7 @@ install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
 Прямой выход:
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh --install \
+telemt-web-manager --install \
   --domain proxy.example.com \
   --public-ip 203.0.113.10
 ```
@@ -80,7 +65,7 @@ install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
 Выход через SOCKS5:
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh --install \
+telemt-web-manager --install \
   --domain proxy.example.com \
   --public-ip 203.0.113.10 \
   --socks 127.0.0.1:1080
@@ -93,28 +78,33 @@ install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
 ## Обновление, проверка и восстановление
 
 ```bash
-/opt/telemt-web-manager/telemt-web-manager.sh --update
-/opt/telemt-web-manager/telemt-web-manager.sh --check
-/opt/telemt-web-manager/telemt-web-manager.sh --repair
+telemt-web-manager --update
+telemt-web-manager --check
+telemt-web-manager --repair
 ```
 
-`--update` обновляет исследованный **бинарник Telemt**, проверяя кандидата
+`--update` обновляет **бинарник Telemt**, проверяя кандидата
 и выполняя откат при ошибке. Сам менеджер и TOML эта команда не обновляет.
 `--check` проверяет управляемые файлы, конфигурацию, состояние продления сертификата
 и работоспособность сервисов.
 `--repair` перезапускает только проверенный Telemt и перечитывает проверенный Nginx;
-повреждённые файлы не воссоздаёт. Для обновления самого менеджера изучи новую
-версию репозитория и повтори проверки и копирование файлов из раздела установки.
+повреждённые файлы не воссоздаёт. Для обновления самого менеджера повтори команду
+быстрой установки. Существующая установка Telemt сохраняется.
 
-## Для какого окружения
+## Требования и поддерживаемое окружение
 
-Ubuntu 24.04/26.04, x86_64 или aarch64, один распознаваемый SNI map/router Nginx,
+Ubuntu 24.04/26.04, systemd, Bash 5+, Python 3.11+, работающий Nginx с модулями
+SSL, HTTP/2, realip и stream/ssl_preread. x86_64 или aarch64, один распознаваемый SNI map/router Nginx,
 IPv4 `:443`, необязательный существующий `[::]:443`, исходящий PROXY protocol
 и HTTP include `conf.d/*.conf`. Менеджер добавляет локальный TLS frontend
 и IPv4 WEB listener Telemt. Выход к Telegram прямой или через SOCKS5 без авторизации.
-Исходники проверены на базе Telemt **3.5.9**, CI сохраняет проверки 3.5.7/3.5.9.
-Стабильные релизы проверяются по контрактам конфигурации и здоровья runtime,
-без ограничения номера версии. Несовместимые кандидаты отклоняются или откатываются.
+Supported Telemt: **3.5.11** (поддерживаемая версия). Установка и обновление
+используют только этот проверенный релиз с фиксированными официальными SHA256.
+Старые управляемые установки проходят проверки совместимости; более новые не
+понижаются. Будущий релиз требует новой проверенной версии менеджера. `--check`
+локально показывает установленную и поддерживаемую версии. WARN диагностический;
+ERROR/FATAL/panic и объективный отказ здоровья вызывают ошибку.
+[Границы CI](docs/CI-COVERAGE.md).
 
 HTTP-01 использует standalone на свободном порту 80 либо постоянный webroot,
 когда порт 80 обслуживает распознанная схема redirect-vhost Nginx.
@@ -136,9 +126,49 @@ Telemt WEB Manager проверяется на схеме Nginx `stream` / `ssl_
 CI использует проверенный официальный бинарник Telemt и настоящий Nginx.
 Операции systemd и Certbot проверяются с имитацией. Проверка на тестовом VPS ещё требуется.
 
+Включённый conntrack control требует пакет Ubuntu `conntrack`, iptables/ip6tables/nft
+и CAP_NET_ADMIN. Preflight проверяет `conntrack` в PATH root-консоли и в стандартном
+runtime PATH systemd до установки. Менеджер не устанавливает недостающие пакеты.
+
+## Расширенная / ручная установка
+
+Изучи доверенный checkout (или checkout PR для acceptance) и установи оба файла.
+Этот способ не создаёт короткую команду запуска:
+
+```bash
+git clone https://github.com/xPROMSx/telemt-web-manager.git
+cd telemt-web-manager
+bash -n telemt-web-manager.sh
+shellcheck telemt-web-manager.sh
+install -d -m 0755 /opt/telemt-web-manager/lib
+install -m 0755 telemt-web-manager.sh /opt/telemt-web-manager/
+install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
+/opt/telemt-web-manager/telemt-web-manager.sh
+```
+
+Каталог должен принадлежать root и быть недоступным для записи другим.
+Установи недостающие зависимости осознанно, сохранив рабочую сборку Nginx:
+
+```bash
+apt-get update
+apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
+  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables conntrack
+```
+
+В пакетной установке Nginx для stream обычно нужен `libnginx-mod-stream`;
+согласуй модули со своей сборкой и проверь `nginx -t`. Менеджер проверяет зависимости.
+Параметры bootstrap: `--version v0.1.0` выбирает опубликованный релиз;
+`--no-start` отключает запуск меню. Подробнее в [operations](docs/OPERATIONS.md#manager-bootstrap).
+
+## Техническая документация
+
+- [Исследование upstream, версии и контракты конфигурации](docs/UPSTREAM.md).
+- [Архитектура, безопасность, восстановление ACME, тесты и эксплуатация](docs/OPERATIONS.md)
+  (на английском).
+
 ## Важные ограничения
 
-- Неизвестная схема Nginx, изменённый управляемый контракт и неисследованная версия вызывают отказ.
+- Неизвестная схема Nginx или несовместимый/изменённый управляемый runtime-контракт вызывают отказ.
 - Посторонние установки Telemt и сертификаты требуют ручной проверки.
 - Нет изменений firewall/UFW, автоматической миграции TOML и автоматического удаления.
 - AAAA для WEB-домена, SOCKS с авторизацией/IPv6 и нестандартный HTTP на порту 80 требуют проверки.
@@ -146,12 +176,6 @@ CI использует проверенный официальный бинар
   откажет при неполном состоянии продления. Не удаляй объекты Certbot вслепую.
 - SIGINT/TERM/HUP запускают откат транзакции. Отключение питания, SIGKILL, сбой диска
   и параллельное редактирование root требуют ручного восстановления.
-
-## Техническая документация
-
-- [Исследование upstream, версии и контракты конфигурации](docs/UPSTREAM.md).
-- [Архитектура, безопасность, восстановление ACME, тесты и эксплуатация](docs/OPERATIONS.md)
-  (на английском).
 
 ## Лицензия и независимость
 

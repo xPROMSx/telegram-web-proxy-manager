@@ -12,71 +12,104 @@ from pathlib import Path
 from test_safety import ROOT, s
 
 
-class ConntrackTests(unittest.TestCase):
+class JournalSeverityTests(unittest.TestCase):
+    """Historical 3.5.10 live WARNs; not healthy pinned-runtime expectations."""
     def setUp(self):
-        self.backend = "iptables v1.8.10 (nf_tables)"
-        self.diagnostic = self.backend + ": Chain 'TELEMT_NOTRACK' does not exist"
-        self.record = ("WARN Failed to reconcile conntrack firewall policy "
-                       "error=startup recovery failed: " + self.diagnostic)
+        self.journal = (ROOT / 'tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl').read_text()
+        self.records = [json.loads(line)['MESSAGE'] for line in self.journal.splitlines()]
+        self.raw = "\n".join(self.records)
 
-    def classify(self, text, version="3.5.9", os="ubuntu:24.04", backend=None):
+    def result(self, text, journal=False):
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            result = s.classify(version, os, backend or self.backend, text)
+            result = (s.classify_journal if journal else s.classify)(text)
         return result, out.getvalue()
 
-    def test_ubuntu_24_and_26_exact_warning(self):
-        for os in ("ubuntu:24.04", "ubuntu:26.04"):
-            result, report = self.classify(self.record, os=os)
+    def test_exact_seven_live_warnings_raw_and_journal(self):
+        self.assertEqual(len(self.records), 7)
+        for text, journal in ((self.raw, False), (self.journal, True)):
+            result, report = self.result(text, journal)
             self.assertEqual(result, 0)
-            self.assertIn("known_nonfatal=1", report)
+            self.assertIn('errors=0, warnings=7', report)
+            self.assertNotIn('known_nonfatal', report)
+        # Historical version==3.5.9/string rules rejected these live 3.5.10
+        # WARNs while WEB/path health was OK. The policy now has no version input.
 
-    def test_actual_tracing_prefix_help_repetition_and_old_colors(self):
-        diagnostic = self.diagnostic + ".\nTry \x60iptables -h' or 'iptables --help' for more information."
-        record = ("2026-10-01T00:00:00.000Z WARN telemt::conntrack_control::firewall::actor: "
-                  "Failed to reconcile conntrack firewall policy generation=1 "
-                  "error=startup recovery failed: " + diagnostic + "; "
-                  + diagnostic.replace("iptables", "ip6tables"))
-        for text in (record, "\x1b[33m" + record + "\x1b[0m", record.replace("1.8.10", "1.8.11")):
-            result, report = self.classify(text)
-            self.assertEqual(result, 0)
-            self.assertIn("known_nonfatal=1", report)
+    def test_payload_keywords_never_change_warn_or_info_severity(self):
+        for level in ('TRACE', 'DEBUG', 'INFO', 'WARN'):
+            for payload in ('conntrack', 'Permission denied', 'Operation not permitted',
+                            'error=startup recovery failed', 'ERROR FATAL panic',
+                            'tg://fixture-private-secret-link'):
+                with self.subTest(level=level, payload=payload):
+                    result, report = self.result(level + ' telemt::fixture: ' + payload)
+                    self.assertEqual(result, 0)
+                    self.assertIn('errors=0, warnings=' + str(int(level == 'WARN')), report)
+                    self.assertNotIn(payload, report)
 
-    def test_other_version_os_backend_and_unknown_helper_refused(self):
-        for changes in ({"version": "3.6.0"}, {"os": "ubuntu:22.04"},
-                        {"backend": "iptables v1.8.10 (legacy)"},
-                        {"backend": "nf_tables"}, {"backend": "iptables v1.8.12 (nf_tables)"}):
-            with self.subTest(changes=changes):
-                self.assertEqual(self.classify(self.record, **changes)[0], 1)
+    def test_real_fatal_levels_and_rust_panic_with_warn_payload(self):
+        for fatal in ('ERROR telemt::fixture: WARN error=failed',
+                      'FATAL telemt::fixture: WARN', 'panic: WARN',
+                      "thread 'main' panicked at src/main.rs:1: WARN",
+                      "thread 'tokio-runtime-worker' (123) panicked at src/main.rs:1: WARN",
+                      'fatal runtime error: failed to initiate panic'):
+            for journal in (False, True):
+                with self.subTest(fatal=fatal, journal=journal):
+                    text = self.journal + json.dumps({'MESSAGE': fatal}) if journal else self.raw + '\n' + fatal
+                    result, report = self.result(text, journal)
+                    self.assertEqual(result, 1)
+                    self.assertIn('errors=1, warnings=7', report)
 
-    def test_extra_errors_chain_context_and_severity_refused(self):
-        variants = (
-            self.record + "; Permission denied", self.record + "; Operation not permitted",
-            self.record + "; unexpected failure", self.record + "\nadditional unexpected error",
-            self.record.replace("WARN", "ERROR WARN"), self.record.replace("WARN", "FATAL WARN"),
-            self.record + " panic", self.record.replace("TELEMT_NOTRACK", "OTHER_CHAIN"),
-            self.record.replace("startup recovery failed:", "rollback failed:"),
-            self.record.replace("Failed to reconcile conntrack firewall policy", "Other conntrack operation"),
-            self.record.replace("(nf_tables):", "(legacy):"), self.record.replace("1.8.10", "1.8.12"),
-            self.record + "\nERROR unrelated failure", self.record + "\nFATAL failure",
-            self.record + "\npanic: failure", self.record.replace("error=", "other_error="),
-        )
-        for text in variants:
-            with self.subTest(text=text):
-                self.assertEqual(self.classify(text)[0], 1)
+    def test_multiline_boundaries_cannot_hide_fatal_records(self):
+        for fatal in ('ERROR telemt: WARN', 'FATAL telemt: WARN', "thread 'main' panicked at src/x.rs:1"):
+            record = 'WARN telemt: harmless continuation\nINFO diagnostic\n' + fatal
+            result, report = self.result(json.dumps({'MESSAGE': record}), True)
+            self.assertEqual(result, 1)
+            self.assertIn('errors=1, warnings=1', report)
+        result, report = self.result(json.dumps({'MESSAGE': 'WARN error=failed\nPermission denied'}), True)
+        self.assertEqual(result, 0)
+        self.assertIn('warnings=1', report)
 
-    def test_journal_boundaries_and_redaction(self):
-        for extra, expected in (("", 0), ("\nINFO additional unexpected stderr", 1),
-                                ("\nPermission denied", 1)):
-            # Fixture marker must never appear in the diagnostic summary.
-            record = self.record + extra
-            journal = json.dumps({"MESSAGE": record}) + "\n"
-            journal += json.dumps({"MESSAGE": "INFO fixture-private-link"})
-            with contextlib.redirect_stdout(io.StringIO()) as out:
-                result = s.classify_journal("3.5.9", "ubuntu:24.04", self.backend, journal)
+    def test_ansi_sgr_colors_preserve_structural_severity(self):
+        for level, expected in (('WARN', 0), ('ERROR', 1), ('FATAL', 1)):
+            result, _ = self.result('2026-10-01T00:00:00.000+03:00 \x1b[1;33m' + level + '\x1b[0m telemt: WARN error=failed')
             self.assertEqual(result, expected)
-            self.assertNotIn("fixture-private-link", out.getvalue())
-        with self.assertRaises(ValueError):
-            s.classify_journal("3.5.9", "ubuntu:24.04", self.backend, "invalid json")
+
+    def test_malformed_transport_and_unknown_prefix_fail_closed(self):
+        for text in ('invalid json', '[]', '{}', '{"MESSAGE":[87,65]}',
+                     '{"MESSAGE":"WARN x","extra":NaN}',
+                     '{"MESSAGE":"WARN x","extra":Infinity}',
+                     '{"MESSAGE":"WARN x","MESSAGE":"INFO x"}',
+                     '{"MESSAGE":"unframed error"}', '{"MESSAGE":"WARN \u001b[2Jx"}',
+                     '{"MESSAGE":"WARN \u0000x"}'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                self.result(text, True)
+        for text in ('unframed text', '\x1b[2JWARN x', '??? ERROR x'):
+            with self.subTest(text=text), self.assertRaises(ValueError): self.result(text)
+
+    def test_systemd_manager_records_require_trusted_identity_metadata(self):
+        unit = {'MESSAGE': 'Started telemt.service.', '_PID': '1', '_COMM': 'systemd'}
+        self.assertEqual(self.result(json.dumps(unit), True)[0], 0)
+        unit['_PID'] = '54321'
+        with self.assertRaises(ValueError): self.result(json.dumps(unit), True)
+
+    def test_private_payload_is_never_printed_and_empty_logs_are_valid(self):
+        text = json.dumps({'MESSAGE': 'ERROR telemt: tg://fixture-private-secret-link'})
+        result, report = self.result(text, True)
+        self.assertEqual(result, 1)
+        self.assertNotIn('fixture-private', report)
+        self.assertEqual(self.result('', True), (0, 'logs: errors=0, warnings=0\n'))
+
+    def test_actual_startup_banner_and_both_tracing_streams(self):
+        # The upstream stderr destination uses stdout for tracing, stderr for
+        # the unlevelled MAESTRO banner. Journald captures both streams.
+        banner = 'MAESTRO: Telemt MTProxy v3.5.10\nMAESTRO: tg://fixture-private-link\n'
+        result, report = self.result(banner + self.raw)
+        self.assertEqual((result, report), (0, 'logs: errors=0, warnings=7\n'))
+        self.assertNotIn('fixture-private', report)
+        result, report = self.result(banner + self.raw + '\nERROR telemt: WARN')
+        self.assertEqual((result, report), (1, 'logs: errors=1, warnings=7\n'))
+        for control in ('\x00', '\x1b[2J', '\x07', '\x9b2J'):
+            with self.assertRaises(ValueError):
+                self.result(json.dumps({'MESSAGE': 'WARN x' + control}), True)
 
 
 class ManagedContractTests(unittest.TestCase):
