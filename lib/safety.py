@@ -1098,8 +1098,12 @@ def uninstall_account_files(account, roots):
     mounts.update(p for p in ('/run', '/tmp') if Path(p).is_dir())
     uid, gid = account['user'][2:4]
     for mount in sorted(mounts):
-        result = subprocess.run(['find', mount, '-xdev', '(', '-path', '/proc', '-o', '-path', '/sys',
-                                 '-o', '-path', '/dev', ')', '-prune', '-o', '(', '-uid', uid,
+        # Never walk an active managed runtime tree just to inspect outsiders.
+        prune = []
+        for path in ['/proc', '/sys', '/dev', *map(str, roots)]:
+            if prune: prune.append('-o')
+            prune += ['-path', path]
+        result = subprocess.run(['find', mount, '-xdev', '(', *prune, ')', '-prune', '-o', '(', '-uid', uid,
                                  '-o', '-gid', gid, ')', '-print0'], capture_output=True)
         require(result.returncode == 0, 'account file ownership scan failed')
         for raw in result.stdout.split(b'\0'):
@@ -1116,7 +1120,7 @@ def uninstall_safe_path(path, account):
                 and (not info.st_mode & 0o022 or (stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_mode & stat.S_ISVTX)))
 
 
-def uninstall_objects(paths, account):
+def uninstall_objects(paths, account, recursive=True):
     no_managed_mounts(paths)
     records = []
     uid, gid = map(int, account['user'][2:4])
@@ -1133,21 +1137,43 @@ def uninstall_objects(paths, account):
                       gid=info.st_gid, mode=stat.S_IMODE(info.st_mode), directory=stat.S_ISDIR(info.st_mode))
         if record['directory']:
             records.append(record)
-            for child in sorted(path.iterdir()): visit(child, info.st_dev)
+            if recursive:
+                for child in sorted(path.iterdir()): visit(child, info.st_dev)
         else:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
             with os.fdopen(fd, 'rb') as source:
                 actual = os.fstat(source.fileno())
-                require((actual.st_dev, actual.st_ino) == (info.st_dev, info.st_ino))
+                require(stat.S_ISREG(actual.st_mode) and actual.st_nlink == 1
+                        and (actual.st_dev, actual.st_ino, actual.st_uid, actual.st_gid, actual.st_mode)
+                        == (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode))
                 record['sha256'] = hashlib.sha256(source.read()).hexdigest()
+                after = os.fstat(source.fileno())
+                require((after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid, after.st_gid,
+                         after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        == (actual.st_dev, actual.st_ino, actual.st_mode, actual.st_nlink, actual.st_uid, actual.st_gid,
+                            actual.st_size, actual.st_mtime_ns, actual.st_ctime_ns),
+                        'file changed during snapshot')
             records.append(record)
     for path in paths: visit(path)
     return records
 
 
+def uninstall_static_objects(paths, account):
+    """Controls plus stable DATA anchors, without enumerating runtime children."""
+    data = Path(paths[3])
+    records = uninstall_objects([p for p in paths if p != str(data)], account)
+    anchors = uninstall_objects([str(data), str(data / 'public'), str(data / 'public/index.html')],
+                                account, recursive=False)
+    for record, directory, mode in zip(anchors, (True, True, False), (0o750, 0o750, 0o440)):
+        require(record['directory'] == directory and record['uid'] in (0, os.geteuid())
+                and record['gid'] == int(account['user'][3]) and record['mode'] == mode,
+                'managed DATA anchor changed')
+    return records + anchors
+
+
 def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_root, webroot):
     paths = [binary, str(Path(config).parent), unit, data, state]
-    require(len(set(paths)) == 5 and all(Path(p).is_absolute() for p in paths))
+    require(len(set(paths)) == 5 and all(Path(p).is_absolute() and '..' not in Path(p).parts for p in paths))
     require(not any(Path(a).is_relative_to(b) for a in paths for b in paths if a != b))
     for path in paths: safe_path(path)
     manifest = strict_json(Path(state) / 'manifest.json')
@@ -1162,8 +1188,6 @@ def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_r
     for path in (binary, config, unit, Path(state,'manifest.json'), Path(state,'web-link.txt')):
         require(Path(path).lstat().st_uid in (0, os.geteuid()), 'managed control-file owner changed')
     require(stat.S_IMODE(Path(config).stat().st_mode) == 0o640)
-    require({p.name for p in Path(data).iterdir()} == {'public','state'}
-            and {p.name for p in Path(data,'public').iterdir()} == {'index.html'})
     c = read_config(config)
     require(managed_web_contract(c, data)[0] == host)
     require(c['general']['data_path'] == data)
@@ -1184,11 +1208,9 @@ def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_r
             f"tg://webproxy?server={host}&secret=dd{c['access']['users']['web-user']}\n")
     require(stat.S_IMODE(Path(state).stat().st_mode) == 0o700
             and stat.S_IMODE(Path(state,'web-link.txt').stat().st_mode) == 0o600)
-    require(Path(data,'state').stat().st_uid == int(account['user'][2])
-            and Path(data,'state').stat().st_gid == int(account['user'][3]))
     uninstall_account_files(account, [Path(config).parent, data])
-    fresh_save(output, dict(schema=1, roots=paths, account=account, certificate=value,
-                            objects=uninstall_objects(paths, account)))
+    fresh_save(output, dict(schema=1, phase='pre-stop', roots=paths, account=account, certificate=value,
+                            objects=uninstall_static_objects(paths, account)))
 
 
 def uninstall_backup(plan, backup, directory="objects"):
@@ -1196,6 +1218,11 @@ def uninstall_backup(plan, backup, directory="objects"):
     backup = Path(backup)
     safe_path(backup)
     require(directory in ('objects','objects-stopped'))
+    require(value['phase'] == ('pre-stop' if directory == 'objects' else 'stopped'))
+    if directory == 'objects':
+        require(fresh_identity(value['roots'][3]) == value['account'])
+        require(uninstall_static_objects(value['roots'], value['account']) == value['objects'],
+                'static identity changed before stop')
     objects = backup / directory
     value['object_directory'] = directory
     objects.mkdir(mode=0o700)
@@ -1209,24 +1236,46 @@ def uninstall_backup(plan, backup, directory="objects"):
                     and stat.S_IMODE(info.st_mode) == record['mode']
                     and (info.st_dev,info.st_ino) == (record['dev'],record['ino']))
             content = source.read()
+            after = os.fstat(source.fileno())
+            require((after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid, after.st_gid,
+                     after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    == (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid, info.st_gid,
+                        info.st_size, info.st_mtime_ns, info.st_ctime_ns), 'file changed during backup')
         require((info.st_dev,info.st_ino) == (record['dev'],record['ino'])
                 and hashlib.sha256(content).hexdigest() == record['sha256'])
         destination = objects / str(index)
-        destination.write_bytes(content); destination.chmod(0o600)
+        with destination.open('xb') as target:
+            os.fchmod(target.fileno(), 0o600)
+            target.write(content); target.flush(); os.fsync(target.fileno())
     fresh_save(backup / 'uninstall.json', value)
+    if directory == 'objects': fresh_save(backup / 'initial-uninstall.json', value)
+    # Publish the ledger only with durable canonical backup files/context.
+    for path in [*backup.rglob('*'), backup]:
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if path.is_dir() else 0))
+        try: os.fsync(fd)
+        finally: os.close(fd)
 
 
 def uninstall_refresh(backup):
     value = strict_json(Path(backup) / 'uninstall.json')
+    require(value['phase'] == 'pre-stop')
+    uninstall_quiet(backup)
     actual = uninstall_objects(value['roots'], value['account'])
     by_path = {r['path']: r for r in actual}
     data, state = map(Path, value['roots'][3:])
     for record in value['objects']:
-        if Path(record['path']) == data or Path(record['path']).is_relative_to(data): continue
         require(by_path.get(record['path']) == record, 'managed identity changed before removal')
     require(set(by_path) - {r['path'] for r in value['objects']} <=
             {str(state / 'certificate.json')} | {r['path'] for r in actual if Path(r['path']).is_relative_to(data)})
+    if os.path.lexists(state / 'certificate.json'):
+        require(strict_json(state / 'certificate.json') == value['certificate'])
+    runtime = data / 'state'
+    require(runtime.is_dir() and runtime.stat().st_uid == int(value['account']['user'][2])
+            and runtime.stat().st_gid == int(value['account']['user'][3]))
     value['objects'] = actual
+    value['phase'] = 'stopped'
     plan = Path(backup) / 'stopped-plan.json'
     fresh_save(plan, value)
     uninstall_backup(plan, backup, 'objects-stopped')
@@ -1240,10 +1289,11 @@ def uninstall_quiet(backup):
 
 def uninstall_remove(backup):
     value = strict_json(Path(backup) / 'uninstall.json')
+    require(value['phase'] == 'stopped' and value['object_directory'] == 'objects-stopped',
+            'complete stopped backup required before removal')
     uninstall_quiet(backup)
     binary, config, unit, data, state = value['roots']
-    # Runtime files can change until service stop. Refuse differences rather than
-    # deleting unbacked data. The caller refreshes the private snapshot after stop.
+    # After quiescence every object must still match the authoritative backup.
     require(uninstall_objects(value['roots'], value['account']) == value['objects'])
     remove = {r['path']: r for r in value['objects'] if r['path'] == binary or r['path'] == unit
               or Path(r['path']).is_relative_to(config) or Path(r['path']).is_relative_to(data)

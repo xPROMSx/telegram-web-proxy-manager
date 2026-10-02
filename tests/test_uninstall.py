@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 from test_safety import ROOT, s
+from uninstall_runtime_fixture import churn, finalize, seed, tree, unsafe
 
 
 class UninstallTests(unittest.TestCase):
@@ -78,9 +79,9 @@ class UninstallTests(unittest.TestCase):
                        group=['telemt','x',str(os.getegid()),''])
         objects = s.uninstall_objects(list(map(str,roots)),account)
         plan = self.root/'ownership.json'
-        s.fresh_save(plan,dict(schema=1, roots=list(map(str,roots)), account=account,objects=objects))
+        s.fresh_save(plan,dict(schema=1, phase='stopped', roots=list(map(str,roots)), account=account,objects=objects))
         backup = self.root/'backup'; backup.mkdir(mode=0o700)
-        s.uninstall_backup(plan,backup)
+        s.uninstall_backup(plan,backup,'objects-stopped')
         with mock.patch.object(s,'uninstall_quiet'):
             s.uninstall_remove(backup)
         self.assertTrue((state/'certificate.json').exists())
@@ -114,6 +115,102 @@ class UninstallTests(unittest.TestCase):
             with self.assertRaises(ValueError): s.certificate_only_state(state)
         (state/'certificate.json').write_text('{"schema":1,"schema":1}')
         with self.assertRaises(ValueError): s.certificate_only_state(state)
+
+    def runtime_transaction(self):
+        roots = [self.root / name for name in ('binary','config','unit','data','state')]
+        binary, config, unit, data, state = roots
+        binary.write_text('binary'); unit.write_text('unit')
+        for path in (config,state): path.mkdir(mode=0o700)
+        data.mkdir(mode=0o750); (data/'public').mkdir(mode=0o750); (data/'state').mkdir(mode=0o750)
+        for path in (data,data/'public',data/'state'): path.chmod(0o750)
+        (data/'public/index.html').write_text('static decoy'); (data/'public/index.html').chmod(0o440)
+        for path in (config/'telemt.toml',state/'manifest.json',state/'web-link.txt'): path.write_text(path.name)
+        certificate=dict(schema=1,domain=self.host,cert_name=self.host,renewal_kind='standalone',acme_webroot='')
+        s.fresh_save(state/'certificate.json',certificate)
+        account=dict(user=['telemt','x',str(os.geteuid()),str(os.getegid()),'',str(data),'/usr/sbin/nologin'],
+                     group=['telemt','x',str(os.getegid()),''])
+        seed(data)
+        objects=s.uninstall_static_objects(list(map(str,roots)),account)
+        plan=self.root/'ownership.json'
+        value=dict(schema=1,phase='pre-stop',roots=list(map(str,roots)),account=account,
+                   certificate=certificate,objects=objects)
+        s.fresh_save(plan,value)
+        backup=self.root/'backup'; backup.mkdir(mode=0o700)
+        return roots,account,plan,backup
+
+    def test_pre_stop_never_walks_mutable_descendants(self):
+        roots,account,_,_=self.runtime_transaction(); data=roots[3]
+        original=Path.iterdir
+        def protected(path):
+            self.assertFalse(path.is_relative_to(data),'pre-stop walk of mutable DATA')
+            return original(path)
+        with mock.patch.object(Path,'iterdir',protected):
+            s.uninstall_static_objects(list(map(str,roots)),account)
+
+    def test_churn_then_complete_stopped_snapshot_is_rollback_target(self):
+        roots,account,plan,backup=self.runtime_transaction(); data=roots[3]
+        active=self.root/'active'; active.touch()
+        before=tree(data)
+        churn(data,plan,active,self.root/'barrier')
+        with mock.patch.object(s,'fresh_identity',return_value=account): s.uninstall_backup(plan,backup)
+        self.assertNotEqual(before,tree(data))
+        active.unlink(); finalize(data); expected=tree(data)
+        with mock.patch.object(s,'uninstall_quiet'): s.uninstall_refresh(backup)
+        value=s.strict_json(backup/'uninstall.json')
+        self.assertEqual(value['phase'],'stopped')
+        self.assertTrue((backup/'objects-stopped').is_dir())
+        with mock.patch.object(s,'uninstall_quiet'): s.uninstall_remove(backup)
+        self.assertFalse(data.exists())
+        with mock.patch.object(s,'fresh_getent',side_effect=lambda db,key: account['user' if db=='passwd' else 'group']), \
+             mock.patch.object(s,'fresh_identity',return_value=account), mock.patch.object(s,'uninstall_uid_quiet'):
+            s.uninstall_restore(backup)
+        self.assertEqual(tree(data),expected)
+        self.assertNotEqual(tree(data),before)
+
+    def test_pre_stop_ledger_cannot_authorize_removal(self):
+        roots,account,plan,backup=self.runtime_transaction()
+        with mock.patch.object(s,'fresh_identity',return_value=account): s.uninstall_backup(plan,backup)
+        with self.assertRaises(ValueError): s.uninstall_remove(backup)
+        self.assertTrue(all(p.exists() for p in roots))
+
+    def test_stopped_snapshot_and_backup_failure_leave_files_untouched(self):
+        roots,account,plan,backup=self.runtime_transaction(); data=roots[3]
+        with mock.patch.object(s,'fresh_identity',return_value=account): s.uninstall_backup(plan,backup)
+        unsafe(data,'fifo'); before=tree(data)
+        with mock.patch.object(s,'uninstall_quiet'):
+            with self.assertRaises(ValueError): s.uninstall_refresh(backup)
+        self.assertEqual(tree(data),before)
+        (data/'state/offender').unlink()
+        (backup/'objects-stopped').write_text('allocation fault')
+        with mock.patch.object(s,'uninstall_quiet'):
+            with self.assertRaises(FileExistsError): s.uninstall_refresh(backup)
+        self.assertEqual(s.strict_json(backup/'uninstall.json')['phase'],'pre-stop')
+        with mock.patch.object(s,'fresh_identity',return_value=account): s.uninstall_restore(backup)
+        self.assertTrue(all(p.exists() for p in roots))
+
+    def test_post_stop_runtime_changes_are_refused(self):
+        roots,account,plan,backup=self.runtime_transaction(); data=roots[3]
+        with mock.patch.object(s,'fresh_identity',return_value=account): s.uninstall_backup(plan,backup)
+        with mock.patch.object(s,'uninstall_quiet'): s.uninstall_refresh(backup)
+        (data/'state/mutable').write_text('late writer after stopped snapshot')
+        before=tree(data)
+        with mock.patch.object(s,'uninstall_quiet'):
+            with self.assertRaises(ValueError): s.uninstall_remove(backup)
+        self.assertEqual(tree(data),before)
+        self.assertFalse(s.strict_json(backup/'uninstall.json').get('removal_started',False))
+
+    def test_external_account_scan_prunes_runtime_root(self):
+        roots,account,_,_=self.runtime_transaction()
+        calls=[]
+        def find(args,**kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args,0,stdout=b'')
+        with mock.patch.object(s.subprocess,'run',side_effect=find):
+            s.uninstall_account_files(account,[roots[1],roots[3]])
+        self.assertTrue(calls)
+        for args in calls:
+            prune=args[:args.index('-prune')]
+            self.assertIn(str(roots[3]),prune)
 
     def test_destructive_flags_require_uninstall_confirmation(self):
         for args in (['--check','--delete-certificate'],['--uninstall','--delete-certificate'],

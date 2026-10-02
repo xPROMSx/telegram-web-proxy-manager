@@ -122,3 +122,23 @@ coexistence, public ACME issuance/renewal or Telegram client acceptance. The
 unchanged separate real runtime/Nginx tests cover their existing narrower
 contracts. Cloud root emulation cannot substitute for native root UID/GID checks;
 hosted Actions must run the new suite without skip/fallback/continue-on-error.
+
+The live-runtime race regressions use a synchronous Python child after completed
+ownership validation and before service stop. The child proves the service is
+still active, then rewrites/creates/deletes files, atomically replaces one and
+creates nested directories; its completion gates the transaction without sleeps
+or retries. Unknown safe DATA names, including an extra file below `public/`, are
+present before planning. A final shutdown write is added after stop. Successful
+uninstall verifies the complete `objects-stopped` backup independently; failure
+after removal verifies exact stopped-tree bytes/membership/modes/UID/GID, account,
+service, Nginx, manifest/link and unchanged certificate.
+
+Focused refusal cases cover pre-stop metadata failure, failed stop, still-active
+service, stopped-backup allocation failure, concurrent static/control/index/
+certificate/Nginx drift, and actual stopped-tree symlink, hardlink, FIFO, Unix
+socket, character/block device, same-device bind mount, unsafe owner/mode/xattr.
+They assert no deletion, unchanged runtime, prior service restoration and no
+successful-uninstall report. Python tests additionally prohibit pre-stop DATA
+enumeration, prove external ownership scans prune DATA, reject a pre-stop ledger
+as removal authority and refuse a write after the final stopped snapshot. These
+are filesystem/orchestration regressions, not a claim of VPS live acceptance.

@@ -932,6 +932,9 @@ uninstall_firewall_absent() {
 }
 
 uninstall_quiet() {
+    local active
+    active=$(systemctl show telemt.service -p ActiveState --value) || return 1
+    [[ $active == inactive || $active == failed ]] || return 1
     helper uninstall-quiet "$BACKUP" || return 1
     [[ -z $(ss -H -ltn 'sport = :18080') ]] || return 1
     uninstall_firewall_absent
@@ -1021,11 +1024,12 @@ uninstall_manager() {
     fi
     backup_begin
     backup_nginx_context
-    helper uninstall-backup "$TMP/uninstall-plan.json" "$BACKUP"
-    cp -p "$BACKUP/uninstall.json" "$BACKUP/initial-uninstall.json"
     printf '%s\n%s\n' "$UNINSTALL_ENABLED" "$UNINSTALL_ACTIVE" >"$BACKUP/service-state"
     cp "$TMP/certificate.json" "$BACKUP/certificate-ownership.json" 2>/dev/null ||
         helper certificate-record-stage "$BACKUP/certificate-ownership.json" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT"
+    jq --arg enabled "$UNINSTALL_ENABLED" --arg active "$UNINSTALL_ACTIVE" \
+        '.service = {enabled: $enabled, active: $active}' "$TMP/uninstall-plan.json" >"$TMP/uninstall-initial.json"
+    helper uninstall-backup "$TMP/uninstall-initial.json" "$BACKUP"
     UNINSTALLING=1 ARMED=1
     if [[ ! -e $STATE/certificate.json ]]; then
         track_file "$STATE/certificate.json"

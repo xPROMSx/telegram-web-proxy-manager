@@ -514,11 +514,17 @@ recognized active Nginx remain required. No arbitrary firewall rule deletion is
 performed. Residual Telemt-named firewall state after stop causes rollback and
 manual review.
 
-The exclusive manager lock covers the transaction. A canonical root-only backup
-records binary/TOML/unit/data/manifest/link, Nginx sources and edit plan, account
-UID/GID, ownership/modes/hashes and prior enabled/active state. A second private
-snapshot after stop captures the final runtime data. The service is stopped and
-disabled; remaining UID processes are refused. Nginx source hashes/include set
+The exclusive manager lock covers the transaction. Before stop, the canonical
+root-only backup durably records binary/TOML/unit/manifest/link, static DATA
+anchors (including `public/index.html`), root identities, Nginx sources/edit plan,
+account UID/GID, certificate ownership and prior enabled/active state. It does not
+enumerate or hash mutable DATA descendants while Telemt is running. The account
+ownership scan inspects external paths without traversing managed runtime roots.
+The service is then stopped and disabled; inactive/failed service state, absence
+of managed UID processes, listener and Telemt firewall state must be proven.
+Only then does `objects-stopped` capture and durably back up the complete current
+deployment, including final shutdown writes, before any Nginx/files/account removal.
+Nginx source hashes/include set
 are rechecked, exact WEB integration removed atomically, tested and reloaded.
 Only then are managed files removed with no-follow identity checks, systemd
 reloaded, and the account/private group removed. Final absence checks cover the
@@ -526,7 +532,19 @@ binary/unit/config/data/manifest/link/account, private 18080/7444 listeners, WEB
 integration and Telemt-owned firewall names. Manager program/launcher and backups
 are retained.
 
-Catchable INT/TERM/HUP and failures before commit restore files, Nginx, account
+DATA is the validated `/var/lib/telemt` mutable boundary. Unknown ordinary files
+and directories anywhere beneath it are accepted without name/count allowlists;
+manager-generated static anchors remain strict. The stopped walk rejects links,
+hardlinks, sockets, FIFOs, devices, mount crossings, unsafe ownership/modes and
+extended attributes. Every copied regular file is opened without following links,
+fd-identity checked and hashed. The complete stopped snapshot is rechecked before
+removal. Runtime outside DATA or future special object types need explicit review.
+
+Before deployment-file removal, rollback leaves runtime bytes untouched and
+restores prior service state. After removal starts, rollback restores the exact
+authoritative stopped tree: membership, bytes, modes and UID/GID, including files
+created/replaced/deleted before stop. Catchable INT/TERM/HUP and failures before
+commit restore files as applicable, Nginx, account
 identity and prior enabled state, and restart Telemt if it had been active.
 Rollback never claims to make a previously broken service healthy. If an identity
 was reused/changed or restoration fails, preserve the backup and perform manual

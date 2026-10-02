@@ -18,6 +18,7 @@ finish_fixture() {
         printf 'FAIL - uninstall fixture %s\n' "$scenario" >&2
     fi
     if [[ -n ${blocker:-} ]]; then kill "$blocker" 2>/dev/null || true; wait "$blocker" 2>/dev/null || true; fi
+    if [[ -n ${DATA:-} ]] && mountpoint -q "$DATA/state/offender"; then umount "$DATA/state/offender"; fi
     if [[ ${scenario:-} == mount && -d ${DATA:-} ]]; then umount "$DATA" || true; fi
     rm -rf -- "$sandbox"
     exit "$result"
@@ -40,6 +41,28 @@ export PATH="$sandbox/tools:$PATH"
 eval "$(declare -f uninstall_quiet | sed '1s/uninstall_quiet/real_uninstall_quiet/')"
 eval "$(declare -f uninstall_remove_files | sed '1s/uninstall_remove_files/real_uninstall_remove_files/')"
 eval "$(declare -f uninstall_remove_account | sed '1s/uninstall_remove_account/real_uninstall_remove_account/')"
+eval "$(declare -f backup_begin | sed '1s/backup_begin/real_backup_begin/')"
+eval "$(declare -f helper | sed '1s/helper/real_helper/')"
+runtime_fixture() { python3 "$ROOT/tests/uninstall_runtime_fixture.py" "$@"; }
+helper() {
+    if [[ ${variation:-} == metadata-fail && $1 == uninstall-backup ]]; then return 1; fi
+    real_helper "$@"
+}
+# A synchronous child runs after ownership validation and while service-active
+# is still set. Completion, rather than elapsed time, gates backup and stop.
+backup_begin() {
+    if [[ -f $TMP/uninstall-plan.json ]]; then
+        if [[ $scenario == runtime-churn* ]]; then
+            runtime_fixture churn "$DATA" "$TMP/uninstall-plan.json" "$case_dir/active" "$case_dir/barrier"
+        elif [[ ${variation:-} == drift-* ]]; then
+            [[ -f $case_dir/active ]]
+            printf '\n# deterministic concurrent static drift\n' >>"$drift_target"
+            runtime_fixture save "$DATA" "$case_dir/refusal-tree"
+        fi
+    fi
+    real_backup_begin
+    if [[ -f $TMP/uninstall-plan.json ]]; then printf '%s' "$BACKUP" >"$case_dir/last-backup"; fi
+}
 chown() {
     local owner=$1; shift
     case $owner in root:telemt) owner=0:424242;; telemt:telemt) owner=424242:424242;; esac
@@ -70,7 +93,26 @@ systemctl() {
         is-active) if [[ $* == *nginx* ]]; then return 0; else [[ -f $case_dir/active ]]; fi;;
         is-enabled) if [[ -f $case_dir/enabled ]]; then printf enabled; else printf disabled; return 1; fi;;
         enable) touch "$case_dir/enabled"; if [[ $* == *--now* ]]; then touch "$case_dir/active"; fi;;
-        disable) rm -f "$case_dir/enabled"; if [[ $* == *--now* ]]; then rm -f "$case_dir/active"; fi;;
+        disable)
+            rm -f "$case_dir/enabled"
+            if [[ $* == *--now* ]]; then
+                if [[ $scenario == runtime-* ]]; then runtime_fixture check-pre-backup "$DATA" "$BACKUP" || return 1; fi
+                if [[ ${variation:-} != active-after-stop ]]; then rm -f "$case_dir/active"; fi
+                if [[ ${variation:-} == stop-fail ]]; then return 1; fi
+                if [[ $scenario == runtime-churn* ]]; then
+                    runtime_fixture finalize "$DATA" || return 1
+                    runtime_fixture save "$DATA" "$case_dir/stopped-tree" || return 1
+                    files_snapshot | sort >"$case_dir/before-files" || return 1
+                elif [[ ${variation:-} == snapshot-fail ]]; then
+                    printf 'allocation fault' >"$BACKUP/objects-stopped"
+                elif [[ ${variation:-} == stopped-mount ]]; then
+                    mkdir "$DATA/state/offender"
+                    mount --bind "$case_dir/mount-source" "$DATA/state/offender" || return 1
+                elif [[ ${variation:-} == stopped-* ]]; then
+                    runtime_fixture unsafe "$DATA" "${variation#stopped-}" || return 1
+                fi
+                if [[ $scenario == runtime-refusals ]]; then runtime_fixture save "$DATA" "$case_dir/refusal-tree" || return 1; fi
+            fi;;
         start|restart) touch "$case_dir/active";;
     esac
 }
@@ -123,10 +165,12 @@ uninstall_quiet() {
     [[ $scenario != failure-A ]]
 }
 uninstall_remove_files() {
+    if [[ $scenario == runtime-* ]]; then touch "$case_dir/removal-called"; fi
     [[ $scenario != failure-B && $scenario != failure-legacy ]] || return 1
+    if [[ $scenario == runtime-churn* ]]; then runtime_fixture check-backup "$DATA" "$BACKUP" "$case_dir/stopped-tree" || return 1; fi
     real_uninstall_remove_files || return 1
     if [[ $scenario == signal ]]; then kill -TERM "$BASHPID"; fi
-    [[ $scenario != failure-C ]]
+    [[ $scenario != failure-C && $scenario != runtime-churn-rollback ]]
 }
 uninstall_remove_account() {
     real_uninstall_remove_account || return 1
@@ -137,8 +181,65 @@ files_snapshot() {
     command find "$CONFIG_DIR" "$DATA" "$STATE" "$NGINX_ROOT" -type f -exec sha256sum {} +; sha256sum "$BIN" "$UNIT" "$RENEW_HOOK"; }
 foreign_snapshot() { command find "$CERT_ROOT/archive/foreign.example.com" "$CERT_ROOT/live/foreign.example.com" "$CERT_ROOT/renewal/foreign.example.com.conf" "$CERT_ROOT/accounts" -type f -exec sha256sum {} + | sort; }
 cert_snapshot() { command find "$CERT_ROOT" -type f -exec sha256sum {} + | sort; }
+runtime_refusals() {
+    local result variation drift_target='' before_services backup
+    mkdir "$case_dir/mount-source"
+    for variation in metadata-fail stop-fail active-after-stop snapshot-fail \
+        drift-binary drift-config drift-unit drift-manifest drift-link drift-index drift-certificate drift-vhost drift-stream \
+        stopped-symlink stopped-hardlink stopped-fifo stopped-socket stopped-mount stopped-owner stopped-mode stopped-xattr stopped-char stopped-block; do
+        case $variation in
+            drift-binary) drift_target=$BIN;; drift-config) drift_target=$CONFIG;; drift-unit) drift_target=$UNIT;;
+            drift-manifest) drift_target=$STATE/manifest.json;; drift-link) drift_target=$STATE/web-link.txt;;
+            drift-index) drift_target=$DATA/public/index.html;; drift-certificate) drift_target=$STATE/certificate.json;;
+            drift-vhost) drift_target=$NGINX_ROOT/conf.d/telemt-web-manager.conf;;
+            drift-stream) drift_target=$NGINX_ROOT/stream-enabled/stream.conf;;
+        esac
+        if [[ $variation == drift-* ]]; then cp "$drift_target" "$case_dir/static-original"; fi
+        # Golden evidence includes the intentional concurrent edit. The manager
+        # must leave it intact, never silently restore an older pre-stop copy.
+        files_snapshot | sort >"$case_dir/refusal-files"
+        runtime_fixture save "$DATA" "$case_dir/refusal-tree"
+        nss_before=$(cat "$FIXTURE_ACCOUNTS/passwd" "$FIXTURE_ACCOUNTS/group")
+        before_services=$(wc -l <"$case_dir/services")
+        cp "$case_dir/reloads" "$case_dir/refusal-reloads"
+        mkdir -p "$TMP"; rm -f "$case_dir/removal-called" "$case_dir/last-backup"
+        set +e
+        (set -Eeuo pipefail; trap cleanup EXIT; take_lock; uninstall_manager) >"$case_dir/uninstall.log" 2>&1
+        result=$?; set -e
+        [[ $result != 0 && -f $BIN && -f $UNIT && -f $STATE/manifest.json && -f $STATE/web-link.txt ]]
+        [[ -f $case_dir/active && -f $case_dir/enabled && ! -e $case_dir/removal-called ]]
+        [[ $(cat "$FIXTURE_ACCOUNTS/passwd" "$FIXTURE_ACCOUNTS/group") == "$nss_before" ]]
+        cmp "$case_dir/before-cert" <(cert_snapshot)
+        cmp "$case_dir/refusal-reloads" "$case_dir/reloads"
+        if grep -qE 'CRITICAL:|Telemt uninstall succeeded' "$case_dir/uninstall.log"; then die 'Unexpected successful uninstall or failed rollback'; fi
+        runtime_fixture check "$DATA" "$case_dir/refusal-tree"
+        if [[ $variation == drift-* ]]; then
+            cp "$case_dir/static-original" "$case_dir/static-expected"
+            printf '\n# deterministic concurrent static drift\n' >>"$case_dir/static-expected"
+            cmp "$case_dir/static-expected" "$drift_target"
+            cat "$case_dir/static-original" >"$drift_target"
+            rm "$case_dir/static-original" "$case_dir/static-expected"
+        fi
+        if [[ $variation == stopped-* ]]; then
+            if [[ $variation == stopped-mount ]]; then umount "$DATA/state/offender"; rmdir "$DATA/state/offender"
+            else rm "$DATA/state/offender"; fi
+        fi
+        cmp "$case_dir/refusal-files" <(files_snapshot | sort)
+        if [[ $variation == metadata-fail || $variation == drift-* && $variation != drift-vhost && $variation != drift-stream ]]; then
+            if tail -n +"$((before_services+1))" "$case_dir/services" | grep -Eq '^(disable|stop|start|daemon-reload)'; then die 'Service mutated before durable metadata'; fi
+        else
+            tail -n +"$((before_services+1))" "$case_dir/services" | grep -q '^start telemt.service'
+        fi
+        backup=$(cat "$case_dir/last-backup")
+        if [[ $variation != metadata-fail && $variation != drift-* ]]; then
+            jq -e '.phase == "pre-stop" and .service.active == "active" and .service.enabled == "enabled" and (.removal_started != true)' "$backup/uninstall.json" >/dev/null
+        fi
+        printf 'ok - runtime %s refusal: no deletion; DATA/static/Nginx/account/certificate intact; prior service restored\n' "$variation"
+    done
+}
 for scenario in preserve-standalone preserve-webroot stopped expired delete delete-failure \
-    failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock; do
+    failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
+    runtime-churn runtime-churn-rollback runtime-refusals; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     export UNINSTALL_FIXTURE_ROOT=$case_dir FIXTURE_ACCOUNTS="$case_dir/accounts"
     BIN="$case_dir/bin/telemt" CONFIG_DIR="$case_dir/config" CONFIG="$CONFIG_DIR/telemt.toml"
@@ -163,6 +264,12 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     result=$?; set -e
     if (( result )); then cat "$case_dir/install.log"; exit 1; fi
     [[ -f $STATE/manifest.json && -f $STATE/certificate.json && $(cat "$case_dir/issuance") == issued ]]
+    if [[ $scenario == runtime-* ]]; then runtime_fixture seed "$DATA"; fi
+    if [[ $scenario == runtime-churn-rollback ]]; then
+        for object in "$BIN" "$CONFIG_DIR" "$UNIT" "$STATE" "$NGINX_ROOT"; do
+            runtime_fixture save "$object" "$case_dir/control-$(basename "$object").json"
+        done
+    fi
     if [[ $scenario == legacy-preserve || $scenario == failure-legacy ]]; then rm "$STATE/certificate.json"; fi
     # Preserve an unrelated lineage and Certbot account; never call an ACME server.
     create_lineage foreign.example.com standalone
@@ -183,6 +290,15 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     files_snapshot | sort >"$case_dir/before-files"
     cert_snapshot >"$case_dir/before-cert"
     foreign_snapshot >"$case_dir/before-foreign"
+    if [[ $scenario == runtime-refusals ]]; then
+        CONFIRM_UNINSTALL=1 DELETE_CERTIFICATE=0
+        runtime_refusals
+        [[ $("$case_dir/bin/telemt-web-manager" --help) == *'Telemt WEB Manager 0.1.2'* ]]
+        cmp "$ROOT/telemt-web-manager.sh" "$BASE_DIR/telemt-web-manager.sh"
+        cmp "$ROOT/lib/safety.py" "$HELPER"
+        rm -rf "$case_dir"
+        continue
+    fi
     case $scenario in
         failure-groupdel) export FIXTURE_GROUPDEL_FAIL=1;;
         mount) mount --bind "$DATA" "$DATA";;
@@ -219,6 +335,15 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     result=$?
     set -e
     case $scenario in
+        runtime-churn)
+            [[ $result == 0 && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $CONFIG_DIR && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
+            [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json ]]
+            [[ ! -e $case_dir/active && ! -e $case_dir/enabled ]]
+            grep -qx 'churn complete before stop' "$case_dir/barrier"
+            cmp "$case_dir/before-cert" <(cert_snapshot)
+            [[ $(cat "$case_dir/issuance") == issued ]]
+            helper acme-state "$NGINX_ROOT" "$DOMAIN" "$ACME_ROOT"
+            printf 'ok - deterministic ACTIVE runtime rewrite/create/atomic replace/nested create/delete; complete STOPPED backup incl final shutdown write; uninstall succeeds without retry/sleep\n';;
         preserve-*|legacy-preserve|stopped|expired)
             [[ $result == 0 && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json && -f $RENEW_HOOK ]]
@@ -248,12 +373,21 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
             fi
             cmp "$case_dir/before-foreign" <(foreign_snapshot)
             [[ $(cat "$CERT_ROOT/accounts/keep") == foreign ]];;
-        failure-*|signal)
+        failure-*|signal|runtime-churn-rollback)
             if [[ $scenario == signal ]]; then [[ $result == 143 ]]; fi
             [[ $result != 0 && -f $case_dir/active && -f $case_dir/enabled && -f $FIXTURE_ACCOUNTS/passwd && -f $FIXTURE_ACCOUNTS/group ]]
             cmp "$case_dir/before-files" <(files_snapshot | sort)
             cmp "$case_dir/before-cert" <(cert_snapshot)
             if grep -q CRITICAL "$case_dir/uninstall.log"; then cat "$case_dir/uninstall.log"; exit 1; fi
+            if [[ $scenario == runtime-churn-rollback ]]; then
+                [[ $(cat "$FIXTURE_ACCOUNTS/passwd" "$FIXTURE_ACCOUNTS/group") == "$nss_before" ]]
+                grep -qx 'churn complete before stop' "$case_dir/barrier"
+                runtime_fixture check "$DATA" "$case_dir/stopped-tree"
+                for object in "$BIN" "$CONFIG_DIR" "$UNIT" "$STATE" "$NGINX_ROOT"; do
+                    runtime_fixture check "$object" "$case_dir/control-$(basename "$object").json"
+                done
+                printf 'ok - authoritative STOPPED tree rollback: exact membership/bytes/modes/UID/GID incl create/replace/delete/final shutdown write\n'
+            fi
             printf 'ok - uninstall %s rollback restores exact files/Nginx/link/manifest/account/service state; certificate unchanged\n' "$scenario";;
         *)
             [[ $result != 0 && -e $BIN && -e $DATA && -e $FIXTURE_ACCOUNTS/passwd ]]
