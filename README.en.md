@@ -40,7 +40,7 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Manager 0.1.2 menu:
+Manager 0.1.3 menu:
 
 ```text
 1. Install
@@ -131,7 +131,7 @@ retained for manual review. Unmanaged Telemt replacement is outside this feature
 
 - **Ubuntu 24.04/26.04**, x86_64 or aarch64, systemd, Bash 5+, Python 3.11+.
   The installer also requires curl and CA certificates.
-- Supported Telemt: **3.5.11**. Install and update use only this reviewed release
+- Supported Telemt: **3.5.12**. Install and update use only this reviewed release
   with embedded official SHA256 values. Older managed installations must pass
   compatibility checks; newer installations are never downgraded.
   A future Telemt release requires a new reviewed manager version.
@@ -186,6 +186,20 @@ service stayed active/running with `NRestarts=0`. The warning
 `config reload: censorship settings changed; restart required` was observed with
 `errors=0`, passing checks and a working WEB proxy. This acceptance does not validate
 every configuration; the PR creates no release or tag.
+
+Separate live acceptance of manager 0.1.3 was completed by the owner on
+**Ubuntu 26.04.1 LTS x86_64** using the exact PR #6 files: normal
+`telemt-web-manager --update` successfully upgraded managed Telemt **3.5.11 → 3.5.12**.
+TOML and WEB link remained byte-identical; the unit, manifest, managed Nginx,
+Certbot renewal config and certificate (serial, fingerprint, public key) were unchanged.
+The service remained active/running with `NRestarts=0`, effective CAP_NET_ADMIN
+and a PID-owned listener; local/public Nginx/TLS/HTTP checks and final `--check` passed.
+The same WEB link worked from a real Telegram client. The single known WARN,
+`config reload: censorship settings changed; restart required`, accompanied
+`errors=0, warnings=1` and `Check result: OK`; it is the existing upstream warning,
+not a new regression or release blocker. This acceptance does not validate every
+configuration or architecture.
+Reinstall is not added in 0.1.3.
 
 ## Advanced / manual installation
 

@@ -30,11 +30,11 @@ jobs:
         run: bash tests/run.sh && bash tests/fresh.sh && bash tests/fresh-rollback.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh && bash tests/preflight.sh
       - name: Real fresh account and owned runtime-state rollback (temporary root-owned fixtures)
         run: sudo bash tests/fresh-account.sh
-      - name: Pinned Telemt 3.5.11 release provenance and real config healthcheck (no runtime)
+      - name: Pinned Telemt 3.5.12 release provenance and real config healthcheck (no runtime)
         run: bash tests/pinned.sh && bash tests/upstream.sh
-      - name: Pinned Telemt 3.5.11 staging healthcheck (service/path health mocked)
+      - name: Pinned Telemt 3.5.12 staging healthcheck (service/path health mocked)
         run: bash tests/staging.sh
-      - name: Real Telemt 3.5.11 runtime smoke in isolated network namespace (no systemd)
+      - name: Real Telemt 3.5.12 runtime smoke in isolated network namespace (no systemd)
         run: sudo env TELEMT_TEST_EVIDENCE_DIR="$TELEMT_TEST_EVIDENCE_DIR" bash tests/runtime.sh
       - name: Production pin equals real downloaded, staging, runtime and documented version
         run: bash tests/pinned.sh --versions

@@ -4,12 +4,12 @@ set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
-[[ $SUPPORTED_TELEMT_VERSION == 3.5.11 ]]
+[[ $SUPPORTED_TELEMT_VERSION == 3.5.12 ]]
 python3 - "$SUPPORTED_TELEMT_VERSION" <<'PY'
 from pathlib import Path
 import sys
 version = sys.argv[1]
-for name in ('README.md', 'README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-COVERAGE.md'):
+for name in ('README.md', 'README.en.md', 'README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-COVERAGE.md'):
     assert 'Supported Telemt: **' + version + '**' in Path(name).read_text(), name
 print('ok - production supported Telemt == documented supported Telemt == ' + version)
 PY
