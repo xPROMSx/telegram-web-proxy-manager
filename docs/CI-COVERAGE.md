@@ -80,12 +80,68 @@ The dependency step runs real conntrack under real systemd default PATH, not a
 Telemt service. Contract tests inspect generated TOML/unit text only. Nginx tests
 run actual Nginx/TLS/HTTP with a Python origin, not a running Telemt; ACME content
 serving there is real, issuance is not performed. SOCKS configuration syntax is
-checked by real Telemt healthcheck; actual SOCKS egress remains untested.
+checked by real Telemt healthcheck; actual SOCKS egress is not exercised by CI.
 
-CI does not prove complete end-to-end VPS behavior. Live acceptance must cover the
+CI does not prove complete end-to-end VPS behavior. Successful 0.1.2 live acceptance
+on Ubuntu 26.04.1 LTS x86_64 is recorded in the
+[primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation).
+Deployment-specific acceptance must cover the
 telemt UID and complete systemd sandbox, actual host netfilter coexistence, restart/
 repair and state persistence, real DNS/ACME renewal, public IPv4 TLS routing, real
 SOCKS/Telegram egress and native Telegram iOS/Desktop clients. CAP_NET_ADMIN remains
 broad network authority. Warnings can accompany operational degradation, so their
 counts deserve review even when objective readiness succeeds. Rollback cannot
 promise restoration of unrelated external changes or already-issued certificates.
+
+## Managed uninstall and certificate reuse (0.1.2)
+
+`tests/test_uninstall.py` adds read-only reverse-plan byte preservation, changed
+or shared stream/vhost refusals, source-hash rechecks, fd/no-follow tree
+backup/removal/restore, mount/link refusals and strict certificate-record parsing.
+Direct INT/TERM/HUP cleanup checks preserve signal exit codes after successful
+rollback and report rollback failures explicitly.
+`sudo bash tests/uninstall.sh` runs root-owned temporary fixtures with inert NSS,
+service/listener/firewall/issuance boundaries and an explicitly fixture-scoped
+ownership scanner. It executes install → uninstall keep certificate → fresh
+same-domain Install for standalone and webroot, asserting zero new issuance and
+unchanged lineage/key/renewal bytes. Certificate deletion uses the installed real
+Certbot CLI with private config/work/log directories and local self-signed
+lineages; it never issues against Let's Encrypt.
+
+The same suite checks stopped/near-expiry removal, exact-lineage delete and foreign
+lineage/account preservation, deletion failure without Telemt resurrection,
+rollback after stop/Nginx/file/account boundaries and a representative TERM,
+including legacy certificate-state migration and partial group deletion. A real
+process with the managed numeric UID proves refusal without killing that process.
+Missing/malformed/unknown manifest, changed vhost/map/unit/drop-in, unsafe link,
+ambiguous account, mismatched certificate state/lineage, shared UID files and lock
+contention refuse before mutation. A real same-device bind mount is rejected in a
+private mount namespace; the focused Python fixture also checks mount-table
+handling. Existing bootstrap signal stress, pin/provenance, real
+Telemt/nft/HTTP runtime, root account, renewal, topology and all other suites remain.
+
+These orchestration fixtures do not claim live systemd lifecycle, host firewall
+coexistence, public ACME issuance/renewal or Telegram client acceptance. The
+unchanged separate real runtime/Nginx tests cover their existing narrower
+contracts. Cloud root emulation cannot substitute for native root UID/GID checks;
+hosted Actions must run the new suite without skip/fallback/continue-on-error.
+
+The live-runtime race regressions use a synchronous Python child after completed
+ownership validation and before service stop. The child proves the service is
+still active, then rewrites/creates/deletes files, atomically replaces one and
+creates nested directories; its completion gates the transaction without sleeps
+or retries. Unknown safe DATA names, including an extra file below `public/`, are
+present before planning. A final shutdown write is added after stop. Successful
+uninstall verifies the complete `objects-stopped` backup independently; failure
+after removal verifies exact stopped-tree bytes/membership/modes/UID/GID, account,
+service, Nginx, manifest/link and unchanged certificate.
+
+Focused refusal cases cover pre-stop metadata failure, failed stop, still-active
+service, stopped-backup allocation failure, concurrent static/control/index/
+certificate/Nginx drift, and actual stopped-tree symlink, hardlink, FIFO, Unix
+socket, character/block device, same-device bind mount, unsafe owner/mode/xattr.
+They assert no deletion, unchanged runtime, prior service restoration and no
+successful-uninstall report. Python tests additionally prohibit pre-stop DATA
+enumeration, prove external ownership scans prune DATA, reject a pre-stop ledger
+as removal authority and refuse a write after the final stopped snapshot. These
+are filesystem/orchestration regressions, not a claim of VPS live acceptance.

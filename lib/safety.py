@@ -123,12 +123,15 @@ def fresh_init(path, *roots):
     require(len(roots) == 3 and len(set(roots)) == 3)
     for root in roots:
         safe_path(root)
-        require(Path(root).is_absolute() and not os.path.lexists(root))
+        require(Path(root).is_absolute())
+        if root == roots[2] and os.path.lexists(root): certificate_only_state(root)
+        else: require(not os.path.lexists(root))
     safe_path(path)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as output:
         json.dump(dict(schema=1, roots=list(roots), directories=[], account=None,
-                       pending_account=False, user_removed=False), output)
+                       pending_account=False, user_removed=False,
+                       preserved_state=os.path.lexists(roots[2])), output)
 
 
 def fresh_getent(database, key):
@@ -281,7 +284,9 @@ def fresh_cleanup_account(path, *roots):
     with fresh_signal_window():
         value = fresh_ledger(path)
         require(list(roots) == value['roots'] and not value['pending_account'])
-        require(all(not os.path.lexists(root) for root in roots))
+        require(all(not os.path.lexists(root) for root in roots[:2]))
+        if value.get("preserved_state"): certificate_only_state(roots[2])
+        else: require(not os.path.lexists(roots[2]))
         account = value['account']
         if account is None: return
         if not value['user_removed']:
@@ -624,7 +629,7 @@ def nginx_tokens(source):
     return tokens
 
 
-def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme"):
+def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False):
     domain(host)
     parser = Nginx(root)
     nodes = parser.read(Path(root) / "nginx.conf")
@@ -723,6 +728,30 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme")
         content = edits[mapping.path]
         edits[mapping.path] = content[:shifted] + "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n" + content[shifted:]
         edits[vhost] = render_vhost(host)
+    if uninstall:
+        require(len(existing) == len(owned) == 1 and vhost.exists())
+        require([n for n in entries if n.args[1] == "twm_frontend"] == existing,
+                "managed upstream shared by another route")
+        require(sum("twm_frontend" in n.args for n in walk(nodes)) == 2)
+        row, upstream = existing[0], owned[0]
+        ranges = {}
+        for node, literal in ((row, f"    {host} twm_frontend; # telemt-web-manager\n"),
+                              (upstream, "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n")):
+            source = parser.sources[node.path]
+            line_start = source.rfind("\n", 0, node.start) + 1
+            start = node.start - 4 if node == row else line_start
+            if node == row:
+                require(start >= line_start and not source[line_start:start].strip())
+            if node == upstream:
+                start -= len("\n# telemt-web-manager\n")
+            require(start >= 0 and source[start:start + len(literal)] == literal,
+                    "managed stream entry changed")
+            ranges.setdefault(node.path, []).append((start, start + len(literal)))
+        for path, spans in ranges.items():
+            content = parser.sources[path]
+            for start, end in sorted(spans, reverse=True): content = content[:start] + content[end:]
+            edits[path] = content
+        edits[vhost] = None
     snapshot = {str(p): hashlib.sha256(s.encode()).hexdigest() for p, s in parser.sources.items()}
     plan = {"snapshot": snapshot, "edits": [{"path": str(p), "content": s,
             "old": base64.b64encode(p.read_bytes()).decode() if p.exists() else None}
@@ -996,6 +1025,447 @@ def classify_journal(text):
     return classify_records(records)
 
 
+# Independent certificate ownership survives removal of the deployment manifest.
+def strict_json(path):
+    safe_path(path)
+    info = Path(path).lstat()
+    require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+    return json.loads(Path(path).read_text(), object_pairs_hook=journal_object,
+                      parse_constant=journal_constant)
+
+
+def certificate_record_value(host, cert_root, webroot, nginx_root):
+    certificate_paths(cert_root, host)
+    kind, params, mapping = renewal_info(cert_root, host)
+    if kind == 'webroot':
+        renewal_contract(cert_root, host, webroot)
+        acme_state(nginx_root, host, webroot)
+    else:
+        require(not params.get('webroot_path') and not mapping)
+    return dict(schema=1, domain=host, cert_name=host, renewal_kind=kind,
+                acme_webroot=str(webroot) if kind == 'webroot' else '')
+
+
+def certificate_record_check(state, host, cert_root, webroot, nginx_root):
+    state = Path(state)
+    safe_path(state)
+    require(state.is_dir() and stat.S_IMODE(state.stat().st_mode) == 0o700)
+    path = state / 'certificate.json'
+    require(stat.S_IMODE(path.lstat().st_mode) == 0o600)
+    value = strict_json(path)
+    require(type(value.get('schema')) is int and value ==
+            certificate_record_value(host, cert_root, webroot, nginx_root),
+            'certificate ownership record mismatch')
+    return value
+
+
+def certificate_record_stage(output, host, cert_root, webroot, nginx_root):
+    fresh_save(output, certificate_record_value(host, cert_root, webroot, nginx_root))
+
+
+def certificate_only_state(state):
+    state = Path(state)
+    safe_path(state)
+    require(state.is_dir() and stat.S_IMODE(state.stat().st_mode) == 0o700
+            and {p.name for p in state.iterdir()} == {'certificate.json'})
+    value = strict_json(state / 'certificate.json')
+    require(type(value.get('schema')) is int and value['schema'] == 1
+            and set(value) == {'schema', 'domain', 'cert_name', 'renewal_kind', 'acme_webroot'}
+            and value['domain'] == value['cert_name'] and value['renewal_kind'] in ('webroot', 'standalone')
+            and stat.S_IMODE((state / 'certificate.json').stat().st_mode) == 0o600)
+    domain(value['domain'])
+
+
+def no_managed_mounts(paths):
+    mounts = []
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        mounts.append(Path(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), line.split()[4])))
+    for root in map(Path, paths):
+        require(not any(m == root or m.is_relative_to(root) for m in mounts), 'managed mount requires review')
+
+
+def uninstall_account_files(account, roots):
+    # Inspect every non-virtual mounted filesystem without following links.
+    # An unexpected account-owned object outside the managed roots is not ours.
+    virtual = {'proc', 'sysfs', 'devtmpfs', 'devpts', 'tmpfs', 'cgroup', 'cgroup2',
+               'securityfs', 'debugfs', 'tracefs', 'pstore', 'mqueue', 'hugetlbfs', 'fusectl', 'configfs'}
+    mounts = {'/'}
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        before, after = line.split(' - ', 1)
+        mount = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), before.split()[4])
+        if after.split()[0] not in virtual and Path(mount).is_dir(): mounts.add(mount)
+    # /run and /tmp may also contain unexpected UID-owned objects.
+    mounts.update(p for p in ('/run', '/tmp') if Path(p).is_dir())
+    uid, gid = account['user'][2:4]
+    for mount in sorted(mounts):
+        # Never walk an active managed runtime tree just to inspect outsiders.
+        prune = []
+        for path in ['/proc', '/sys', '/dev', *map(str, roots)]:
+            if prune: prune.append('-o')
+            prune += ['-path', path]
+        result = subprocess.run(['find', mount, '-xdev', '(', *prune, ')', '-prune', '-o', '(', '-uid', uid,
+                                 '-o', '-gid', gid, ')', '-print0'], capture_output=True)
+        require(result.returncode == 0, 'account file ownership scan failed')
+        for raw in result.stdout.split(b'\0'):
+            if not raw: continue
+            path = Path(os.fsdecode(raw))
+            require(any(path == Path(root) or path.is_relative_to(root) for root in roots),
+                    'account owns unrelated files')
+
+
+def uninstall_safe_path(path, account):
+    for item in (Path(path), *Path(path).parents):
+        info = item.lstat()
+        require(not stat.S_ISLNK(info.st_mode) and info.st_uid in (0, os.geteuid(), int(account['user'][2]))
+                and (not info.st_mode & 0o022 or (stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_mode & stat.S_ISVTX)))
+
+
+def uninstall_objects(paths, account, recursive=True):
+    no_managed_mounts(paths)
+    records = []
+    uid, gid = map(int, account['user'][2:4])
+    def visit(path, device=None):
+        path = Path(path)
+        uninstall_safe_path(path.parent, account)
+        info = path.lstat()
+        require(not os.listxattr(path, follow_symlinks=False), 'extended attributes require manual review')
+        require(info.st_uid in (0, os.geteuid(), uid) and info.st_gid in (0, os.getegid(), gid)
+                and not info.st_mode & 0o022 and (device is None or info.st_dev == device))
+        require(stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1),
+                'unsupported managed object, symlink or hardlink')
+        record = dict(path=str(path), dev=info.st_dev, ino=info.st_ino, uid=info.st_uid,
+                      gid=info.st_gid, mode=stat.S_IMODE(info.st_mode), directory=stat.S_ISDIR(info.st_mode))
+        if record['directory']:
+            records.append(record)
+            if recursive:
+                for child in sorted(path.iterdir()): visit(child, info.st_dev)
+        else:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, 'rb') as source:
+                actual = os.fstat(source.fileno())
+                require(stat.S_ISREG(actual.st_mode) and actual.st_nlink == 1
+                        and (actual.st_dev, actual.st_ino, actual.st_uid, actual.st_gid, actual.st_mode)
+                        == (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode))
+                record['sha256'] = hashlib.sha256(source.read()).hexdigest()
+                after = os.fstat(source.fileno())
+                require((after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid, after.st_gid,
+                         after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        == (actual.st_dev, actual.st_ino, actual.st_mode, actual.st_nlink, actual.st_uid, actual.st_gid,
+                            actual.st_size, actual.st_mtime_ns, actual.st_ctime_ns),
+                        'file changed during snapshot')
+            records.append(record)
+    for path in paths: visit(path)
+    return records
+
+
+def uninstall_static_objects(paths, account):
+    """Controls plus stable DATA anchors, without enumerating runtime children."""
+    data = Path(paths[3])
+    records = uninstall_objects([p for p in paths if p != str(data)], account)
+    anchors = uninstall_objects([str(data), str(data / 'public'), str(data / 'public/index.html')],
+                                account, recursive=False)
+    for record, directory, mode in zip(anchors, (True, True, False), (0o750, 0o750, 0o440)):
+        require(record['directory'] == directory and record['uid'] in (0, os.geteuid())
+                and record['gid'] == int(account['user'][3]) and record['mode'] == mode,
+                'managed DATA anchor changed')
+    return records + anchors
+
+
+def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_root, webroot):
+    paths = [binary, str(Path(config).parent), unit, data, state]
+    require(len(set(paths)) == 5 and all(Path(p).is_absolute() and '..' not in Path(p).parts for p in paths))
+    require(not any(Path(a).is_relative_to(b) for a in paths for b in paths if a != b))
+    for path in paths: safe_path(path)
+    manifest = strict_json(Path(state) / 'manifest.json')
+    require(type(manifest.get('schema')) is int and manifest['schema'] == 1
+            and set(manifest) == {'schema', 'domain', 'public_ip', 'unit_sha256', 'nginx_sha256', 'acme_webroot'})
+    host = domain(manifest['domain'])
+    require(all(re.fullmatch('[0-9a-f]{64}', manifest[key]) for key in ('unit_sha256','nginx_sha256')))
+    vhost = Path(nginx_root) / 'conf.d/telemt-web-manager.conf'
+    for path, key in ((unit, 'unit_sha256'), (vhost, 'nginx_sha256')):
+        safe_path(path)
+        require(hashlib.sha256(Path(path).read_bytes()).hexdigest() == manifest[key])
+    for path in (binary, config, unit, Path(state,'manifest.json'), Path(state,'web-link.txt')):
+        require(Path(path).lstat().st_uid in (0, os.geteuid()), 'managed control-file owner changed')
+    require(stat.S_IMODE(Path(config).stat().st_mode) == 0o640)
+    c = read_config(config)
+    require(managed_web_contract(c, data)[0] == host)
+    require(c['general']['data_path'] == data)
+    require(managed_web_contract(c, data)[2] == manifest['public_ip'])
+    account = fresh_identity(data)
+    groups = subprocess.run(['getent','group'],capture_output=True,text=True)
+    require(groups.returncode == 0)
+    entries = [line.split(':') for line in groups.stdout.splitlines()]
+    require(all(len(entry) == 4 and 'telemt' not in entry[3].split(',') for entry in entries),
+            'supplementary group membership requires review')
+    value = certificate_record_value(host, cert_root, webroot, nginx_root)
+    require(manifest['acme_webroot'] == value['acme_webroot'])
+    if os.path.lexists(Path(state) / 'certificate.json'):
+        certificate_record_check(state, host, cert_root, webroot, nginx_root)
+    require({p.name for p in Path(state).iterdir()} <= {'manifest.json','web-link.txt','certificate.json'}
+            and {p.name for p in Path(config).parent.iterdir()} == {Path(config).name})
+    require(Path(state,'web-link.txt').read_text() ==
+            f"tg://webproxy?server={host}&secret=dd{c['access']['users']['web-user']}\n")
+    require(stat.S_IMODE(Path(state).stat().st_mode) == 0o700
+            and stat.S_IMODE(Path(state,'web-link.txt').stat().st_mode) == 0o600)
+    uninstall_account_files(account, [Path(config).parent, data])
+    fresh_save(output, dict(schema=1, phase='pre-stop', roots=paths, account=account, certificate=value,
+                            objects=uninstall_static_objects(paths, account)))
+
+
+def uninstall_backup(plan, backup, directory="objects"):
+    value = strict_json(plan)
+    backup = Path(backup)
+    safe_path(backup)
+    require(directory in ('objects','objects-stopped'))
+    require(value['phase'] == ('pre-stop' if directory == 'objects' else 'stopped'))
+    if directory == 'objects':
+        require(fresh_identity(value['roots'][3]) == value['account'])
+        require(uninstall_static_objects(value['roots'], value['account']) == value['objects'],
+                'static identity changed before stop')
+    objects = backup / directory
+    value['object_directory'] = directory
+    objects.mkdir(mode=0o700)
+    for index, record in enumerate(value['objects']):
+        if record['directory']: continue
+        fd = os.open(record['path'], os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                    and info.st_uid == record['uid'] and info.st_gid == record['gid']
+                    and stat.S_IMODE(info.st_mode) == record['mode']
+                    and (info.st_dev,info.st_ino) == (record['dev'],record['ino']))
+            content = source.read()
+            after = os.fstat(source.fileno())
+            require((after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid, after.st_gid,
+                     after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    == (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid, info.st_gid,
+                        info.st_size, info.st_mtime_ns, info.st_ctime_ns), 'file changed during backup')
+        require((info.st_dev,info.st_ino) == (record['dev'],record['ino'])
+                and hashlib.sha256(content).hexdigest() == record['sha256'])
+        destination = objects / str(index)
+        with destination.open('xb') as target:
+            os.fchmod(target.fileno(), 0o600)
+            target.write(content); target.flush(); os.fsync(target.fileno())
+    fresh_save(backup / 'uninstall.json', value)
+    if directory == 'objects': fresh_save(backup / 'initial-uninstall.json', value)
+    # Publish the ledger only with durable canonical backup files/context.
+    for path in [*backup.rglob('*'), backup]:
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if path.is_dir() else 0))
+        try: os.fsync(fd)
+        finally: os.close(fd)
+
+
+def uninstall_refresh(backup):
+    value = strict_json(Path(backup) / 'uninstall.json')
+    require(value['phase'] == 'pre-stop')
+    uninstall_quiet(backup)
+    actual = uninstall_objects(value['roots'], value['account'])
+    by_path = {r['path']: r for r in actual}
+    data, state = map(Path, value['roots'][3:])
+    for record in value['objects']:
+        require(by_path.get(record['path']) == record, 'managed identity changed before removal')
+    require(set(by_path) - {r['path'] for r in value['objects']} <=
+            {str(state / 'certificate.json')} | {r['path'] for r in actual if Path(r['path']).is_relative_to(data)})
+    if os.path.lexists(state / 'certificate.json'):
+        require(strict_json(state / 'certificate.json') == value['certificate'])
+    runtime = data / 'state'
+    require(runtime.is_dir() and runtime.stat().st_uid == int(value['account']['user'][2])
+            and runtime.stat().st_gid == int(value['account']['user'][3]))
+    value['objects'] = actual
+    value['phase'] = 'stopped'
+    plan = Path(backup) / 'stopped-plan.json'
+    fresh_save(plan, value)
+    uninstall_backup(plan, backup, 'objects-stopped')
+
+
+def uninstall_quiet(backup):
+    value = strict_json(Path(backup) / 'uninstall.json')
+    fresh_account_quiet(dict(pending_account=False, account=value['account'], roots=['',value['roots'][3], '']))
+    uninstall_account_files(value['account'], [Path(value['roots'][1]), value['roots'][3]])
+
+
+def uninstall_remove(backup):
+    value = strict_json(Path(backup) / 'uninstall.json')
+    require(value['phase'] == 'stopped' and value['object_directory'] == 'objects-stopped',
+            'complete stopped backup required before removal')
+    uninstall_quiet(backup)
+    binary, config, unit, data, state = value['roots']
+    # After quiescence every object must still match the authoritative backup.
+    require(uninstall_objects(value['roots'], value['account']) == value['objects'])
+    remove = {r['path']: r for r in value['objects'] if r['path'] == binary or r['path'] == unit
+              or Path(r['path']).is_relative_to(config) or Path(r['path']).is_relative_to(data)
+              or r['path'] in (str(Path(state,'manifest.json')),str(Path(state,'web-link.txt')))}
+    value['removal_started'] = True
+    fresh_save(Path(backup) / 'uninstall.json', value)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    for record in reversed(list(remove.values())):
+        path = Path(record['path'])
+        parent = os.open(path.parent, flags)
+        try:
+            info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            require((info.st_dev, info.st_ino) == (record['dev'],record['ino']))
+            if record['directory']: os.rmdir(path.name, dir_fd=parent)
+            else: os.unlink(path.name, dir_fd=parent)
+        finally: os.close(parent)
+
+
+def uninstall_account_remove(backup):
+    value = strict_json(Path(backup) / 'uninstall.json')
+    binary, config, unit, data, state = value['roots']
+    require(all(not os.path.lexists(p) for p in (binary,config,unit,data,Path(state,'manifest.json'),Path(state,'web-link.txt'))))
+    uninstall_quiet(backup)
+    account = value['account']
+    with fresh_signal_window():
+        subprocess.run(['userdel','telemt'], check=True)
+        require(fresh_getent('passwd','telemt') is None)
+        group = fresh_getent('group','telemt')
+        if group is not None:
+            require(group == account['group'])
+            subprocess.run(['groupdel','telemt'], check=True)
+        require(fresh_getent('group','telemt') is None)
+
+
+def uninstall_uid_quiet(account):
+    uid = int(account['user'][2])
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit(): continue
+        try: text = (process / 'status').read_text()
+        except (FileNotFoundError, ProcessLookupError): continue
+        match = re.search(r'^Uid:\s+([0-9 \t]+)$', text, re.M)
+        require(match is not None and uid not in map(int,match[1].split()), 'UID process prevents rollback')
+
+
+def uninstall_restore(backup):
+    value = strict_json(Path(backup) / 'uninstall.json')
+    account = value['account']; user, group = account['user'], account['group']
+    if not value.get('removal_started'):
+        require(fresh_identity(user[5]) == account)
+        return  # No deployment file was changed; never overwrite live runtime data.
+    uninstall_uid_quiet(account)
+    # Recreate only the exact free identity, never overwrite or modify an account.
+    with fresh_signal_window():
+        actual_group = fresh_getent('group','telemt')
+        actual_user = fresh_getent('passwd','telemt')
+        require(actual_group in (None,group) and actual_user in (None,user))
+        if actual_group is None:
+            require(fresh_getent('group',group[2]) is None)
+            subprocess.run(['groupadd','--system','--gid',group[2],'telemt'],check=True)
+        if actual_user is None:
+            require(fresh_getent('passwd',user[2]) is None
+                    and not any(p[3] == group[2] for p in fresh_passwd()))
+            subprocess.run(['useradd','--system','--uid',user[2],'--gid',group[2],
+                            '--home-dir',user[5],'--no-create-home','--shell',user[6],
+                            '--comment',user[4],'telemt'],check=True)
+        require(fresh_identity(user[5]) == account)
+    no_managed_mounts(value['roots'])
+    for index, record in enumerate(value['objects']):
+        path = Path(record['path'])
+        uninstall_safe_path(path.parent, account)
+        if os.path.lexists(path):
+            info = path.lstat()
+            require((info.st_dev,info.st_ino) == (record['dev'],record['ino'])
+                    and info.st_uid == record['uid'] and info.st_gid == record['gid']
+                    and stat.S_IMODE(info.st_mode) == record['mode']
+                    and (record['directory'] or info.st_nlink == 1), 'rollback destination changed')
+        if record['directory']:
+            if not path.exists(): path.mkdir(mode=record['mode'])
+        else:
+            source = Path(backup,value['object_directory'],str(index))
+            require(hashlib.sha256(source.read_bytes()).hexdigest() == record['sha256'])
+            # A missing target is created exclusively; a surviving original is
+            # verified and copied through a no-follow descriptor.
+            existed = path.exists()
+            flags = os.O_WRONLY | os.O_NOFOLLOW | (0 if existed else os.O_CREAT | os.O_EXCL)
+            fd = os.open(path, flags, record['mode'])
+            with os.fdopen(fd,'wb') as output:
+                actual = os.fstat(output.fileno())
+                require(stat.S_ISREG(actual.st_mode) and actual.st_nlink == 1
+                        and (not existed or (actual.st_dev,actual.st_ino) == (record['dev'],record['ino'])))
+                output.truncate(0); output.write(source.read_bytes()); output.flush(); os.fsync(output.fileno())
+        os.chown(path,record['uid'],record['gid'],follow_symlinks=False)
+        path.chmod(record['mode'])
+
+
+def planned_unlink(plan, path):
+    value = strict_json(plan)
+    require(any(e['path'] == path and e['content'] is None for e in value['edits']))
+    safe_path(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd,'rb') as source:
+        info = os.fstat(source.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                and hashlib.sha256(source.read()).hexdigest() == value['snapshot'][path])
+        require(Path(path).lstat().st_ino == info.st_ino)
+        os.unlink(path)
+
+
+def certificate_cleanup_plan(output, state, host, cert_root, webroot, nginx_root, hook):
+    value = certificate_record_check(state, host, cert_root, webroot, nginx_root)
+    require(hook == str(Path(cert_root) / 'renewal-hooks/deploy/telemt-web-manager'))
+    # Certbot delete follows these explicit lineage paths. No defaults/foreign
+    # targets are permitted for a destructive command.
+    text = (Path(cert_root) / 'renewal' / (host + '.conf')).read_text()
+    top = text.split('[renewalparams]')[0]
+    for key in ('cert','privkey','chain','fullchain'):
+        expected = str(Path(cert_root,'live',host,key+'.pem'))
+        require(re.search(r'^' + key + r'\s*=\s*' + re.escape(expected) + r'\s*$', top, re.M))
+        target = Path(expected); actual = target.resolve(strict=True)
+        require(actual.is_relative_to(Path(cert_root,'archive',host)))
+        safe_path(actual)
+    require(re.search(r'^archive_dir\s*=\s*' + re.escape(str(Path(cert_root,'archive',host))) + r'\s*$', top, re.M))
+    nginx_plan(nginx_root, host, output, webroot)
+    plan = strict_json(output)
+    require(len(plan['edits']) == 2)  # Core WEB integration has already gone.
+    paths = []
+    if value['renewal_kind'] == 'webroot':
+        root = Path(webroot)
+        require({p.name for p in root.iterdir()} == {'.telemt-web-manager','.well-known'}
+                and {p.name for p in (root / '.well-known').iterdir()} == {'acme-challenge'}
+                and not list((root / '.well-known/acme-challenge').iterdir()),
+                'ACME state is in use or changed')
+        paths += [webroot, str(Path(nginx_root,'conf.d/telemt-web-manager-acme.conf'))]
+    # This manager supports one owned lineage. Refuse explicit sharing of its
+    # lineage, webroot or hook by another renewal or Nginx configuration.
+    for path in Path(cert_root,'renewal').iterdir():
+        if path.name == host+'.conf': continue
+        safe_path(path)
+        text = path.read_text()
+        require(not any(token in text for token in (str(Path(cert_root,'live',host)), hook, str(webroot))))
+    parser = Nginx(nginx_root)
+    parser.read(Path(nginx_root,'nginx.conf'))
+    for text in parser.sources.values():
+        require(str(Path(cert_root,'live',host)) not in text
+                and f'/etc/letsencrypt/live/{host}/' not in text, 'lineage shared by another vhost')
+    paths.append(hook)
+    account = dict(user=['','','0','0'])
+    records = uninstall_objects(paths + [str(Path(state,'certificate.json'))], account)
+    fresh_save(output, dict(schema=1, objects=records, state=state, nginx_snapshot=plan['snapshot']))
+
+
+def certificate_cleanup_remove(plan):
+    value = strict_json(plan)
+    require(uninstall_objects([r['path'] for r in value['objects']
+                              if not any(Path(r['path']).is_relative_to(other['path'])
+                                         for other in value['objects'] if other != r and other['directory'])],
+                             dict(user=['','','0','0'])) == value['objects'])
+    for path, digest in value['nginx_snapshot'].items():
+        require(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest)
+    for record in reversed(value['objects']):
+        path = Path(record['path'])
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.stat(path.name,dir_fd=fd,follow_symlinks=False)
+            require((info.st_dev, info.st_ino) == (record['dev'],record['ino']))
+            if record['directory']: os.rmdir(path.name,dir_fd=fd)
+            else: os.unlink(path.name,dir_fd=fd)
+        finally: os.close(fd)
+    # Empty state directory only; never recursively remove manager state.
+    os.rmdir(value['state'])
+
+
 def main():
     command, *args = sys.argv[1:]
     if command == "semver":
@@ -1005,6 +1475,8 @@ def main():
         print(version_compare(*args))
     elif command == "nginx-plan":
         nginx_plan(*args)
+    elif command == "nginx-uninstall-plan":
+        nginx_plan(*args, uninstall=True)
     elif command == "acme-plan":
         acme_plan(*args)
     elif command == "port80-config":
@@ -1047,6 +1519,32 @@ def main():
         renewal_kind(*args)
     elif command == "acme-state":
         acme_state(*args)
+    elif command == "certificate-record-check":
+        certificate_record_check(*args)
+    elif command == "certificate-record-stage":
+        certificate_record_stage(*args)
+    elif command == "certificate-only-state":
+        certificate_only_state(*args)
+    elif command == "uninstall-plan":
+        uninstall_plan(*args)
+    elif command == "uninstall-backup":
+        uninstall_backup(*args)
+    elif command == "uninstall-refresh":
+        uninstall_refresh(*args)
+    elif command == "uninstall-quiet":
+        uninstall_quiet(*args)
+    elif command == "uninstall-remove":
+        uninstall_remove(*args)
+    elif command == "uninstall-account-remove":
+        uninstall_account_remove(*args)
+    elif command == "uninstall-restore":
+        uninstall_restore(*args)
+    elif command == "planned-unlink":
+        planned_unlink(*args)
+    elif command == "certificate-cleanup-plan":
+        certificate_cleanup_plan(*args)
+    elif command == "certificate-cleanup-remove":
+        certificate_cleanup_remove(*args)
     elif command == "classify":
         require(not args)
         return classify(sys.stdin.read())

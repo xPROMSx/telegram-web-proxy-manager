@@ -3,8 +3,8 @@
 Supported Telemt: **3.5.11**.
 
 The current release and source were verified through official GitHub metadata and
-actual downloads on 2 October 2026 (Europe/Moscow). Manager SCRIPT_VERSION remains
-0.1.1. The supported release is deliberately fixed; production never queries
+actual downloads on 2 October 2026 (Europe/Moscow). Manager SCRIPT_VERSION is
+0.1.2. The supported release is deliberately fixed; production never queries
 `releases/latest` to choose a Telemt candidate.
 
 | Provenance | Verified value |
@@ -114,8 +114,9 @@ maintenance process check, never a moving production download dependency.
 The following path/security inventory records the earlier 3.5.9 source review.
 It is historical source evidence, not the current download policy or a promise of
 future release compatibility. Current 3.5.11 healthcheck and runtime smoke add
-release-specific evidence; deployment under the complete systemd sandbox still
-requires VPS acceptance.
+release-specific evidence. Successful 0.1.2 VPS acceptance under systemd on Ubuntu
+26.04.1 LTS x86_64 is recorded in the [English README](../README.en.md#vps-validation);
+the historical source review and CI do not establish other deployment combinations.
 
 ## Runtime paths and systemd audit, full second review
 
@@ -178,8 +179,9 @@ Successful issuance is a separate committed transaction so renewal remains possi
 even if later Telemt setup fails. The Certbot renewal file's authenticator/path
 and optional per-domain map are checked, alongside the managed vhost/marker.
 No new scheduler is created; normal Certbot renewal and the validation/reload hook
-are used. Free port 80 retains standalone mode. Real ACME issuance/renewal and
-systemd runtime persistence remain live-acceptance tasks, not CI claims.
+are used. Free port 80 retains standalone mode. Real ACME issuance, renewal dry-run
+and Telemt restart were verified in the recorded 0.1.2 live acceptance, not by CI.
+That evidence does not establish power-loss/reboot persistence or every renewal mode.
 
 ## Additional security findings addressed
 

@@ -11,7 +11,7 @@ Adds a WEB proxy to shared HTTPS port 443 with direct Telegram egress or optiona
 - Deployment on top of [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro)
   infrastructure with a recognized Nginx `stream` / `ssl_preread` topology:
   existing routes, Xray configuration and 3x-ui settings/database are preserved.
-- Install, Update, Check and Repair through a menu or non-interactive commands.
+- Install, Update, Check, Repair and Uninstall Telemt through a menu or non-interactive commands.
 - HTTPS with Let's Encrypt/Certbot: HTTP-01 on free port 80 or through a managed Nginx webroot.
 - Official Telemt SHA256, configuration and health verification; rollback on install/update failure.
 - Hardened systemd service; existing TOML preserved during Telemt updates.
@@ -40,14 +40,15 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Current menu:
+Manager 0.1.2 menu:
 
 ```text
 1. Install
 2. Update
 3. Check
 4. Repair
-5. Exit
+5. Uninstall Telemt
+6. Exit
 ```
 
 | Function | Purpose |
@@ -56,11 +57,13 @@ Current menu:
 | Update | Update the **Telemt binary** to the supported version with validation and rollback on failure. Does not update the manager or TOML. |
 | Check | Verify managed files, versions, service, HTTP/TLS, SOCKS5 and certificate renewal without changing configuration or services. |
 | Repair | Restart verified Telemt and reload validated Nginx configuration. Does not reconstruct changed or damaged files. |
+| Uninstall Telemt | Transactionally remove only a proven manager-owned Telemt deployment and its WEB Nginx integration; retain the manager and preserve the certificate by default. |
 | Exit | Leave the menu. |
-| Uninstall Telemt (Remove) | **Upcoming / in development, absent from the current release and menu.** Planned removal of the managed Telemt deployment and its Nginx integration. Exact removal steps and boundaries will be documented upon release. |
 
-For now, removal is manual: see the [instructions](docs/OPERATIONS.md#manual-recovery-and-removal).
-Do not delete certificates or renewal state without checking dependent services.
+Interactive uninstall requires typing the exact word `UNINSTALL`, followed by a
+separate question: `Delete the Let's Encrypt certificate for DOMAIN too? [y/N]`.
+Any other primary confirmation cancels; certificate preservation is the default.
+[Transaction boundaries and recovery](docs/OPERATIONS.md#managed-uninstall).
 
 For a fresh installation, choose **Install** and provide your WEB domain, public IPv4
 and optional SOCKS5 address. DNS must contain exactly one A record matching that IPv4,
@@ -89,10 +92,40 @@ telemt-web-manager --install --domain proxy.example.com --public-ip 203.0.113.10
 telemt-web-manager --update
 telemt-web-manager --check
 telemt-web-manager --repair
+
+# Remove managed Telemt, preserving its certificate:
+telemt-web-manager --uninstall --confirm-uninstall
+# Additionally request explicit certificate deletion:
+telemt-web-manager --uninstall --confirm-uninstall --delete-certificate
 ```
 
 Review the ACME subscriber agreement before using `--agree-tos`. Unrelated Telemt
 installations and certificates are not automatically adopted.
+
+## Managed Telemt uninstall (0.1.2)
+
+Uninstall removes only a deployment proven manager-owned by its manifest, exact
+unit/Nginx/configuration contracts, safe paths and private account identity.
+Telemt does not need to be healthy. Missing or ambiguous ownership causes refusal;
+arbitrary manual Telemt is not removed or adopted.
+
+It removes the Telemt binary, unit, configuration/data, manifest, WEB link,
+account/group and exact WEB Nginx route/upstream/vhost. The manager in
+`/opt/telemt-web-manager` and its launcher remain, as do private backups in
+`/root/telemt-backups`. Unrelated Nginx routes and services are preserved.
+
+The default preserves the lineage, renewal configuration, independent root-only
+`/var/lib/telemt-web-manager/certificate.json` and required ACME webroot/vhost/deploy hook.
+A fresh same-domain Install validates ownership, key, hostname and renewal
+contracts and reuses the manager-owned certificate without a new ACME order.
+This avoids unnecessary issuance and rate-limit consumption. A foreign
+certificate is never adopted merely because its hostname matches.
+
+`--delete-certificate` requires `--uninstall --confirm-uninstall`. Certbot's
+supported interface deletes only the exact managed lineage after the core
+transaction commits. The Certbot account and other certificates remain. Failure
+of this separate phase does not reinstall Telemt; ownership/backup evidence is
+retained for manual review. Unmanaged Telemt replacement is outside this feature.
 
 ## Requirements and limitations
 
@@ -139,6 +172,20 @@ Certbot/Let's Encrypt and SOCKS5/Xray: installation, rollback/reinstallation,
 `--check`, Telemt restart, renewal dry-run, VPS reboot and a Telegram WEB proxy connection.
 This does not validate every topology or architecture. [CI coverage and its boundaries](docs/CI-COVERAGE.md)
 are documented separately; verify reachability and renewal on your own host.
+
+That history applies to v0.1.1. Live acceptance of 0.1.2 also completed successfully
+on **Ubuntu 26.04.1 LTS x86_64** with systemd, Nginx, Certbot/Let's Encrypt and
+SOCKS5/Xray. Transactional managed Uninstall and the runtime-race fix were verified:
+only static DATA anchors are saved before stop; mutable runtime is captured in the
+authoritative stopped snapshot. Certificates are preserved by default; the live
+scenario verified explicit deletion without changing unrelated lineages and fresh
+same-domain installation with a new real Let's Encrypt certificate. Successful
+checks included `certbot renew --dry-run`, `--check`, manual Telemt restart and a
+Telegram WEB proxy connection; the link remained unchanged across restart and the
+service stayed active/running with `NRestarts=0`. The warning
+`config reload: censorship settings changed; restart required` was observed with
+`errors=0`, passing checks and a working WEB proxy. This acceptance does not validate
+every configuration; the PR creates no release or tag.
 
 ## Advanced / manual installation
 

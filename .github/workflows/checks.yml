@@ -13,7 +13,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables nftables conntrack passwd iproute2 util-linux curl python3 openssl ca-certificates
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables nftables conntrack certbot passwd iproute2 util-linux curl python3 openssl ca-certificates
       - name: Telemt conntrack dependency and default systemd runtime PATH
         run: |
           command -v conntrack
@@ -40,6 +40,8 @@ jobs:
         run: bash tests/pinned.sh --versions
       - name: Manager bootstrap release selection, atomic pair update and rollback (temporary root-owned fixtures)
         run: sudo bash tests/bootstrap.sh
+      - name: Managed uninstall, certificate reuse/delete and transaction rollback (private local fixtures)
+        run: sudo bash tests/uninstall.sh
       - name: Pinned upgrade/newer-version refusal and rollback fixtures (synthetic binary/lifecycle)
         run: bash tests/versions.sh
       - name: Real nf_tables diagnostic in namespace (synthetic log bridge; no Telemt runtime)

@@ -39,7 +39,8 @@ nginx_runtime_identity() { return 0; }
 nginx_port_owned() { return 0; }
 managed_permissions() { return 0; } # Fixture runs as the CI user, not root.
 certificate_stage() {
-    [[ -f $SANDBOX/staged-validated && ! -e $DATA && ! -e $CONFIG_DIR && ! -e $UNIT && ! -e $STATE ]]
+    [[ -f $SANDBOX/staged-validated && ! -e $DATA && ! -e $CONFIG_DIR && ! -e $UNIT && ! -e $STATE/manifest.json ]]
+    if [[ -e $STATE ]]; then helper certificate-only-state "$STATE"; fi
     printf attempted >"$SANDBOX/certificate-attempt"
 }
 ensure_certificate() { certificate_stage; }
@@ -207,7 +208,8 @@ if [[ -n ${FIXTURE_FAILURE:-} ]]; then
     cmp -s "$SANDBOX/post-acme-assets" <(find "$CERT_ROOT" "$ACME_ROOT" -type f -exec sha256sum {} + | sort)
     case $FIXTURE_FAILURE in
         late|after-user|directories)
-            [[ ! -e $BIN && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $STATE && ! -e $UNIT && ! -e $RENEW_HOOK ]]
+            [[ ! -e $BIN && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt && ! -e $UNIT && ! -e $RENEW_HOOK ]]
+            helper certificate-only-state "$STATE"
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group ]]
             [[ ! -e $SANDBOX/service-enabled && ! -e $SANDBOX/service-running && ! -e $NGINX_ROOT/conf.d/telemt-web-manager.conf ]]
             cmp -s "$SANDBOX/post-acme-nginx" <(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
