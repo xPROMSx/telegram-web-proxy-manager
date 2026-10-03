@@ -177,3 +177,19 @@ print no link. CLI Install even on a PTY, and redirected menu Install, report on
 the saved private path. Menu provenance is checked separately. Captured PTY output
 stays in memory and is never copied into CI diagnostics. The existing noninteractive
 fresh-install redaction assertions remain and also forbid any `tg://` output.
+
+## Menu dependency setup follow-up (0.1.4)
+
+`test_dependencies.py` runs real main/menu/preflight dependency collection in PTYs
+with isolated command files, a mocked immutable platform and a mocked apt-get.
+It covers single confirmation, Y/y, decline/default, CLI even on TTY, redirected
+output, fixed package deduplication, mandatory executable recheck, apt update and
+install failures, unavailable apt, Nginx prerequisite refusal, Uninstall extras and
+post-install conntrack systemd PATH refusal. Platform/action PID equality proves
+continuation without a manager restart; no CI package set is changed by these tests.
+
+The native-root WEB-link fixture additionally exercises actual Ubuntu/architecture/
+init guards before apt and actual menu Show with conntrack, Nginx, Certbot and
+systemd tools absent. The original strict private-file/TTY/color tests remain.
+The owner clean Ubuntu finding is recorded in OPERATIONS; follow-up live acceptance
+is pending, and mocked apt fixtures do not claim real-server package installation.

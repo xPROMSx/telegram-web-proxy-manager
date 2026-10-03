@@ -29,7 +29,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/m
 ```
 
 The installer installs only the manager and launcher, then opens the menu
-in an interactive terminal. Install missing packages beforehand.
+in an interactive terminal. For a menu-selected action, the manager lists missing
+Ubuntu tools and their packages, then asks once:
+`Install missing packages now? [y/N]`. Only Y/y permits `apt-get update` and
+installation of the listed packages; after rechecking tools, the same action
+continues without restarting the manager. Declining prints an exact manual command.
+CLI actions never prompt for or run apt, even on a TTY.
+Supported Ubuntu/systemd and an existing Nginx with a supported topology remain
+prerequisites: the manager does not provision that environment automatically.
 Telemt is installed separately through Install in the menu.
 
 ## First run
@@ -162,7 +169,8 @@ retained for manual review. Unmanaged Telemt replacement is outside this feature
   are not automatically supported.
 - Enabled conntrack control requires `conntrack`, iptables/ip6tables/nft
   and `CAP_NET_ADMIN`. Before installation, `conntrack` is checked on
-  the root shell PATH and systemd's default PATH. The manager installs no packages.
+  the root shell PATH and systemd's default PATH. Only a menu-selected action with
+  Y/y confirmation can install missing allowlisted Ubuntu tool packages.
   `CAP_NET_ADMIN` grants the service broad network authority.
 - Unknown Nginx topology, changed managed files or incompatible configuration
   cause refusal. No automatic TOML migrations or firewall/UFW setup.
@@ -212,6 +220,11 @@ The same WEB link worked from a real Telegram client. The single known WARN,
 not a new regression or release blocker. This acceptance does not validate every
 configuration or architecture.
 Reinstall is not added in 0.1.3.
+
+While preparing 0.1.4 live acceptance, the owner installed the exact PR #7 candidate
+on clean Ubuntu 26.04.1 LTS. Menu Install safely stopped before mutation because
+`conntrack` was absent. The follow-up package-install offer still requires repeat
+live acceptance of this scenario.
 
 ## Advanced / manual installation
 

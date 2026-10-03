@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pty
 import secrets
+import shutil
 import select
 import signal
 import subprocess
@@ -121,6 +122,32 @@ main
         command = ['bash', '-c', code, 'fixture', str(state), str(config), str(lock)]
         env = dict(os.environ, TERM='xterm', PYTHONDONTWRITEBYTECODE='1')
         env.pop('NO_COLOR', None)
+        # Actual Show operation with only its three tools plus startup dirname/bash.
+        # No conntrack, Nginx, Certbot, systemd tooling or runtime health is available.
+        tools = root/'minimal-tools'; tools.mkdir()
+        for name in ('bash', 'dirname', 'python3', 'flock', 'stat'):
+            target = shutil.which(name)
+            require(target is not None, 'missing fixture tool: '+name)
+            (tools/name).symlink_to(target)
+        result, output = terminal(command, b'5\n', dict(env, PATH=str(tools)))
+        require(result == 0 and expected in output, 'Show link gained unrelated dependencies')
+        passed('actual Show link succeeds with conntrack/Nginx/Certbot/systemd tools absent')
+
+        # Native root runner: invoke the real platform guards with controlled facts.
+        # The apt function cannot mutate packages even if a guard regresses.
+        for reason, facts in [
+            ('Supported OS: Ubuntu', 'source() { ID=debian; VERSION_ID=12; }'),
+            ('Unsupported architecture', 'source() { ID=ubuntu; VERSION_ID=24.04; }; uname() { printf riscv64; }'),
+            ('active init system', 'read() { init=fixture-init; }'),
+        ]:
+            script = ('source "$1"; '+facts+'; MENU_ACTION=1; '
+                      'apt-get() { printf UNEXPECTED_APT; return 98; }; preflight --install')
+            process = subprocess.run(['bash', '-c', script, 'fixture', str(ROOT/'telemt-web-manager.sh')],
+                                     cwd=ROOT, capture_output=True, timeout=5)
+            captured = process.stdout+process.stderr
+            require(process.returncode != 0 and reason.encode() in captured
+                    and b'UNEXPECTED_APT' not in captured, 'immutable platform guard: '+reason)
+            passed('real platform guard before apt: '+reason)
         before = snapshot(root)
         for name, extra, colored in [('color', {}, True), ('NO_COLOR', {'NO_COLOR':'1'}, False),
                                      ('TERM=dumb', {'TERM':'dumb'}, False)]:
