@@ -187,9 +187,18 @@ service stayed active/running with `NRestarts=0`. The warning
 `errors=0`, passing checks and a working WEB proxy. This acceptance does not validate
 every configuration; the PR creates no release or tag.
 
-Manager 0.1.3 changes only the reviewed Telemt pin to 3.5.12; the live history
-above covers Telemt 3.5.11. The new pin still needs independent audit and owner-run
-live acceptance of normal Update, preserving TOML, WEB link and certificate.
+Separate live acceptance of manager 0.1.3 was completed by the owner on
+**Ubuntu 26.04.1 LTS x86_64** using the exact PR #6 files: normal
+`telemt-web-manager --update` successfully upgraded managed Telemt **3.5.11 → 3.5.12**.
+TOML and WEB link remained byte-identical; the unit, manifest, managed Nginx,
+Certbot renewal config and certificate (serial, fingerprint, public key) were unchanged.
+The service remained active/running with `NRestarts=0`, effective CAP_NET_ADMIN
+and a PID-owned listener; local/public Nginx/TLS/HTTP checks and final `--check` passed.
+The same WEB link worked from a real Telegram client. The single known WARN,
+`config reload: censorship settings changed; restart required`, accompanied
+`errors=0, warnings=1` and `Check result: OK`; it is the existing upstream warning,
+not a new regression or release blocker. This acceptance does not validate every
+configuration or architecture.
 Reinstall is not added in 0.1.3.
 
 ## Advanced / manual installation

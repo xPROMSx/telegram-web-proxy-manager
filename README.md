@@ -186,9 +186,17 @@ Certbot/Let's Encrypt и SOCKS5/Xray: установка, откат и повт
 наблюдалось при `errors=0`, успешных проверках и работающем WEB proxy.
 Эта приёмка не подтверждает все конфигурации; PR не создаёт релиз или тег.
 
-Менеджер 0.1.3 меняет только reviewed pin Telemt на 3.5.12; эта live-история
-относится к Telemt 3.5.11. Для нового pin ещё нужны независимый аудит и live-приёмка
-обычного Update владельцем: TOML, WEB-ссылка и сертификат должны сохраниться.
+Отдельная live-приёмка менеджера 0.1.3 завершена владельцем на
+**Ubuntu 26.04.1 LTS x86_64** с точными файлами PR #6: обычный
+`telemt-web-manager --update` успешно обновил управляемый Telemt **3.5.11 → 3.5.12**.
+TOML и WEB-ссылка сохранились побайтно; unit, manifest, managed Nginx, Certbot
+renewal config и сертификат (serial, fingerprint, публичный ключ) не изменились.
+Сервис active/running, `NRestarts=0`, CAP_NET_ADMIN и PID-owned listener сохранены;
+локальные/публичные Nginx/TLS/HTTP проверки и финальный `--check` успешны.
+Прежняя WEB-ссылка работает из реального Telegram-клиента. Единственный известный
+WARN — `config reload: censorship settings changed; restart required` — сопровождался
+`errors=0, warnings=1` и `Check result: OK`; это прежний upstream warning, не новая
+регрессия и не блокер релиза. Эта приёмка не подтверждает все конфигурации/архитектуры.
 Reinstall в 0.1.3 не добавлен.
 
 ## Расширенная / ручная установка

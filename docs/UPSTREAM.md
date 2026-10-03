@@ -55,8 +55,16 @@ real digest-verified 3.5.12 candidate against existing TOML; its 3.5.11 source
 binary and service lifecycle remain synthetic.
 
 The historical live acceptance below covers 0.1.1/0.1.2 with Telemt 3.5.11.
-Manager 0.1.3 / Telemt 3.5.12 still requires independent audit and owner-operated
-live Update acceptance; CI does not establish a real Telegram connection.
+Separate owner-run live acceptance used exact PR #6 manager 0.1.3 files from
+`ef66c09e5a9ddda5c1aa448db909940cfff3e766` on Ubuntu 26.04.1 LTS x86_64.
+Normal `telemt-web-manager --update` successfully upgraded managed 3.5.11 to 3.5.12;
+TOML/WEB link remained byte-identical, and unit, manifest, managed Nginx, Certbot
+renewal config and certificate serial/fingerprint/public key were unchanged.
+The service remained active/running with `NRestarts=0`; final `--check` returned
+OK and the same WEB link worked from a real Telegram client. Current-invocation
+logs contained the single known `config reload: censorship settings changed; restart required` WARN with `errors=0, warnings=1` and passing objective checks,
+not a new regression or release blocker. This owner-provided evidence is separate
+from CI, which does not establish a real Telegram connection or all deployments.
 
 ## Historical 3.5.11 conntrack recovery and retained severity policy
 

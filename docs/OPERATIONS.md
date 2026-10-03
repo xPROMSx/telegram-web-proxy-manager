@@ -307,14 +307,17 @@ stream/PROXY/TLS and canonical X-Forwarded-For. Fixtures do not replace live acc
 Successful 0.1.2 acceptance on Ubuntu 26.04.1 LTS x86_64 is recorded in the
 [primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation);
 it does not establish arm64 or all Telegram client/topology combinations.
-That live history covers Telemt 3.5.11. After independent review, the owner must
-accept manager 0.1.3 / Telemt 3.5.12 on an existing managed 3.5.11 deployment:
-record binary version, TOML hash, WEB link, certificate identity and service
-PID/NRestarts; install exact reviewed manager/helper bytes, run normal Update,
-then verify exact 3.5.12, unchanged TOML/link/certificate, active service,
-PID-owned listener, `--check`, current-invocation logs and a real Telegram WEB
-connection. This pin update alone does not require a reboot. No Reinstall
-operation is introduced.
+That history covers Telemt 3.5.11. Separate owner-run live acceptance of the exact
+PR #6 manager 0.1.3 files completed on Ubuntu 26.04.1 LTS x86_64: normal
+`telemt-web-manager --update` upgraded managed 3.5.11 to 3.5.12 with exit code 0.
+TOML and WEB link were byte-identical; unit, manifest, managed Nginx, Certbot renewal
+config and certificate serial/fingerprint/public key were unchanged. The service
+remained active/running with `NRestarts=0`, effective CAP_NET_ADMIN and a PID-owned
+listener. Local/public Nginx/TLS/HTTP checks and final `--check` passed; the same
+WEB link worked from a real Telegram client. Current-invocation logs reported
+`errors=0, warnings=1`: the single known `config reload: censorship settings changed; restart required` WARN accompanied `Check result: OK`, not a new regression or
+release blocker. This pin update alone does not require a reboot. No Reinstall
+operation is introduced; this acceptance does not establish all deployment combinations.
 
 Both 3x-ui-pro scripts are downloaded at the pinned commit, Git blob hashes checked,
 and Nginx heredocs rendered with inert values. Installer/patcher are never executed.

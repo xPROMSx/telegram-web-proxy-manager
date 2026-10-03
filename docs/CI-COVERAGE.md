@@ -90,8 +90,14 @@ checked by real Telemt healthcheck; actual SOCKS egress is not exercised by CI.
 CI does not prove complete end-to-end VPS behavior. Successful 0.1.2 live acceptance
 on Ubuntu 26.04.1 LTS x86_64 is recorded in the
 [primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation).
-That acceptance used Telemt 3.5.11; manager 0.1.3 / Telemt 3.5.12 still needs
-independent audit and owner-operated live Update acceptance.
+That acceptance used Telemt 3.5.11. Separate owner-run live acceptance of manager
+0.1.3 on Ubuntu 26.04.1 LTS x86_64 completed normal managed Update 3.5.11 → 3.5.12:
+byte-identical TOML/WEB link and unchanged unit, manifest, managed Nginx, certificate
+identity and renewal config; active service with `NRestarts=0`, final `--check` OK
+and the same WEB link working from a real Telegram client. The single known
+censorship/restart WARN accompanied `errors=0, warnings=1` and passing objective
+checks; it is not a new regression or blocker. This is owner-provided live
+evidence, separate from CI and its narrower contracts above.
 Deployment-specific acceptance must cover the
 telemt UID and complete systemd sandbox, actual host netfilter coexistence, restart/
 repair and state persistence, real DNS/ACME renewal, public IPv4 TLS routing, real
