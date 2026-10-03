@@ -40,7 +40,7 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Manager 0.1.2 menu:
+Manager 0.1.3 menu:
 
 ```text
 1. Install
@@ -131,7 +131,7 @@ retained for manual review. Unmanaged Telemt replacement is outside this feature
 
 - **Ubuntu 24.04/26.04**, x86_64 or aarch64, systemd, Bash 5+, Python 3.11+.
   The installer also requires curl and CA certificates.
-- Supported Telemt: **3.5.11**. Install and update use only this reviewed release
+- Supported Telemt: **3.5.12**. Install and update use only this reviewed release
   with embedded official SHA256 values. Older managed installations must pass
   compatibility checks; newer installations are never downgraded.
   A future Telemt release requires a new reviewed manager version.
@@ -186,6 +186,11 @@ service stayed active/running with `NRestarts=0`. The warning
 `config reload: censorship settings changed; restart required` was observed with
 `errors=0`, passing checks and a working WEB proxy. This acceptance does not validate
 every configuration; the PR creates no release or tag.
+
+Manager 0.1.3 changes only the reviewed Telemt pin to 3.5.12; the live history
+above covers Telemt 3.5.11. The new pin still needs independent audit and owner-run
+live acceptance of normal Update, preserving TOML, WEB link and certificate.
+Reinstall is not added in 0.1.3.
 
 ## Advanced / manual installation
 

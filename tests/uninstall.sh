@@ -124,10 +124,10 @@ recent_logs() { return 0; }
 download_candidate() {
     CANDIDATE="$TMP/candidate" RELEASE=$SUPPORTED_TELEMT_VERSION
     # Keep production's version and strict supplied-config probe assertions.
-    cat >"$CANDIDATE" <<'EOF'
-#!/bin/sh
+    printf '#!/bin/sh\nversion=%s\n' "$SUPPORTED_TELEMT_VERSION" >"$CANDIDATE"
+    cat >>"$CANDIDATE" <<'EOF'
 case $1 in
- --version) printf 'telemt 3.5.11\n';;
+ --version) printf 'telemt %s\n' "$version";;
  healthcheck) ! grep -q '^__telemt_web_manager_unknown_contract' "$2";;
  *) exit 1;;
 esac
@@ -293,7 +293,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     if [[ $scenario == runtime-refusals ]]; then
         CONFIRM_UNINSTALL=1 DELETE_CERTIFICATE=0
         runtime_refusals
-        [[ $("$case_dir/bin/telemt-web-manager" --help) == *'Telemt WEB Manager 0.1.2'* ]]
+        [[ $("$case_dir/bin/telemt-web-manager" --help) == *"Telemt WEB Manager $SCRIPT_VERSION"* ]]
         cmp "$ROOT/telemt-web-manager.sh" "$BASE_DIR/telemt-web-manager.sh"
         cmp "$ROOT/lib/safety.py" "$HELPER"
         rm -rf "$case_dir"
@@ -401,7 +401,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     if [[ -n $blocker ]]; then kill -0 "$blocker"; kill "$blocker"; wait "$blocker" || true; blocker=''; fi
     unset FIXTURE_GROUPDEL_FAIL
     if [[ $scenario == mount ]]; then umount "$DATA"; fi
-    [[ $("$case_dir/bin/telemt-web-manager" --help) == *'Telemt WEB Manager 0.1.2'* ]]
+    [[ $("$case_dir/bin/telemt-web-manager" --help) == *"Telemt WEB Manager $SCRIPT_VERSION"* ]]
     cmp "$ROOT/telemt-web-manager.sh" "$BASE_DIR/telemt-web-manager.sh"
     cmp "$ROOT/lib/safety.py" "$HELPER"
     # This fixture uses inert NSS, so discard its remaining files between cases.

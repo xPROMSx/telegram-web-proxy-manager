@@ -1,24 +1,26 @@
 # Upstream audit
 
-Supported Telemt: **3.5.11**.
+Supported Telemt: **3.5.12**.
 
 The current release and source were verified through official GitHub metadata and
-actual downloads on 2 October 2026 (Europe/Moscow). Manager SCRIPT_VERSION is
-0.1.2. The supported release is deliberately fixed; production never queries
+actual downloads on 3 October 2026 (UTC). Manager SCRIPT_VERSION is
+0.1.3. The supported release is deliberately fixed; production never queries
 `releases/latest` to choose a Telemt candidate.
 
 | Provenance | Verified value |
 | --- | --- |
-| Release | [3.5.11](https://github.com/telemt/telemt/releases/tag/3.5.11), stable, not draft |
-| Tag/source commit | `94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d` |
-| x86_64 archive SHA256 | `529e1821bae1d01150347c2bb4c6a555432fcdc10aa454bacb78438e5875f8bf` |
-| aarch64 archive SHA256 | `937fd952720200fd7a4f092241110b84619cf8058a7c7411fa1040c106a4b65d` |
+| Release | [3.5.12](https://github.com/telemt/telemt/releases/tag/3.5.12), stable, not draft/prerelease |
+| Tag/source commit | `c4555e25f39dd5be200ccf6353f7d82bfcf89131` |
+| Signed annotated tag object | `3faef0f16619ba33bfc6e1afb3b2d14c824bdd44`; GitHub `verified=true`, `reason=valid` |
+| x86_64 archive SHA256 | `92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3` |
+| aarch64 archive SHA256 | `16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3` |
 
 Both architecture assets were downloaded and hashed independently. Production
-constructs the exact official `releases/download/3.5.11/telemt-ARCH-linux-gnu.tar.gz`
+constructs the exact official `releases/download/3.5.12/telemt-ARCH-linux-gnu.tar.gz`
 URL, compares its hash with the embedded pin before extraction/execution, retains
 strict archive validation, and verifies the binary's exact version. No x86_64-v3
-asset is selected. These are GitHub integrity checks, not independent signatures.
+asset is selected. Tag verification reports GitHub's result, not independent
+signing-key authentication; asset digests are integrity checks, not signatures.
 `tests/pinned.sh` compares official release/tag metadata and both asset hashes;
 CI mechanically compares the production pin, docs, real downloaded binary, staging
 healthcheck binary and runtime binary. A changed asset fails closed.
@@ -28,14 +30,43 @@ without a latest query. Update keeps equal-version health checks, upgrades older
 compatible manager-owned installations to the pin and refuses newer versions before
 download. A future upstream release needs a newer reviewed manager.
 
-## Conntrack recovery and severity
+## Reviewed 3.5.11 -> 3.5.12 compatibility
+
+The [exact immutable diff](https://github.com/telemt/telemt/compare/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d...c4555e25f39dd5be200ccf6353f7d82bfcf89131)
+contains nine commits and 49 changed files, including configurable WEB carrier
+method, autonomous ME recovery after Direct fallback, ME NAT discovery cancellation
+and conntrack startup/admission changes.
+
+| Upstream change | Existing manager contract |
+| --- | --- |
+| `inline_conntrack_control` defaults to false; FirewallAuthority starts only when explicitly enabled with CAP_NET_ADMIN | Generated TOML already sets `inline_conntrack_control = true`, `mode = "tracked"`; the new default does not change it. The existing capability/helper and reconciliation/shutdown checks remain required. |
+| New `web.carrier_method`, default `Post` / HTTP POST | The manager leaves the field absent; POST preserves the previous WEB behavior. No new option is needed. |
+| Generated upstream unit adds AF_NETLINK | The manager unit already allows AF_INET, AF_INET6, AF_UNIX and AF_NETLINK with CAP_NET_ADMIN only. No unit change is needed. |
+| ME recovery and NAT cancellation | Managed `use_middle_proxy = false` remains unchanged; direct and SOCKS5 configuration healthchecks still apply. |
+
+Production changes are limited to manager version and reviewed release constants.
+Generated TOML/unit, candidate compatibility, runtime paths, WEB profile, direct/
+SOCKS upstream and severity classification are unchanged. Real 3.5.12 config and
+staging healthchecks and the isolated runtime smoke exercise these contracts.
+Update fixtures accept a managed 3.5.11 source, preserve TOML bytes, restore the
+old binary after candidate/runtime rejection, handle equal versions and refuse
+newer or same-precedence non-exact builds. An additional Update fixture uses the
+real digest-verified 3.5.12 candidate against existing TOML; its 3.5.11 source
+binary and service lifecycle remain synthetic.
+
+The historical live acceptance below covers 0.1.1/0.1.2 with Telemt 3.5.11.
+Manager 0.1.3 / Telemt 3.5.12 still requires independent audit and owner-operated
+live Update acceptance; CI does not establish a real Telegram connection.
+
+## Historical 3.5.11 conntrack recovery and retained severity policy
 
 The immutable [firewall model](https://github.com/telemt/telemt/blob/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d/src/conntrack_control/firewall/model.rs)
 maps tracked/disabled policy to Empty. The [actor](https://github.com/telemt/telemt/blob/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d/src/conntrack_control/firewall/actor.rs)
 starts from Unknown. [Transaction recovery](https://github.com/telemt/telemt/blob/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d/src/conntrack_control/firewall/transaction.rs)
 cleans nft and iptables state even for Empty policy. Setting inline control false
-does not reliably avoid cleanup in this release. The [command parser](https://github.com/telemt/telemt/blob/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d/src/conntrack_control/firewall/command.rs)
-now classifies the exact missing-owned-chain diagnostic as NotFound for bounded
+does not reliably avoid cleanup in 3.5.11; 3.5.12 changes admission as described
+above. The [3.5.11 command parser](https://github.com/telemt/telemt/blob/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d/src/conntrack_control/firewall/command.rs)
+classifies the exact missing-owned-chain diagnostic as NotFound for bounded
 raw-table cleanup/check commands. [PR #939](https://github.com/telemt/telemt/pull/939)
 fixes the observed `Chain 'TELEMT_NOTRACK' does not exist` recovery failure.
 
@@ -48,8 +79,8 @@ failed, marked apply_ok=false and retried at 1/2/4/8/16/30 seconds, capped at 30
 A serving listener was insufficient evidence of settled background reconciliation.
 The old green 3.5.10 smoke ran after 3.5.11 was already published at 23:11 Moscow
 on 1 October 2026. Its missing-chain WARN/retries are historical degraded evidence.
-The new annotated 3.5.11 tag is GitHub verified=true, reason=valid and resolves to
-the exact commit above. This reports GitHub verification, not independent signing
+The historical annotated 3.5.11 tag is GitHub verified=true, reason=valid and resolves to
+`94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d`. This reports GitHub verification, not independent signing
 key verification.
 
 Generated policy stays inline enabled, tracked. `nft`, `iptables`, `ip6tables`,
@@ -67,7 +98,7 @@ fail closed. Trusted PID1/systemd lifecycle records are separated by journald
 metadata. The unlevelled `MAESTRO: ` startup banner is recognized by its framing,
 never by link/user payload and never printed. No version/OS/backend inputs exist.
 
-Upstream [logging](https://github.com/telemt/telemt/blob/94f4f7d5401a28afb6e6f4a7d66d6f56259c6c5d/src/logging.rs)
+Upstream [logging](https://github.com/telemt/telemt/blob/c4555e25f39dd5be200ccf6353f7d82bfcf89131/src/logging.rs)
 uses the tracing fmt default stdout writer for the destination named stderr;
 the MAESTRO banner actually uses stderr. The runtime smoke captures both streams,
 as journald does, and unsets inherited Cloud RUST_LOG so generated normal logging
@@ -88,7 +119,7 @@ new downloaded release. These labels and future-version acceptance fixtures have
 been corrected. Healthcheck with API disabled loads config; it does not prove a
 running listener. [Complete CI truth table](CI-COVERAGE.md).
 
-The new smoke runs the verified 3.5.11 process in a new Linux network namespace with
+The smoke runs the verified 3.5.12 process in a new Linux network namespace with
 real helpers and CAP_NET_ADMIN; verifies PID-owned socket and actual HTTP 200/index,
 proves owned chains absent before startup and rechecks listener/HTTP after a
 measured >=10-second readiness dwell (covering the old 1/2/4-second retries).
@@ -113,7 +144,7 @@ maintenance process check, never a moving production download dependency.
 
 The following path/security inventory records the earlier 3.5.9 source review.
 It is historical source evidence, not the current download policy or a promise of
-future release compatibility. Current 3.5.11 healthcheck and runtime smoke add
+future release compatibility. Current 3.5.12 healthcheck and runtime smoke add
 release-specific evidence. Successful 0.1.2 VPS acceptance under systemd on Ubuntu
 26.04.1 LTS x86_64 is recorded in the [English README](../README.en.md#vps-validation);
 the historical source review and CI do not establish other deployment combinations.

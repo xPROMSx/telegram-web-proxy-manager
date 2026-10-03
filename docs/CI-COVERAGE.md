@@ -1,6 +1,6 @@
 # CI coverage truth table
 
-Supported Telemt: **3.5.11**. This inventory describes `.github/workflows/checks.yml`.
+Supported Telemt: **3.5.12**. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means
 both occur in the named step. Static unit/config text inspection is not a running
 systemd service or a real process capability test. Real filesystem ownership here
@@ -15,7 +15,7 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | Download integrity | R/M | — | — | — | R | — | — |
 | Bootstrap SemVer / preflight | — | — | — | — | R | — | — |
 | Fresh account rollback (sudo) | — | — | — | R | R | — | — |
-| Pin provenance / upstream | R | — | — | — | R | — | — |
+| Pin provenance / upstream | R/M | M (Update fixture only) | M (Update fixture only) | M | R | M | M |
 | Pinned staging | R | M | M | M | R | M | M |
 | Real pinned runtime (sudo/unshare) | R | R | — | — | R | R | R |
 | Pin evidence equality | — | — | — | — | — | — | — |
@@ -38,7 +38,7 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | Download integrity | — | — | — | — | — | — | — |
 | Bootstrap SemVer / preflight | — | — | — | — | — | — | — |
 | Fresh account rollback (sudo) | — | — | — | — | — | — | — |
-| Pin provenance / upstream | — | — | — | — | — | — | — |
+| Pin provenance / upstream | M (Update fixture only) | — | — | — | — | M (Update fixture only) | M (Update fixture only) |
 | Pinned staging | M | M | M | M | M | M (config real) | R (mock journal transport) |
 | Real pinned runtime (sudo/unshare) | R | R | — | — | — | — | R (actual streams + injected fatal negatives) |
 | Pin evidence equality | — | — | — | — | — | — | — |
@@ -56,6 +56,11 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 binary's version/healthcheck CLI, not a server. Healthcheck with API disabled is
 configuration validation. `REAL_CANDIDATE` in fresh means that same boundary only;
 readiness, service lifecycle, path health and journal source remain fixtures.
+`upstream.sh` also runs the Update regression with its real digest-verified 3.5.12
+candidate and a synthetic managed 3.5.11 source. It checks the existing TOML with
+the actual candidate, upgrades the binary and asserts byte-identical TOML;
+service/readiness, ownership and journal boundaries remain mocked. The separate
+synthetic suite retains equal/custom/newer refusals and candidate/runtime rollback.
 
 The runtime step has no mocked helpers, process, socket, HTTP or capability result.
 It starts the actual official digest-verified pin with production-generated config
@@ -66,7 +71,7 @@ dwell with a second actual listener/HTTP check, and absence of pinned conntrack
 reconciliation/retry/shutdown failure fragments. Clean exit and nft/IPv4/IPv6
 inspection follow. These absence assertions are upstream runtime contracts, not
 production WARN exceptions. The seven 3.5.10 WARNs remain historical classifier
-regressions, not healthy 3.5.11 runtime expectations. Fatal injection tests the
+regressions, not healthy 3.5.12 runtime expectations. Fatal injection tests the
 production classifier on captured output; it does not inject a runtime service
 crash. The smoke runs as root in the disposable Actions namespace, not as the
 production telemt account under the full systemd sandbox. It never proves systemd
@@ -85,6 +90,8 @@ checked by real Telemt healthcheck; actual SOCKS egress is not exercised by CI.
 CI does not prove complete end-to-end VPS behavior. Successful 0.1.2 live acceptance
 on Ubuntu 26.04.1 LTS x86_64 is recorded in the
 [primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation).
+That acceptance used Telemt 3.5.11; manager 0.1.3 / Telemt 3.5.12 still needs
+independent audit and owner-operated live Update acceptance.
 Deployment-specific acceptance must cover the
 telemt UID and complete systemd sandbox, actual host netfilter coexistence, restart/
 repair and state persistence, real DNS/ACME renewal, public IPv4 TLS routing, real

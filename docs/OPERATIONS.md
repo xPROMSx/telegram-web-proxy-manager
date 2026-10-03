@@ -5,7 +5,7 @@
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
 
-Supported Telemt: **3.5.11**. See [upstream provenance](UPSTREAM.md) and the
+Supported Telemt: **3.5.12**. See [upstream provenance](UPSTREAM.md) and the
 [REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
 
 ## Nginx requirements
@@ -172,11 +172,16 @@ verified candidate runs `healthcheck` on the **current config** before backup,
 atomic binary replacement and restart. TOML stays byte-for-byte unchanged; binary
 updates do not modify Nginx, cert or unit. There are no automatic TOML migrations.
 Validation failure stops the update. The only download target is the reviewed
-3.5.11 pin, with embedded official asset hashes. Older compatible managed installs
+3.5.12 pin, with embedded official asset hashes. Older compatible managed installs
 can upgrade to it; newer installs refuse before download and require manual review
 or a newer reviewed manager. Equal SemVer precedence with a different exact version
 (such as an unreviewed build suffix) also refuses. Future releases require an explicit
 manager change.
+Manager 0.1.3 pins Telemt 3.5.12 without changing generated TOML or the unit.
+Its new upstream inline-control default is overridden by our explicit `true`;
+WEB carrier method still defaults to POST, and AF_NETLINK is already allowed.
+CI exercises 3.5.11 -> 3.5.12 Update with byte-identical TOML, including the real
+candidate healthcheck (source binary and service lifecycle are fixture-only).
 Candidates must pass managed WEB/write-path validation and strict-parser probes;
 systemd enforces the writable boundary, and runtime failures trigger rollback. Older manager configs with quota outside
 `state` require manual review; updates do not add strict mode or rewrite paths.
@@ -217,7 +222,7 @@ manager-owned webroot certificate state without unnecessary issuance.
 systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/TLS,
 expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
 lines are not printed. Root is required; private temporary diagnostics are deleted.
-Version reporting is local: manager, installed Telemt and supported Telemt 3.5.11.
+Version reporting is local: manager, installed Telemt and supported Telemt 3.5.12.
 A mismatch reports unsupported status and returns nonzero; no latest-release query
 is made. WARN records only contribute a diagnostic count. ERROR/FATAL and genuine
 Rust panic records fail; malformed journal transport or unsafe controls fail closed.
@@ -243,7 +248,7 @@ and foreign units/drop-ins need manual review.
 protections, restricted address families/realtime/SUID/namespaces, W^X and personality.
 Limits: 65536 descriptors, 4096 tasks, MemoryMax=1G. Review VPS capacity/workload;
 external unit edits require review. CAP_NET_ADMIN remains for upstream conntrack
-cleanup even in tracked mode. Telemt 3.5.11 requires `conntrack` on its PATH;
+cleanup even in tracked mode. Telemt 3.5.12 requires `conntrack` on its PATH;
 Ubuntu provides it in the `conntrack` package. Preflight checks it and the account
 creation/deletion tools (`getent`, `useradd`, `userdel`, `groupdel`) before temporary
 transaction setup, downloads or ACME. `systemd-path search-binaries-default`
@@ -302,6 +307,14 @@ stream/PROXY/TLS and canonical X-Forwarded-For. Fixtures do not replace live acc
 Successful 0.1.2 acceptance on Ubuntu 26.04.1 LTS x86_64 is recorded in the
 [primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation);
 it does not establish arm64 or all Telegram client/topology combinations.
+That live history covers Telemt 3.5.11. After independent review, the owner must
+accept manager 0.1.3 / Telemt 3.5.12 on an existing managed 3.5.11 deployment:
+record binary version, TOML hash, WEB link, certificate identity and service
+PID/NRestarts; install exact reviewed manager/helper bytes, run normal Update,
+then verify exact 3.5.12, unchanged TOML/link/certificate, active service,
+PID-owned listener, `--check`, current-invocation logs and a real Telegram WEB
+connection. This pin update alone does not require a reboot. No Reinstall
+operation is introduced.
 
 Both 3x-ui-pro scripts are downloaded at the pinned commit, Git blob hashes checked,
 and Nginx heredocs rendered with inert values. Installer/patcher are never executed.
@@ -375,7 +388,7 @@ and rollback policy is unchanged.
 
 The v0.1.0 coverage gap was the combination of a real binary and fresh ordering:
 `upstream.sh` pre-created DATA/public/index.html, while `fresh.sh` mocked healthcheck.
-`staging.sh` now verifies the official pinned 3.5.11 digest and runs the actual
+`staging.sh` now verifies the official pinned 3.5.12 digest and runs the actual
 binary through fresh orchestration in direct and SOCKS modes. It proves the old
 absent-directory state and a missing index fail, usable staging succeeds, strict
 unknown keys fail, final paths never contain staging, config semantics match,
@@ -383,7 +396,7 @@ and incompatible/missing-decoy candidates never reach even the mocked Certbot
 boundary. OS/account/systemd/ACME actions remain fixtures; this is not live issuance.
 
 Updates validate the installed runtime/configuration and compare it with the fixed
-3.5.11 target. Equal versions keep the health checks; older compatible managed
+3.5.12 target. Equal versions keep the health checks; older compatible managed
 installs upgrade, while newer ones refuse without downloading or modifying files.
 Failures restore the old binary; config, unit, certificate and Nginx are not migrated.
 No compatibility promise is made for future releases. The real runtime smoke
@@ -424,7 +437,7 @@ The bootstrap script itself is fetched from main in the quick command; review it
 or download it before execution if desired. The program pair is never installed
 from mutable main. To test an unpublished PR/commit, use the advanced/manual
 installation workflow with its reviewed immutable checkout.
-The manager's release channel is independent from the fixed Telemt 3.5.11 pin.
+The manager's release channel is independent from the fixed Telemt 3.5.12 pin.
 
 Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
 Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then
