@@ -40,15 +40,16 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Manager 0.1.3 menu:
+Manager 0.1.4 menu:
 
 ```text
 1. Install
 2. Update
 3. Check
 4. Repair
-5. Uninstall Telemt
-6. Exit
+5. Show current WEB link
+6. Uninstall Telemt
+7. Exit
 ```
 
 | Function | Purpose |
@@ -57,6 +58,7 @@ Manager 0.1.3 menu:
 | Update | Update the **Telemt binary** to the supported version with validation and rollback on failure. Does not update the manager or TOML. |
 | Check | Verify managed files, versions, service, HTTP/TLS, SOCKS5 and certificate renewal without changing configuration or services. |
 | Repair | Restart verified Telemt and reload validated Nginx configuration. Does not reconstruct changed or damaged files. |
+| Show current WEB link | Display the existing manager-owned WEB link only in an interactive terminal; no repair or file changes. |
 | Uninstall Telemt | Transactionally remove only a proven manager-owned Telemt deployment and its WEB Nginx integration; retain the manager and preserve the certificate by default. |
 | Exit | Leave the menu. |
 
@@ -70,9 +72,19 @@ and optional SOCKS5 address. DNS must contain exactly one A record matching that
 with no CNAME or AAAA. Ports `127.0.0.1:7444` and `127.0.0.1:18080` must be free.
 New certificate issuance requires an ACME email and agreement consent.
 
-The Telegram link is saved in `/var/lib/telemt-web-manager/web-link.txt` with mode
-0600. Telemt also logs links to journald. The link, config, journals and backups
-contain secrets; do not publish them.
+The manager saves the Telegram WEB link in
+`/var/lib/telemt-web-manager/web-link.txt` (root, 0600). It is a bearer secret:
+anyone holding it can connect; do not publish it, config, journals or backups.
+**5. Show current WEB link** validates the manifest, file permissions and the
+link's domain/secret against TOML, then displays the existing link. It needs
+neither a running service nor a valid certificate, and does not repair or
+regenerate anything. Failure does not disclose the secret.
+
+After a successful fresh Install selected through the menu, the same display
+appears only after commit. Both stdin and stdout must be TTYs;
+CLI `--install`, unattended execution and redirected output report only the
+private file path. A nonempty `NO_COLOR` or `TERM=dumb` disables terminal colors.
+There is no separate CLI command to print the secret.
 
 To update **the manager itself**, close previously opened menus and rerun the
 quick installation command. The existing Telemt deployment is preserved.

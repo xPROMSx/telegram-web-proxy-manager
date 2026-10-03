@@ -282,6 +282,7 @@ shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
 bash tests/fresh-rollback.sh # late journal failure, ACME preservation/retry, partial failures
+sudo python3 tests/web_link_fixture.py # Root-owned private link, real PTY; mocked Install lifecycle
 sudo bash tests/fresh-account.sh # disposable runner only: real account/runtime cleanup
 bash tests/preflight.sh # Missing conntrack/account tools before transaction dispatch
 bash tests/download.sh   # Real pinned download; mocked bad-digest/URL/version negatives
@@ -513,10 +514,37 @@ to the installed Nginx and verify `nginx -t`. The manager checks dependencies.
 Bootstrap options: `--version v0.1.1` selects a published release; `--no-start`
 suppresses the menu. See [manager bootstrap](#manager-bootstrap).
 
+## Current WEB link (manager 0.1.4)
+
+```text
+1. Install
+2. Update
+3. Check
+4. Repair
+5. Show current WEB link
+6. Uninstall Telemt
+7. Exit
+```
+
+Item 5 uses a shared manager lock and reads the existing private
+`/var/lib/telemt-web-manager/web-link.txt` (root, 0600). It validates safe paths,
+root ownership/modes, the schema-1 manifest and the exact single-line URL against
+the managed TOML domain and web-user secret. It does not require service or
+certificate health, mutate state, regenerate a secret or repair a missing link.
+Unsafe/missing/mismatched state fails without printing credentials.
+
+The link is a bearer secret; store it privately. Both input and output must be
+interactive terminals. The same presentation follows a committed fresh Install
+selected from the menu, never a CLI `--install` or failed/rolled-back Install.
+Redirected/unattended Install reports the saved path only. Colors require stdout
+TTY and are disabled by nonempty `NO_COLOR` or `TERM=dumb`. No public CLI prints
+the secret. Config, journals and backups also require secret-safe handling.
+
 ## Managed uninstall
 
-Manager 0.1.2 adds `--uninstall --confirm-uninstall` and menu item 5, followed by
-Exit as item 6. The interactive confirmation is the exact word `UNINSTALL`;
+Managed uninstall was introduced in 0.1.2 as `--uninstall --confirm-uninstall`.
+In the current 0.1.4 menu, Uninstall is item 6 and Exit is item 7.
+The interactive confirmation is the exact word `UNINSTALL`;
 only then is certificate deletion offered with default N. `--delete-certificate`
 requires both uninstall and explicit confirmation. This removes Telemt, not the
 manager, and does not adopt or replace manual/unmanaged installations.
