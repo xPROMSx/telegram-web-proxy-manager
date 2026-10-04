@@ -7,14 +7,26 @@ import json
 import os
 from pathlib import Path
 import sys
+import urllib.parse
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('provenance_safety',ROOT/'lib/safety.py')
 s=importlib.util.module_from_spec(spec); sys.modules[spec.name]=s; spec.loader.exec_module(s)
 EXPECT={'x86_64':'92021ad31520302bfbfe4a13b49adc9d129ec48a08699f81515e9c55668be9fa',
         'aarch64':'9aec3a87e730c6dc0d1baaffcdde3dde9bada1e892c6b96195c0740919f3de52'}
+class ActionsHTTP(s.UpdateHTTP):
+    @staticmethod
+    def open(request):
+        token=os.environ.get('TELEMT_TEST_GITHUB_TOKEN')
+        if token and urllib.parse.urlsplit(request.full_url).hostname=='api.github.com':
+            # Initial API request only: urllib never copies unredirected headers
+            # into a redirect. Downloads and candidate execution receive no token.
+            request.add_unredirected_header('Authorization','Bearer '+token)
+        return s.UpdateHTTP.open(request)
+
+
 root=Path(sys.argv[1]); root.mkdir(mode=0o700,parents=True,exist_ok=True)
-policy=s.UpdateReleases(); inventory=policy.latest()
+policy=s.UpdateReleases(ActionsHTTP()); inventory=policy.latest()
 print('Official stable inventory (double full pagination): '+inventory['version'],flush=True)
 raw=policy.http.api('/releases/402625235'); record=s.UpdateReleases.release(raw)|{'version':'3.5.13'}
 for arch,digest in EXPECT.items():
