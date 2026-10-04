@@ -15,7 +15,7 @@ cp -r "${1:-tests/fixtures/nginx}" "$test_dir/nginx"
 # Mandatory package bytes, copied inside the same include trust boundary.
 cp /etc/nginx/mime.types "$test_dir/nginx/mime.types"
 sed -i 's/http {/http { include mime.types;/' "$test_dir/nginx/nginx.conf"
-mkdir -p "$test_dir/nginx/conf.d" "$test_dir/logs"
+mkdir -p "$test_dir/nginx/conf.d" "$test_dir/logs" "$test_dir/temp"
 mkdir -p "$test_dir/acme/.well-known/acme-challenge"
 printf challenge-fixture >"$test_dir/acme/.well-known/acme-challenge/probe"
 python3 lib/safety.py acme-plan "$test_dir/nginx" proxy.example.com "$test_dir/acme-plan.json" "$test_dir/acme"
@@ -55,9 +55,11 @@ for p in (t/'nginx').rglob('*'):
     text = re.sub(r'(ssl_certificate_key\s+)[^;]+;', lambda m: m[1] + str(t/'key.pem') + ';', text)
     p.write_text(text)
 p = t/'nginx/nginx.conf'
+temporary_paths = ''.join(f'{kind}_temp_path {t}/temp/{kind};\n' for kind in
+                         ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))
 p.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'
              + f'pid {t}/nginx.pid;\nerror_log {t}/logs/error.log;\n'
-             + p.read_text().replace('http {', f'http {{\naccess_log {t}/logs/access.log;'))
+             + p.read_text().replace('http {', f'http {{\n{temporary_paths}access_log {t}/logs/access.log;'))
 PY
 /usr/sbin/nginx -t -p "$test_dir/" -c "$test_dir/nginx/nginx.conf"
 python3 "$root/tests/origin.py" >"$test_dir/origin.log" 2>&1 &

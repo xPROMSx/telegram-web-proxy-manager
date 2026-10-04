@@ -34,6 +34,10 @@ ln -sf /dev/null etc/systemd/system/systemd-networkd-wait-online.service
 ln -s ../twm-universal-tests.service etc/systemd/system/multi-user.target.wants/twm-universal-tests.service
 rm -f etc/machine-id
 mkdir -p "/work/boot-$family"
+# Docker creates guest artifacts as root; let the host runner unlink its own
+# private VM disk after validation without sudo or permissive directory modes.
+chmod 0700 "/work/boot-$family"
+chown --reference=/work "/work/boot-$family"
 cp boot/vmlinuz-*-generic "/work/boot-$family/vmlinuz"
 cp boot/initrd.img-*-generic "/work/boot-$family/initrd.img"
 truncate -s 6G "/work/boot-$family/disk.img"

@@ -72,7 +72,7 @@ class BootstrapBarrier(unittest.TestCase):
         # terminal record. The bootstrap checks semantics without importing or
         # executing either downloaded member of the manager pair.
         for defect in ('signature','asset-url','asset-size','tag-target','release-time',
-                       'service-state','supervisor','immutable','intent','binary','data-marker','extra-dropin'):
+                       'service-state','supervisor','immutable','immutable-count','intent','binary','data-marker','extra-dropin'):
             with self.subTest(defect=defect):
                 f=self.fixture(); receipt=dict(f.old); journal=s.UpdateJournal(f.layout).read()
                 if defect=='signature': receipt['tag_verification']=receipt['tag_verification']|{'verified':False}
@@ -83,6 +83,7 @@ class BootstrapBarrier(unittest.TestCase):
                 elif defect=='service-state': journal['service']='foreign-active'
                 elif defect=='supervisor': journal['supervisor']['pid']=-1
                 elif defect=='immutable': journal['immutable']={'config':'not-a-digest'}
+                elif defect=='immutable-count': journal['immutable']={f'fixture-{i}':'a'*64 for i in range(257)}
                 elif defect=='intent': journal['intent']='unknown-operation'
                 elif defect=='binary': s.update_write(f.layout.binary,b'foreign executable',0o755)
                 elif defect=='data-marker': s.update_write_json(f.layout.data/'.telemt-web-manager-generation.json',dict(schema=1,generation_id='f'*32))
@@ -92,7 +93,7 @@ class BootstrapBarrier(unittest.TestCase):
                     # must come from the independent static semantic barrier.
                     s.update_write_json(f.layout.receipt,receipt)
                     s.update_write_json(f.layout.generation,s.update_generation_value(receipt))
-                elif defect in ('service-state','supervisor','immutable','intent'):
+                elif defect in ('service-state','supervisor','immutable','immutable-count','intent'):
                     s.update_write_json(f.layout.journal,journal)
                 self.invoke(f)
     def test_schema_mismatch_and_changed_gate_require_manual_review(self):

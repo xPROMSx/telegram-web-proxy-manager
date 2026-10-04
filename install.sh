@@ -335,7 +335,7 @@ def recovery_journal(value):
     recovery_valid(type(supervisor['pid']) is int and supervisor['pid']>0 and
         isinstance(supervisor['starttime'],str) and re.fullmatch('[0-9]{1,24}',supervisor['starttime']) and
         isinstance(supervisor['boot_id'],str) and re.fullmatch('[0-9a-f-]{36}',supervisor['boot_id']))
-    recovery_valid(type(value['immutable']) is dict and len(value['immutable'])<=1000)
+    recovery_valid(type(value['immutable']) is dict and len(value['immutable'])<=256)
     for key,digest in value['immutable'].items():
         recovery_valid(isinstance(key,str) and 0<len(key)<=512 and all(32<=ord(c)<127 for c in key)); recovery_hex(digest,64)
     for key in ('old','new'):
