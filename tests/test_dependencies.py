@@ -13,7 +13,7 @@ from test_safety import ROOT
 # Independent inventory of the production commands; existing platform is mocked.
 TOOLS = ('curl tar openssl jq dig certbot flock ss sha256sum timeout iptables ip6tables '
          'nft conntrack getent useradd userdel groupdel awk grep sed cmp cat chmod chown cp cut '
-         'date dirname id install mktemp mv readlink rm sleep stat tr uname '
+         'date dirname id install mktemp mv readlink rm sleep stat tr uname wc '
          'groupadd find iptables-save ip6tables-save nginx systemctl systemd-path journalctl').split()
 MANUAL = 'apt-get update && apt-get install -y --no-install-recommends'
 
@@ -113,6 +113,47 @@ main "$@"
         result,_,trace=self.run_action(answer=b'1\nY\n')
         self.assertEqual(result,0); self.assertIn('action install ',trace)
 
+    def test_wc_inventory_covers_normal_actions_only(self):
+        code='''source "$1"
+printf '%s\\n' "${TOOL_PACKAGES[wc]}"
+for action in --install --update --check --repair --uninstall; do
+    commands=$(dependency_commands "$action")
+    [[ $'\\n'"$commands"$'\\n' == *$'\\nwc\\n'* ]] || exit 1
+done
+dependency_commands show-web-link
+'''
+        result=subprocess.run(['/bin/bash','-c',code,'fixture',str(ROOT/'telemt-web-manager.sh')],
+                              env=self.env,capture_output=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr.decode())
+        self.assertEqual(result.stdout,b'coreutils\npython3\nflock\nstat\n')
+
+    def test_menu_missing_wc_offers_coreutils_and_continues(self):
+        result,text,trace=self.run_action(missing=('wc',))
+        self.assertEqual(result,0)
+        self.assertIn('wc -> package: coreutils',text)
+        self.assertEqual(text.count('Install missing packages now? [y/N]'),1)
+        self.assertIn('apt install -y --no-install-recommends coreutils frontend=noninteractive',trace)
+        self.assertTrue((self.tools/'wc').exists())
+        self.assertIn('action install ',trace)
+
+    def test_missing_wc_and_sleep_deduplicate_coreutils(self):
+        result,text,trace=self.run_action(missing=('wc','sleep'))
+        self.assertEqual(result,0)
+        for tool in ('wc','sleep'):
+            self.assertIn(tool+' -> package: coreutils',text)
+        self.assertIn('Packages to install: coreutils\n',text)
+        installs=[line for line in trace.splitlines() if line.startswith('apt install ')]
+        self.assertEqual(installs,['apt install -y --no-install-recommends coreutils frontend=noninteractive'])
+        self.assertIn('action install ',trace)
+
+    def test_cli_missing_wc_never_prompt_or_install(self):
+        result,text,trace=self.run_action(missing=('wc',),answer=b'',args=('--install',))
+        self.refused(result,trace)
+        self.assertIn('wc -> package: coreutils',text)
+        self.assertIn(MANUAL+' coreutils',text)
+        self.assertNotIn('Install missing packages now?',text)
+        self.assertNotIn('apt ',trace)
+
     def test_decline_default_and_non_yes_never_install(self):
         for answer in (b'N',b'',b'yes'):
             with self.subTest(answer=answer):
@@ -189,8 +230,9 @@ main "$@"
     def test_systemd_path_still_required_after_install(self):
         result,text,trace=self.run_action(FIXTURE_RUNTIME_PATH='/missing-fixture-runtime-path')
         self.refused(result,trace)
-        self.assertIn('apt install',trace)
-        self.assertIn('conntrack unavailable on the systemd runtime PATH',text)
+        self.assertEqual(trace.count('apt update '),1)
+        self.assertEqual(trace.count('apt install '),1)
+        self.assertIn("conntrack is installed but is not available on systemd's default executable PATH; check: systemd-path search-binaries-default",text)
         self.assertNotIn('Dependencies installed successfully',text)
 
     def test_uninstall_extra_tools_are_collected_before_mutation(self):
@@ -207,7 +249,7 @@ main "$@"
         self.assertNotIn('apt ',trace); self.assertNotIn('Install missing packages now?',text)
 
     def test_show_link_dependency_group_requires_no_conntrack_or_nginx(self):
-        for tool in ('conntrack','certbot','nginx','ss','nft'): (self.tools/tool).unlink()
+        for tool in ('conntrack','certbot','nginx','ss','nft','wc'): (self.tools/tool).unlink()
         code='source "$1"; check_dependencies show-web-link'
         result=subprocess.run(['/bin/bash','-c',code,'fixture',str(ROOT/'telemt-web-manager.sh')],
                               env=self.env,capture_output=True,timeout=5)

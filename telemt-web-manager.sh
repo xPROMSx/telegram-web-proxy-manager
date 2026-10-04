@@ -40,7 +40,7 @@ readonly -A TOOL_PACKAGES=(
     [cat]=coreutils [chmod]=coreutils [chown]=coreutils [cp]=coreutils [cut]=coreutils
     [date]=coreutils [dirname]=coreutils [id]=coreutils [install]=coreutils [mktemp]=coreutils
     [mv]=coreutils [readlink]=coreutils [rm]=coreutils [sha256sum]=coreutils
-    [sleep]=coreutils [stat]=coreutils [timeout]=coreutils [tr]=coreutils [uname]=coreutils
+    [sleep]=coreutils [stat]=coreutils [timeout]=coreutils [tr]=coreutils [uname]=coreutils [wc]=coreutils
 )
 declare -a CHANGED=() ORIGINAL=()
 
@@ -223,7 +223,7 @@ dependency_commands() {
             # Preserve the existing shared prerequisites, including archive tooling.
             printf '%s\n' curl tar openssl jq dig python3 certbot flock ss sha256sum timeout \
                 iptables ip6tables nft conntrack getent useradd userdel groupdel \
-                awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm sleep stat tr uname
+                awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm sleep stat tr uname wc
             if [[ $1 == --uninstall ]]; then printf '%s\n' groupadd find iptables-save ip6tables-save; fi;;
         *) die 'Unknown dependency action';;
     esac
@@ -288,7 +288,7 @@ check_dependencies() {
     python3 -c 'import tomllib' || die 'Python 3.11+ required'
     if [[ $action != show-web-link ]]; then
         service_path=$(systemd-path search-binaries-default) || die 'Cannot determine systemd runtime PATH'
-        PATH="$service_path" command -v conntrack >/dev/null || die 'conntrack unavailable on the systemd runtime PATH (see README)'
+        PATH="$service_path" command -v conntrack >/dev/null || die "conntrack is installed but is not available on systemd's default executable PATH; check: systemd-path search-binaries-default"
     fi
     if (( installed )); then say 'Dependencies installed successfully. Continuing...'; fi
 }

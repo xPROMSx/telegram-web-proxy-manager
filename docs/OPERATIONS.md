@@ -555,7 +555,7 @@ offer additionally requires the immutable platform validation.
 | useradd, userdel, groupadd, groupdel | passwd |
 | find | findutils |
 | awk / grep / sed / cmp | mawk / grep / sed / diffutils |
-| cat, chmod, chown, cp, cut, date, dirname, id, install, mktemp, mv, readlink, rm, sha256sum, sleep, stat, timeout, tr, uname | coreutils |
+| cat, chmod, chown, cp, cut, date, dirname, id, install, mktemp, mv, readlink, rm, sha256sum, sleep, stat, timeout, tr, uname, wc | coreutils |
 
 Install/Update/Check/Repair retain the shared tool prerequisites; Uninstall also
 checks groupadd, find and IPv4/IPv6 save commands before mutation. Archive tar is

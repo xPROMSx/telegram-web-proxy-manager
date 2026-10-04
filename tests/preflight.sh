@@ -52,5 +52,5 @@ set +e
 result=$?
 set -e
 [[ $result != 0 && ! -e $sandbox/install-reached && ! -e $sandbox/lock-reached ]]
-grep -q 'conntrack unavailable on the systemd runtime PATH' "$sandbox/runtime-refused"
+grep -Fq "conntrack is installed but is not available on systemd's default executable PATH; check: systemd-path search-binaries-default" "$sandbox/runtime-refused"
 printf 'ok - systemd runtime PATH must independently find conntrack; service PATH is not overridden\n'
