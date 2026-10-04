@@ -43,7 +43,8 @@ jobs:
           TELEMT_TEST_GITHUB_TOKEN: ${{ github.token }}
         run: sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py "$TELEMT_UPDATE_ARTIFACTS"
       - name: Parser/unit and fresh transaction fixtures (service/path/journal transport mocked)
-        run: bash tests/run.sh && bash tests/fresh.sh && bash tests/fresh-rollback.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh && bash tests/preflight.sh
+        # Archive/receipt tests exercise the production root-owned metadata contract.
+        run: sudo env PYTHONDONTWRITEBYTECODE=1 bash tests/run.sh && bash tests/fresh.sh && bash tests/fresh-rollback.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh && bash tests/preflight.sh
       - name: Private WEB link identity, read-only menu and committed Install display (real root/PTY; lifecycle mocked)
         run: sudo python3 tests/web_link_fixture.py
       - name: Real fresh account and owned runtime-state rollback (temporary root-owned fixtures)
