@@ -49,62 +49,19 @@ SOCKS=
 socks_probe
 '
 
-# SC2016: this literal is executed by the child Bash, which must expand its variables.
+# BIN-only update cases now live in the stronger root filesystem/journal crash
+# matrix (tests/update_transactions.py): equal health, rejected candidate,
+# concurrent config edit, full DATA/binary rollback and future release policy.
+# This shell fixture verifies the public operation routes through the new engine.
 # shellcheck disable=SC2016
-run_case 'already supported does not touch binary or config' bash -c '
+run_case 'normal Update delegates to universal transactional helper after existing health' bash -c '
 source "$ROOT/telemt-web-manager.sh"
-RELEASE=$SUPPORTED_TELEMT_VERSION
-candidate_healthcheck() { exit 55; }
-backup_begin() { exit 56; }
-update_transaction "$SUPPORTED_TELEMT_VERSION"
-'
-
-# SC2016: this literal is executed by the child Bash, which must expand its variables.
-# shellcheck disable=SC2016
-run_case 'candidate rejection leaves installed bytes untouched' bash -c '
-source "$ROOT/telemt-web-manager.sh"
-BIN="$SANDBOX/reject-bin" CONFIG="$SANDBOX/reject-config"
-printf old >"$BIN"; printf original >"$CONFIG"
-RELEASE=$SUPPORTED_TELEMT_VERSION CANDIDATE="$SANDBOX/candidate"
-candidate_healthcheck() { return 1; }
-candidate_compatibility() { candidate_healthcheck "$@"; }
-set +e
-(update_transaction 3.5.9) >"$SANDBOX/rejection.log" 2>&1
-rc=$?
-set -e
-[[ $rc != 0 && $(cat "$BIN") == old && $(cat "$CONFIG") == original ]]
-'
-
-# SC2016: this literal is executed by the child Bash.
-# shellcheck disable=SC2016
-run_case 'concurrent config edit during candidate validation refuses before binary replacement' bash -c '
-source "$ROOT/telemt-web-manager.sh"
-BIN="$SANDBOX/concurrent-bin" CONFIG="$SANDBOX/concurrent-config"
-printf old >"$BIN"; printf original >"$CONFIG"
-RELEASE=$SUPPORTED_TELEMT_VERSION CANDIDATE="$SANDBOX/candidate"
-candidate_healthcheck() { printf edited >"$CONFIG"; }
-candidate_compatibility() { candidate_healthcheck "$@"; }
-backup_begin() { exit 56; }
-set +e
-(update_transaction 3.5.9) >"$SANDBOX/concurrent.log" 2>&1
-rc=$?
-set -e
-[[ $rc != 0 && $rc != 56 && $(cat "$BIN") == old && $(cat "$CONFIG") == edited ]]
-'
-
-# SC2016: child shell expands paths.
-# shellcheck disable=SC2016
-run_case 'older compatible install reaches the pinned candidate download' bash -c '
-source "$ROOT/telemt-web-manager.sh"
-load_installation() { return 0; }
-binary_version() { printf 3.5.9; }
-path_health() { return 0; }
-download_candidate() { [[ $RELEASE == "$SUPPORTED_TELEMT_VERSION" ]] || exit 58; exit 57; }
-set +e
-(update_manager) >"$SANDBOX/future.log" 2>&1
-rc=$?
-set -e
-[[ $rc == 57 ]]
+load_installation() { printf loaded >"$SANDBOX/load"; }
+path_health() { [[ -f $SANDBOX/load ]]; printf healthy >"$SANDBOX/health"; }
+universal_update() { [[ -f $SANDBOX/health ]]; printf delegated >"$SANDBOX/delegated"; }
+download_candidate() { exit 58; }
+update_manager
+[[ $(cat "$SANDBOX/delegated") == delegated ]]
 '
 
 # SC2016: this literal is executed by the child Bash, which must expand its variables.
@@ -125,29 +82,6 @@ listener_ready() { return 1; }
 [[ $tick == 3 ]]
 systemctl() { printf failed; }
 ! wait_ready 90
-'
-
-# SC2016: this literal is executed by the child Bash, which must expand its variables.
-# shellcheck disable=SC2016
-run_case 'failed startup rolls back old binary and restarts it' bash -c '
-source "$ROOT/telemt-web-manager.sh"
-BIN="$SANDBOX/rollback-bin" CONFIG="$SANDBOX/rollback-config" UNIT="$SANDBOX/unit"
-BACKUP_ROOT="$SANDBOX/backups" TMP="$SANDBOX/update-tmp"
-mkdir "$TMP"
-printf old >"$BIN"; printf original >"$CONFIG"; printf unit >"$UNIT"
-printf "{\"snapshot\":{}}" >"$TMP/nginx-plan.json"
-CANDIDATE="$SANDBOX/new-bin"; printf new >"$CANDIDATE"
-RELEASE=$SUPPORTED_TELEMT_VERSION
-candidate_healthcheck() { return 0; }
-candidate_compatibility() { candidate_healthcheck "$@"; }
-restart_service() { printf "%s\n" "$(cat "$BIN")" >>"$SANDBOX/restarts"; }
-wait_ready() { [[ $(cat "$BIN") == old ]]; }
-set +e
-(trap cleanup EXIT; update_transaction 3.5.9) >"$SANDBOX/rollback.log" 2>&1
-rc=$?
-set -e
-[[ $rc != 0 && $(cat "$BIN") == old && $(cat "$CONFIG") == original ]]
-[[ $(tail -n1 "$SANDBOX/restarts") == old ]]
 '
 
 # SC2016: this literal is executed by the child Bash, which must expand its variables.

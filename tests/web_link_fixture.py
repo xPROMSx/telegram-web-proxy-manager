@@ -136,8 +136,8 @@ main
         # Native root runner: invoke the real platform guards with controlled facts.
         # The apt function cannot mutate packages even if a guard regresses.
         for reason, facts in [
-            ('Supported OS: Ubuntu', 'source() { ID=debian; VERSION_ID=12; }'),
-            ('Unsupported architecture', 'source() { ID=ubuntu; VERSION_ID=24.04; }; uname() { printf riscv64; }'),
+            ('Supported OS: Ubuntu', 'read() { init=systemd; }; source() { ID=debian; VERSION_ID=12; }'),
+            ('Unsupported architecture', 'read() { init=systemd; }; source() { ID=ubuntu; VERSION_ID=24.04; }; uname() { printf riscv64; }'),
             ('active init system', 'read() { init=fixture-init; }'),
         ]:
             script = ('source "$1"; '+facts+'; MENU_ACTION=1; '
@@ -237,6 +237,7 @@ main
         # Actual menu provenance flag, without invoking unrelated production setup.
         route = '''source ./telemt-web-manager.sh
 preflight() { :; }
+recover_update() { :; }
 take_lock() { :; }
 install_manager() { [[ $INTERACTIVE_INSTALL == "$1" ]]; }
 '''

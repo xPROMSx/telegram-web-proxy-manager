@@ -7,6 +7,8 @@ export LC_ALL=C
 INSTALL_DIR=/opt/telemt-web-manager
 LAUNCHER=/usr/local/bin/telemt-web-manager
 BOOTSTRAP_LOCK=/run/lock/telemt-web-manager.lock
+MANAGER_STATE=/var/lib/telemt-web-manager
+MANAGER_SYSTEMD_ROOT=/etc/systemd/system
 BOOTSTRAP_TMP='' MANAGER_TAG='' MANAGER_COMMIT='' VERSION='' NO_START=0
 readonly MANAGER_REPO=xPROMSx/telemt-web-manager
 
@@ -185,10 +187,12 @@ commit_manager_pair() {
     # Linux renameat2 exchanges complete directories atomically. Never copy into
     # the live pair. The common manager lock excludes active manager operations.
     { bootstrap_version_code; cat <<'PY'
-import ctypes, fcntl, os, shutil, signal, stat, sys, tempfile
+import ast, ctypes, datetime, fcntl, hashlib, json, os, re, shutil, signal, stat, sys, tempfile
 from pathlib import Path
 source, dest, launcher, lock = map(Path, sys.argv[1:5])
-tag, explicit = sys.argv[5:]
+tag, explicit, state_path, systemd_path = sys.argv[5:]
+state = Path(state_path)
+systemd_root = Path(systemd_path)
 
 def safe(path, regular=False):
     for item in (path, *path.parents):
@@ -218,6 +222,212 @@ def existing_pair():
         raise ValueError('Existing helper requires manual review')
     return True
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result: raise ValueError('Duplicate recovery metadata key')
+        result[key] = value
+    return result
+
+def recovery_record(path):
+    safe(path, regular=True)
+    info = path.stat()
+    if info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 1048576:
+        raise ValueError('Unsafe recovery metadata; keep the installed manager')
+    with path.open('rb') as stream:
+        value = json.loads(stream.read(1048577), object_pairs_hook=unique_object,
+                           parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite recovery metadata')))
+    if type(value) is not dict or type(value.get('schema')) is not int:
+        raise ValueError('Unknown recovery metadata; keep the installed manager')
+    return value
+
+def static_schemas(path, kind):
+    # No source/eval/import/exec of the downloaded candidate. Exactly one
+    # literal capability declaration is recognized in the canonical shell.
+    lines = path.read_text().splitlines()
+    found = [re.fullmatch(r'readonly UPDATE_' + kind + r'_SCHEMAS=([1-9][0-9]*(?:,[1-9][0-9]*)*)', line)
+             for line in lines if line.startswith('readonly UPDATE_' + kind + '_SCHEMAS=')]
+    if not found: return set()  # Published legacy versions remain usable without new state.
+    if len(found) != 1 or found[0] is None: raise ValueError('Invalid recovery capability declaration')
+    values = found[0][1].split(',')
+    if len(values) > 16 or len(set(values)) != len(values): raise ValueError('Ambiguous recovery capabilities')
+    return {int(v) for v in values}
+
+def recovery_valid(ok):
+    if not ok: raise ValueError('Malformed recovery metadata; retain the installed manager')
+
+def recovery_exact(value, keys):
+    recovery_valid(type(value) is dict and set(value)==set(keys))
+
+def recovery_hex(value, length):
+    recovery_valid(isinstance(value,str) and re.fullmatch('[0-9a-f]{'+str(length)+'}',value))
+
+def recovery_date(value, optional=False):
+    if value is None and optional: return
+    recovery_valid(isinstance(value,str) and re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ',value))
+    datetime.datetime.strptime(value,'%Y-%m-%dT%H:%M:%SZ')
+
+def recovery_version(value):
+    recovery_valid(isinstance(value,str) and len(value)<=128 and
+                   re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',value))
+
+def recovery_receipt(value):
+    recovery_exact(value, {'schema','origin','repository','architecture','installed_version','tag','tag_object_sha',
+        'commit_sha','tag_verification','release','asset','checksum_asset','archive_sha256','binary','installed_at',
+        'manager_version','transaction_id','generation_id','trust_policy'})
+    recovery_valid(type(value['schema']) is int and value['schema']==1 and
+        value['repository']=={'id':1125007401,'full_name':'telemt/telemt'} and
+        value['architecture'] in ('x86_64','aarch64'))
+    recovery_version(value['installed_version']); recovery_version(value['manager_version'])
+    recovery_valid(value['tag'] in (value['installed_version'],'v'+value['installed_version']))
+    for key in ('transaction_id','generation_id'): recovery_hex(value[key],32)
+    recovery_hex(value['commit_sha'],40); recovery_hex(value['archive_sha256'],64)
+    recovery_date(value['installed_at']); recovery_exact(value['binary'],{'sha256','size'})
+    recovery_hex(value['binary']['sha256'],64)
+    recovery_valid(type(value['binary']['size']) is int and 0<value['binary']['size']<=128*1024*1024)
+    if value['origin']=='reviewed-baseline':
+        pins={'x86_64':('92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3',
+                        '53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964'),
+              'aarch64':('16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3',
+                        '308271c73ece5d748aeab21680c10c2bea153ba29c83135b1b84aa79a394173c')}
+        archive,binary=pins[value['architecture']]
+        recovery_valid(value['installed_version']=='3.5.12' and
+            value['commit_sha']=='c4555e25f39dd5be200ccf6353f7d82bfcf89131' and
+            value['archive_sha256']==archive and value['binary']['sha256']==binary and
+            value['trust_policy']=='embedded-reviewed-baseline-v1' and
+            all(value[key] is None for key in ('tag_object_sha','tag_verification','release','asset','checksum_asset')))
+        return
+    recovery_valid(value['origin']=='official-release' and
+        value['trust_policy']=='github-verified-tag-and-official-asset-sha256-v1')
+    recovery_hex(value['tag_object_sha'],40)
+    verification=value['tag_verification']; recovery_exact(verification,{'verified','reason','verified_at'})
+    recovery_valid(verification['verified'] is True and verification['reason']=='valid')
+    recovery_date(verification['verified_at'],optional=True)
+    release=value['release']; recovery_exact(release,{'id','tag','published_at','draft','prerelease','target_commitish','url','html_url'})
+    recovery_valid(type(release['id']) is int and 0<release['id']<2**63 and release['tag']==value['tag'] and
+        release['draft'] is False and release['prerelease'] is False and
+        release['url']==f'https://api.github.com/repos/telemt/telemt/releases/{release["id"]}' and
+        release['html_url']=='https://github.com/telemt/telemt/releases/tag/'+value['tag'] and
+        isinstance(release['target_commitish'],str) and 0<len(release['target_commitish'])<=256)
+    recovery_date(release['published_at'])
+    if re.fullmatch('[0-9a-f]{40}',release['target_commitish']):
+        recovery_valid(release['target_commitish']==value['commit_sha'])
+    for key,suffix in (('asset',''),('checksum_asset','.sha256')):
+        asset=value[key]; recovery_exact(asset,{'id','name','size','url','api_url','sha256'})
+        name='telemt-'+value['architecture']+'-linux-gnu.tar.gz'+suffix
+        recovery_valid(type(asset['id']) is int and asset['id']>0 and type(asset['size']) is int and
+            0<asset['size']<=(512 if suffix else 128*1024*1024) and asset['name']==name and
+            asset['url']=='https://github.com/telemt/telemt/releases/download/'+value['tag']+'/'+name and
+            asset['api_url']==f'https://api.github.com/repos/telemt/telemt/releases/assets/{asset["id"]}')
+        recovery_hex(asset['sha256'],64)
+    recovery_valid(value['asset']['id']!=value['checksum_asset']['id'] and
+                   value['archive_sha256']==value['asset']['sha256'])
+
+def recovery_journal(value):
+    recovery_valid(type(value['sequence']) is int and 0<=value['sequence']<=10000 and
+        type(value['restored']) is bool and type(value['normalized']) is bool and
+        value['kind'] in ('update','baseline-migration','baseline-install') and
+        value['error'] in (None,'interrupted','validation-failed','recovery-failed','cleanup-failed') and
+        value['service'] in (None,'enabled-active','disabled-active'))
+    recovery_hex(value['transaction_id'],32); recovery_date(value['created_at'])
+    if value['lkg'] is not None: recovery_hex(value['lkg'],32)
+    supervisor=value['supervisor']; recovery_exact(supervisor,{'pid','starttime','boot_id'})
+    recovery_valid(type(supervisor['pid']) is int and supervisor['pid']>0 and
+        isinstance(supervisor['starttime'],str) and re.fullmatch('[0-9]{1,24}',supervisor['starttime']) and
+        isinstance(supervisor['boot_id'],str) and re.fullmatch('[0-9a-f-]{36}',supervisor['boot_id']))
+    recovery_valid(type(value['immutable']) is dict and len(value['immutable'])<=1000)
+    for key,digest in value['immutable'].items():
+        recovery_valid(isinstance(key,str) and 0<len(key)<=512 and all(32<=ord(c)<127 for c in key)); recovery_hex(digest,64)
+    for key in ('old','new'):
+        if value[key] is None:
+            recovery_valid(key=='new' and value['phase']=='ROLLBACK_COMPLETE'); continue
+        recovery_exact(value[key],{'receipt','receipt_present'})
+        recovery_valid(type(value[key]['receipt_present']) is bool); recovery_receipt(value[key]['receipt'])
+    if value['snapshot'] is not None:
+        snapshot=value['snapshot']; recovery_exact(snapshot,{'sha256','entries','logical_bytes','generation_id'})
+        recovery_hex(snapshot['sha256'],64); recovery_hex(snapshot['generation_id'],32)
+        recovery_valid(value['kind']=='update' and type(snapshot['entries']) is int and 0<snapshot['entries']<=100000 and
+            type(snapshot['logical_bytes']) is int and 0<=snapshot['logical_bytes']<=8*1024**3 and
+            snapshot['generation_id']==value['old']['receipt']['generation_id'])
+
+def bootstrap_recovery_barrier():
+    gate=systemd_root/'telemt.service.d/50-telemt-web-manager-update.conf'
+    recovery=systemd_root/'telemt-web-manager-recovery.service'
+    deployed_gate=any(os.path.lexists(p) for p in (gate,recovery))
+    if not state.exists():
+        if deployed_gate: raise ValueError('Recovery gate without state; retain installed manager for manual recovery')
+        return
+    safe(state)
+    if stat.S_IMODE(state.stat().st_mode) != 0o700: raise ValueError('Unsafe manager state')
+    candidate = source / 'telemt-web-manager.sh'
+    required = []; records={}
+    for filename, kind in (('telemt-release.json', 'RECEIPT'), ('update-journal.json', 'JOURNAL'),
+                           ('telemt-generation.json', 'GATE')):
+        path = state / filename
+        if os.path.lexists(path):
+            value = recovery_record(path)
+            records[kind]=value
+            if kind == 'JOURNAL':
+                if value.get('phase') not in ('COMMITTED','ROLLBACK_COMPLETE') or value.get('intent') is not None:
+                    raise ValueError('Pending/critical Telemt update: recover with the installed manager before replacing it')
+            required.append((kind, value['schema']))
+    if required or deployed_gate:
+        if set(records)!={'RECEIPT','JOURNAL','GATE'} or not deployed_gate:
+            raise ValueError('Incomplete deployed recovery contract; retain installed manager')
+        expected={'RECEIPT':{'schema','origin','repository','architecture','installed_version','tag','tag_object_sha',
+            'commit_sha','tag_verification','release','asset','checksum_asset','archive_sha256','binary','installed_at',
+            'manager_version','transaction_id','generation_id','trust_policy'},
+            'JOURNAL':{'schema','transaction_id','phase','intent','sequence','old','new','snapshot','immutable','service',
+                       'supervisor','created_at','error','lkg','restored','kind','normalized'},
+            'GATE':{'schema','generation_id','binary','receipt_sha256'}}
+        if any(set(value)!=expected[kind] or value['schema']!=1 for kind,value in records.items()):
+            raise ValueError('Unsupported/malformed deployed recovery state')
+        receipt, journal, generation = (records[k] for k in ('RECEIPT','JOURNAL','GATE'))
+        recovery_receipt(receipt); recovery_journal(journal)
+        recovery_hex(generation['generation_id'],32); recovery_hex(generation['receipt_sha256'],64)
+        authoritative=journal['new'] if journal['phase']=='COMMITTED' else journal['old']
+        if (type(authoritative) is not dict or set(authoritative)!={'receipt','receipt_present'}
+            or authoritative['receipt']!=receipt or authoritative['receipt_present'] is not True
+            or generation['generation_id']!=receipt['generation_id'] or generation['binary']!=receipt['binary']
+            or generation['receipt_sha256']!=hashlib.sha256(json.dumps(receipt,sort_keys=True,separators=(',',':')).encode()+b'\n').hexdigest()
+            or type(journal['normalized']) is not bool or (journal['snapshot'] and not journal['normalized'])):
+            raise ValueError('Deployed generation or retention is incomplete; recover before manager replacement')
+        prefix=state.parents[2]
+        binary=prefix/'usr/local/bin/telemt'; safe(binary,regular=True)
+        info=binary.stat()
+        recovery_valid(info.st_gid==0 and stat.S_IMODE(info.st_mode)==0o755 and info.st_size==receipt['binary']['size'])
+        fd=os.open(binary,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(fd,'rb') as stream:
+            digest=hashlib.sha256(); count=0
+            while block:=stream.read(1048576):
+                count+=len(block); recovery_valid(count<=receipt['binary']['size']); digest.update(block)
+        recovery_valid(digest.hexdigest()==receipt['binary']['sha256'] and
+                       (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns)==
+                       (binary.stat().st_dev,binary.stat().st_ino,binary.stat().st_size,binary.stat().st_mtime_ns))
+        marker=recovery_record(prefix/'var/lib/telemt/.telemt-web-manager-generation.json')
+        recovery_exact(marker,{'schema','generation_id'})
+        recovery_valid(marker['schema']==1 and marker['generation_id']==receipt['generation_id'])
+        safe(gate.parent)
+        recovery_valid({p.name for p in gate.parent.iterdir()}=={gate.name})
+        # Parse helper source as data too: advertised shell schema and Python
+        # schema literal must agree. compile() elsewhere checks syntax only.
+        module = ast.parse((source / 'safety.py').read_bytes())
+        definitions={node.targets[0].id:node.value.value for node in module.body
+            if isinstance(node,ast.Assign) and len(node.targets)==1 and isinstance(node.targets[0],ast.Name)
+            and isinstance(node.value,ast.Constant) and isinstance(node.value.value,str)}
+        for path,name in ((gate,'UPDATE_DROPIN'),(recovery,'UPDATE_RECOVERY_UNIT')):
+            safe(path,regular=True)
+            if stat.S_IMODE(path.stat().st_mode)!=0o644 or path.stat().st_size>4096 or definitions.get(name)!=path.read_text():
+                raise ValueError('Candidate does not preserve the deployed exact gate/recovery contract')
+        schemas = [node.value.value for node in module.body if isinstance(node, ast.Assign)
+                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                   and node.targets[0].id == 'UPDATE_SCHEMA' and isinstance(node.value, ast.Constant)
+                   and type(node.value.value) is int]
+        if len(schemas) != 1: raise ValueError('Candidate does not understand installed recovery state')
+        for kind, schema in required:
+            if schema not in static_schemas(candidate, kind) or schemas[0] != schema:
+                raise ValueError('Candidate cannot interpret deployed recovery schema; explicit downgrade also refused')
+
 wrapper = ('#!/bin/sh\nexec ' + str(dest / 'telemt-web-manager.sh') + ' "$@"\n').encode()
 stage = staged_launcher = None
 swapped = created = launcher_created = committed = False
@@ -242,6 +452,7 @@ try:
             raise ValueError('Unsafe manager lock')
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         had_pair = existing_pair()
+        bootstrap_recovery_barrier()
         safe(launcher, regular=True)
         if launcher.exists() and launcher.read_bytes() != wrapper:
             raise ValueError('Unrelated launcher; manual review required')
@@ -290,7 +501,7 @@ finally:
         else: shutil.rmtree(stage)
     if staged_launcher is not None and staged_launcher.exists(): staged_launcher.unlink()
 PY
-    } | python3 - "$BOOTSTRAP_TMP" "$INSTALL_DIR" "$LAUNCHER" "$BOOTSTRAP_LOCK" "$MANAGER_TAG" "$VERSION"
+    } | python3 - "$BOOTSTRAP_TMP" "$INSTALL_DIR" "$LAUNCHER" "$BOOTSTRAP_LOCK" "$MANAGER_TAG" "$VERSION" "$MANAGER_STATE" "$MANAGER_SYSTEMD_ROOT"
 }
 
 launch_manager_menu() {

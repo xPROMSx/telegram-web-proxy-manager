@@ -8,7 +8,7 @@ sandbox=$(mktemp -d)
 trap 'rm -rf -- "$sandbox"' EXIT
 export DEPENDENCY_TOOL_DIR="$sandbox/tools"
 mkdir "$DEPENDENCY_TOOL_DIR"
-for tool in "${!TOOL_PACKAGES[@]}" nginx systemctl systemd-path journalctl; do
+for tool in "${!TOOL_PACKAGES[@]}" nginx systemctl systemd-run systemd-path journalctl; do
     [[ $tool != conntrack ]] || continue
     printf '#!/bin/bash\nexit 0\n' >"$DEPENDENCY_TOOL_DIR/$tool"
     chmod 0755 "$DEPENDENCY_TOOL_DIR/$tool"

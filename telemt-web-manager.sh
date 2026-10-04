@@ -4,7 +4,12 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=0.1.4
+readonly SCRIPT_VERSION=0.2.0
+# Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
+readonly UPDATE_JOURNAL_SCHEMAS=1
+readonly UPDATE_RECEIPT_SCHEMAS=1
+readonly UPDATE_GATE_SCHEMAS=1
+export UPDATE_JOURNAL_SCHEMAS UPDATE_RECEIPT_SCHEMAS UPDATE_GATE_SCHEMAS
 readonly SUPPORTED_TELEMT_VERSION=3.5.12
 readonly SUPPORTED_TELEMT_COMMIT=c4555e25f39dd5be200ccf6353f7d82bfcf89131
 readonly TELEMT_SHA256_X86_64=92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3
@@ -23,11 +28,11 @@ RENEW_HOOK=/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager
 NGINX_ROOT=/etc/nginx
 BACKUP_ROOT=/root/telemt-backups
 LOCK=/run/lock/telemt-web-manager.lock
-TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' RELEASE='' CANDIDATE=''
+TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' CANDIDATE=''
 ARMED=0 INSTALLING=0 NGINX_CHANGED=0 UNINSTALLING=0
 CONFIRM_UNINSTALL=0 DELETE_CERTIFICATE=0 CERT_CLEANUP_RUNNING=0 UNINSTALL_ENABLED='' UNINSTALL_ACTIVE=''
 CERT_ONLY=0 PLAN_MODE=web
-FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0
+FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0 FRESH_GATE_CREATED=0
 INTERACTIVE_INSTALL=0 MENU_ACTION=0
 # Reviewed Ubuntu tools only; no user input is used as an apt package name.
 readonly -A TOOL_PACKAGES=(
@@ -39,8 +44,9 @@ readonly -A TOOL_PACKAGES=(
     [awk]=mawk [grep]=grep [sed]=sed [cmp]=diffutils
     [cat]=coreutils [chmod]=coreutils [chown]=coreutils [cp]=coreutils [cut]=coreutils
     [date]=coreutils [dirname]=coreutils [id]=coreutils [install]=coreutils [mktemp]=coreutils
-    [mv]=coreutils [readlink]=coreutils [rm]=coreutils [sha256sum]=coreutils
+    [mv]=coreutils [readlink]=coreutils [rm]=coreutils [rmdir]=coreutils [sha256sum]=coreutils
     [sleep]=coreutils [stat]=coreutils [timeout]=coreutils [tr]=coreutils [uname]=coreutils [wc]=coreutils
+    [unshare]=util-linux [setpriv]=util-linux [chroot]=coreutils [ip]=iproute2 [mount]=util-linux [ldd]=libc-bin
 )
 declare -a CHANGED=() ORIGINAL=()
 
@@ -155,6 +161,9 @@ rollback() {
             rm -f -- "${CHANGED[index]}" || failed=1
         fi
     done
+    if (( INSTALLING && FRESH_GATE_CREATED )) && [[ -d ${UNIT}.d ]]; then
+        helper safe-path "${UNIT}.d" && rmdir -- "${UNIT}.d" || failed=1
+    fi
     if (( CERT_ONLY )); then
         :
     elif (( INSTALLING )); then
@@ -223,7 +232,10 @@ dependency_commands() {
             # Preserve the existing shared prerequisites, including archive tooling.
             printf '%s\n' curl tar openssl jq dig python3 certbot flock ss sha256sum timeout \
                 iptables ip6tables nft conntrack getent useradd userdel groupdel \
-                awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm sleep stat tr uname wc
+                awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm rmdir sleep stat tr uname wc
+            if [[ $1 != --uninstall ]]; then
+                printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+            fi
             if [[ $1 == --uninstall ]]; then printf '%s\n' groupadd find iptables-save ip6tables-save; fi;;
         *) die 'Unknown dependency action';;
     esac
@@ -242,6 +254,9 @@ check_dependencies() {
     local -A selected=()
     if [[ $action != show-web-link ]]; then
         command -v nginx >/dev/null || die 'Existing Nginx installation and supported topology required; Nginx is not installed automatically'
+    fi
+    if [[ $action != show-web-link && $action != --uninstall ]]; then
+        command -v systemd-run >/dev/null || die 'Existing systemd-run tooling required for isolated candidate validation'
     fi
     commands=$(dependency_commands "$action") || die 'Cannot determine required dependencies'
     mapfile -t required <<<"$commands"
@@ -295,7 +310,6 @@ check_dependencies() {
 
 download_candidate() {
     local arch asset url digest actual
-    RELEASE=$SUPPORTED_TELEMT_VERSION
     arch=$(uname -m)
     case $arch in
         x86_64) digest=$TELEMT_SHA256_X86_64;;
@@ -788,11 +802,30 @@ present_web_link() {
     }
 }
 
+managed_dropins() {
+    local paths
+    paths=$(systemctl show telemt.service -p DropInPaths --value) || return 1
+    if [[ -n $paths ]]; then
+        [[ $paths == "${UNIT}.d/50-telemt-web-manager-update.conf" ]] || return 1
+        helper update-gate-contract
+    else
+        [[ ! -e ${UNIT}.d/50-telemt-web-manager-update.conf && ! -L ${UNIT}.d/50-telemt-web-manager-update.conf ]]
+    fi
+}
+
+initialize_update_state() { helper update-install-baseline; }
+installed_release_identity() { helper update-local-receipt; }
+installed_compatibility() { helper update-readonly-compatibility; }
+universal_update() { helper update-universal; }
+recover_update() { helper update-recover; }
+pending_update() { helper update-pending; }
+
 show_current_web_link() {
     (( EUID == 0 )) || die 'Run as root; this manager never invokes sudo'
     [[ -t 0 && -t 1 ]] || die 'WEB link display requires interactive input and output.'
     check_dependencies show-web-link
     take_lock shared
+    helper update-pending || die 'Pending or critical Update; WEB link is not displayed'
     present_web_link
 }
 
@@ -867,6 +900,11 @@ install_manager() {
     helper config-info "$CONFIG" >"$TMP/config-info"
     track_file "$BIN"; atomic_copy "$CANDIDATE" "$BIN"
     track_file "$UNIT"; generate_unit >"$UNIT"; chmod 0644 "$UNIT"
+    for path in "$STATE/telemt-release.json" "$STATE/telemt-generation.json" "$STATE/update-journal.json" \
+                "$DATA/.telemt-web-manager-generation.json" "${UNIT}.d/50-telemt-web-manager-update.conf" \
+                "$(dirname "$UNIT")/telemt-web-manager-recovery.service"; do track_file "$path"; done
+    if [[ ! -e ${UNIT}.d ]]; then FRESH_GATE_CREATED=1; fi
+    initialize_update_state
     systemctl daemon-reload
     since=$(now)
     FRESH_SERVICE_ATTEMPTED=1
@@ -897,10 +935,10 @@ install_manager() {
 load_installation() {
     [[ -f $STATE/manifest.json && ! -L $STATE/manifest.json ]] || die 'Unmanaged installation; automatic update/migration not possible; manual review required'
     managed_permissions || die 'Unsafe managed ownership/permissions or symlink; manual review required'
-    binary_version "$BIN" >/dev/null || die 'Invalid installed Telemt version; manual review required'
+    installed_release_identity >/dev/null || die 'Invalid/missing installed release identity; manual review required'
     jq -e '.schema == 1' "$STATE/manifest.json" >/dev/null || die 'Unknown manifest schema'
     [[ $(systemctl show telemt.service -p FragmentPath --value) == "$UNIT" ]] || die 'Unexpected service unit'
-    [[ -z $(systemctl show telemt.service -p DropInPaths --value) ]] || die 'Service drop-ins need manual review'
+    managed_dropins || die 'Service drop-ins need manual review'
     nginx_runtime_identity || die 'Nginx process/config/443 ownership is ambiguous'
     local actual expected
     actual=$(sha256sum "$UNIT"); expected=$(jq -er .unit_sha256 "$STATE/manifest.json")
@@ -909,7 +947,7 @@ load_installation() {
     [[ ${actual%% *} == "$expected" ]] || die 'Nginx vhost changed; manual review required'
     helper config-info "$CONFIG" >"$TMP/config-info" || die 'automatic update/migration not possible; manual review required'
     helper runtime-contract "$CONFIG" "$DATA" || die 'Runtime/write paths require manual review; existing TOML was not changed'
-    candidate_compatibility "$BIN" "$CONFIG" || die 'Installed binary rejected managed TOML; no changes made'
+    installed_compatibility || die 'Installed binary rejected managed TOML; no changes made'
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
     [[ $(jq -r '.public_ip // ""' "$STATE/manifest.json") == "" ||
@@ -920,56 +958,18 @@ load_installation() {
     certificate_health_contract
 }
 
-update_transaction() {
-    local current=$1 since config_hash
-    [[ $RELEASE == "$SUPPORTED_TELEMT_VERSION" ]] || die 'Update target differs from supported Telemt version'
-    if [[ $current == "$RELEASE" ]]; then say 'already up to date'; return 0; fi
-    config_hash=$(sha256sum "$CONFIG")
-    candidate_compatibility "$CANDIDATE" "$CONFIG" || die 'automatic update/migration not possible; manual review required'
-    [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed during candidate validation'
-    backup_begin
-    cp -a "$CONFIG" "$BACKUP/config.toml"
-    cp -a "$UNIT" "$BACKUP/telemt.service"
-    backup_nginx_context
-    track_file "$BIN"
-    [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed before activation'
-    ARMED=1
-    atomic_copy "$CANDIDATE" "$BIN"
-    since=$(now)
-    if ! restart_service || ! wait_ready 90 || ! path_health || ! recent_logs "$since"; then
-        die 'Update health failed; restoring previous binary'
-    fi
-    [[ $(sha256sum "$CONFIG") == "$config_hash" ]] || die 'Configuration changed concurrently; manual review required'
-    ARMED=0
-    say "Updated to $RELEASE. Configuration preserved byte-for-byte."
-}
-
 update_manager() {
     load_installation
-    local current comparison
-    current=$(binary_version "$BIN") || die 'Unknown installed binary version'
-    RELEASE=$SUPPORTED_TELEMT_VERSION
-    comparison=$(helper version-compare "$RELEASE" "$current") || die 'Invalid release/installed SemVer'
-    if [[ $comparison == 0 ]]; then
-        [[ $current == "$RELEASE" ]] || die "Installed Telemt $current differs from exact supported $RELEASE; manual review required"
-        say 'already up to date'; path_health; return
-    fi
-    [[ $comparison == 1 ]] || die "Installed Telemt $current is newer than supported $RELEASE; automatic downgrade refused; use a newer reviewed manager/manual review"
     path_health || die 'Existing installation unhealthy; update refused'
-    download_candidate
-    update_transaction "$current"
+    universal_update || die 'Universal Update refused or rolled back; inspect private journal/backup evidence'
 }
 
 check_manager() {
     load_installation
     renewal_scheduler_status
     local failed=0 pid cert current
-    current=$(binary_version "$BIN") || return 1
-    say "Manager: $SCRIPT_VERSION; installed Telemt: $current; supported Telemt: $SUPPORTED_TELEMT_VERSION"
-    if [[ $current != "$SUPPORTED_TELEMT_VERSION" ]]; then
-        say 'Installed version differs from this manager audited target; use --update for an older managed version, or a newer reviewed manager/manual review for a newer version.'
-        failed=1
-    fi
+    current=$(installed_release_identity) || return 1
+    say "Manager: $SCRIPT_VERSION; installed Telemt: $current; Install baseline: $SUPPORTED_TELEMT_VERSION; Update: newest stable compatible official release"
     systemctl show telemt.service -p ActiveState -p SubState -p NRestarts -p User -p Group -p MainPID -p AmbientCapabilities -p CapabilityBoundingSet
     pid=$(systemctl show telemt.service -p MainPID --value)
     if [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/status ]]; then
@@ -987,7 +987,7 @@ check_manager() {
 
 repair_manager() {
     load_installation
-    candidate_compatibility "$BIN" "$CONFIG" || die 'Config validation failed; no repair attempted'
+    helper runtime-contract "$CONFIG" "$DATA" || die 'Config validation failed; no repair attempted'
     nginx_test || die 'Nginx validation failed; no repair attempted'
     backup_begin
     cp -a "$CONFIG" "$BACKUP/config.toml"
@@ -1020,8 +1020,9 @@ uninstall_load() {
     helper uninstall-plan "$TMP/uninstall-plan.json" "$BIN" "$CONFIG" "$UNIT" "$DATA" "$STATE" "$NGINX_ROOT" "$CERT_ROOT" "$ACME_ROOT" ||
         die 'Managed ownership/identity cannot be proven; no uninstall changes made'
     DOMAIN=$(jq -er '.certificate.domain' "$TMP/uninstall-plan.json")
-    [[ $(systemctl show telemt.service -p FragmentPath --value) == "$UNIT" &&
-       -z $(systemctl show telemt.service -p DropInPaths --value) ]] || die 'Unexpected unit/drop-in; uninstall refused'
+    if [[ $(systemctl show telemt.service -p FragmentPath --value) != "$UNIT" ]] || ! managed_dropins; then
+        die 'Unexpected unit/drop-in; uninstall refused'
+    fi
     generate_unit >"$TMP/expected-unit"
     cmp -s "$UNIT" "$TMP/expected-unit" || die 'Unit differs from exact manager contract'
     if ! nginx_test || ! systemctl is-active --quiet nginx || ! nginx_runtime_identity; then die 'Nginx identity/configuration requires review'; fi
@@ -1077,6 +1078,10 @@ uninstall_rollback() {
 uninstall_final() {
     local path
     for path in "$BIN" "$CONFIG_DIR" "$UNIT" "$DATA" "$STATE/manifest.json" "$STATE/web-link.txt"; do
+        [[ ! -e $path && ! -L $path ]] || return 1
+    done
+    for path in "$STATE/telemt-release.json" "$STATE/telemt-generation.json" "$STATE/update-journal.json" \
+        "$UNIT.d/50-telemt-web-manager-update.conf" "${UNIT%/*}/telemt-web-manager-recovery.service"; do
         [[ ! -e $path && ! -L $path ]] || return 1
     done
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then return 1; fi
@@ -1146,9 +1151,11 @@ uninstall_manager() {
         write_certificate_state
     fi
     if ! cmp -s "$UNIT" "$TMP/expected-unit" ||
-        [[ $(systemctl show telemt.service -p FragmentPath --value) != "$UNIT" ||
-           -n $(systemctl show telemt.service -p DropInPaths --value) ]]; then die 'Unit identity changed before stop'; fi
+        [[ $(systemctl show telemt.service -p FragmentPath --value) != "$UNIT" ]] || ! managed_dropins; then die 'Unit identity changed before stop'; fi
     systemctl disable --now telemt.service || die 'Telemt stop/disable failed'
+    if [[ -f ${UNIT%/*}/telemt-web-manager-recovery.service ]]; then
+        systemctl stop telemt-web-manager-recovery.service || die 'Managed recovery service stop failed'
+    fi
     uninstall_quiet || die 'Owned process/listener/firewall state remains; uninstall rolled back'
     helper uninstall-refresh "$BACKUP" || die 'Unable to snapshot stopped runtime; uninstall rolled back'
     apply_nginx
@@ -1215,7 +1222,11 @@ main() {
     trap 'exit 143' TERM HUP
     if [[ $action == --check ]]; then
         take_lock shared
-    else take_lock; fi
+        pending_update || die 'Pending/critical Update; Check remains read-only'
+    else
+        take_lock
+        recover_update || die 'Pending Update recovery requires manual review'
+    fi
     case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; --uninstall) uninstall_manager;; esac
 }
 

@@ -20,7 +20,7 @@ for SOCKS in direct 127.0.0.1:1080; do
     prepare_compatibility_data "$TMP/compat-data"
     generate_config "$secret" "$TMP/compat-data" >"$TMP/staged.toml"
     candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$TMP/compat-data"
-    printf 'ok - official pinned Telemt %s config healthcheck: staged static_directory + strict unknown-key rejection (%s)\n' "$RELEASE" "$SOCKS"
+    printf 'ok - official pinned Telemt %s config healthcheck: staged static_directory + strict unknown-key rejection (%s)\n' "$SUPPORTED_TELEMT_VERSION" "$SOCKS"
     mv "$TMP/compat-data/public" "$TMP/compat-data/saved-public"
     if candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$TMP/compat-data"; then die 'Missing static directory accepted'; fi
     mv "$TMP/compat-data/saved-public" "$TMP/compat-data/public"
@@ -41,6 +41,6 @@ for SOCKS in direct 127.0.0.1:1080; do
     done
 done
 unset secret
-printf 'ok - pinned Telemt %s staging healthcheck + fresh transaction fixtures; service/path health and journal transport mocked\n' "$RELEASE"
+printf 'ok - pinned Telemt %s staging healthcheck + fresh transaction fixtures; service/path health and journal transport mocked\n' "$SUPPORTED_TELEMT_VERSION"
 
 if [[ -n ${TELEMT_TEST_EVIDENCE_DIR:-} ]]; then printf '%s\n' "$(binary_version "$CANDIDATE")" >"$TELEMT_TEST_EVIDENCE_DIR/staging.version"; fi

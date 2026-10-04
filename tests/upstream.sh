@@ -20,7 +20,7 @@ for SOCKS in direct 127.0.0.1:1080; do
         printf 'FAIL - strict configuration accepted an unknown key\n' >&2; exit 1
     fi
 done
-printf 'ok - pinned Telemt %s real config healthcheck accepts direct/SOCKS and rejects unknown keys; runtime not started\n' "$RELEASE"
+printf 'ok - pinned Telemt %s real config healthcheck accepts direct/SOCKS and rejects unknown keys; runtime not started\n' "$SUPPORTED_TELEMT_VERSION"
 REAL_CANDIDATE="$CANDIDATE" bash tests/versions.sh
 
 if [[ -n ${TELEMT_TEST_EVIDENCE_DIR:-} ]]; then printf '%s\n' "$(binary_version "$CANDIDATE")" >"$TELEMT_TEST_EVIDENCE_DIR/upstream.version"; fi

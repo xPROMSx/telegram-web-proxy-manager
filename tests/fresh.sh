@@ -6,6 +6,11 @@ cd -- "$(dirname -- "$0")/.."
 ROOT=$PWD
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
+# This suite models account/lifecycle/download, including an intentionally fake
+# candidate. Real baseline receipt/gate publication is covered by update_boot.
+initialize_update_state() { return 0; }
+installed_release_identity() { binary_version "$BIN"; }
+installed_compatibility() { candidate_compatibility "$BIN" "$CONFIG"; }
 eval "$(declare -f recent_logs | sed '1s/recent_logs/official_recent_logs/')"
 eval "$(declare -f ensure_certificate | sed '1s/ensure_certificate/official_ensure_certificate/')"
 SANDBOX=$(mktemp -d)
@@ -71,7 +76,6 @@ if [[ -z ${REAL_CANDIDATE:-} ]]; then
     binary_version() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; }
 fi
 download_candidate() {
-    RELEASE=$SUPPORTED_TELEMT_VERSION
     CANDIDATE="$TMP/candidate"
     if [[ -n ${REAL_CANDIDATE:-} ]]; then cp -- "$REAL_CANDIDATE" "$CANDIDATE";
     else printf '#!/bin/sh\nexit 0\n' >"$CANDIDATE"; fi

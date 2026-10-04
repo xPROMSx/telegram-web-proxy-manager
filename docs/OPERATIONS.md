@@ -5,7 +5,8 @@
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
 
-Supported Telemt: **3.5.12**. See [upstream provenance](UPSTREAM.md) and the
+Supported Telemt: **3.5.12** (fresh Install baseline). Universal Update 0.2.0 is
+compatibility-driven across all stable SemVer series. See [upstream provenance](UPSTREAM.md) and the
 [REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
 
 ## Nginx requirements
@@ -167,36 +168,24 @@ installations require unit/config/topology review, even with the same service
 name. Managed TOML edits must retain the supported WEB/runtime contract;
 unknown includes/schemas are refused.
 
-Matching versions report `already up to date`, then check health. Otherwise the
-verified candidate runs `healthcheck` on the **current config** before backup,
-atomic binary replacement and restart. TOML stays byte-for-byte unchanged; binary
-updates do not modify Nginx, cert or unit. There are no automatic TOML migrations.
-Validation failure stops the update. The only download target is the reviewed
-3.5.12 pin, with embedded official asset hashes. Older compatible managed installs
-can upgrade to it; newer installs refuse before download and require manual review
-or a newer reviewed manager. Equal SemVer precedence with a different exact version
-(such as an unreviewed build suffix) also refuses. Future releases require an explicit
-manager change.
-Manager 0.1.3 pins Telemt 3.5.12 without changing generated TOML or the unit.
-Its new upstream inline-control default is overridden by our explicit `true`;
-WEB carrier method still defaults to POST, and AF_NETLINK is already allowed.
-CI exercises 3.5.11 -> 3.5.12 Update with byte-identical TOML, including the real
-candidate healthcheck (source binary and service lifecycle are fixture-only).
-Candidates must pass managed WEB/write-path validation and strict-parser probes;
-systemd enforces the writable boundary, and runtime failures trigger rollback. Older manager configs with quota outside
-`state` require manual review; updates do not add strict mode or rewrite paths.
-TOML hashes are checked before/after candidate healthcheck and before activation.
+Universal Update verifies the newest official stable candidate against the exact
+current managed TOML and state, with no major/minor gate. Matching exact versions
+still verify provenance and objective health; newer installed versions refuse
+downgrade. Custom/non-exact equal-precedence builds refuse. No automatic TOML
+migration, Nginx/certificate modification, unmanaged adoption or Reinstall occurs.
+See the complete [0.2.0 transaction and recovery contract](#universal-update-020).
 
-After restart, readiness polls systemd and the real listener for up to 90 seconds.
-Checks cover listener PID ownership, UID/capabilities, decoy, full local TLS,
-public HTTPS, SOCKS and recent logs. Failure restores/restarts the old binary.
-Failed rollback emits CRITICAL and the backup path. TCP sessions are not restored.
+Historical manager 0.1.3 acceptance upgraded 3.5.11 to the reviewed 3.5.12 pin.
+Generated TOML/unit remain unchanged in 0.2.0: explicit inline control `true`,
+tracked mode, default POST carrier and AF_NETLINK are retained. The additional
+exact manager-owned systemd drop-in and root recovery unit implement the start gate.
 
-Backups: `/root/telemt-backups/TIMESTAMP.RANDOM/`, 0700. `files.tsv` maps indexes
-to destinations; `nginx-plan.json` records changed originals and include hashes;
-`nginx-snapshot/` holds the complete read config tree. Backups may contain private
-TOML and are never automatically deleted. SIGINT/TERM/HUP and ordinary failures
-trigger rollback. SIGKILL, power loss and disk failure require manual recovery.
+Fresh Install and Uninstall backups remain under
+`/root/telemt-backups/TIMESTAMP.RANDOM/`, 0700. `files.tsv`, `nginx-plan.json` and
+`nginx-snapshot/` record prior files and Nginx bytes. They may contain secrets.
+Fresh Install/Uninstall power loss, SIGKILL, disk failure and unrelated external
+changes retain their manual-recovery boundaries; the durable automatic boot
+recovery below applies specifically to Universal Update.
 
 Fresh-install rollback records successful account creation (exact passwd/group
 records, UID/GID and home/shell) and created directory device/inode identities in
@@ -216,15 +205,150 @@ recovery. Successfully issued certificates and committed manager ACME webroot,
 marker and renewal vhost remain outside this cleanup. A clean retry reuses valid
 manager-owned webroot certificate state without unnecessary issuance.
 
+## Universal Update (0.2.0)
+
+`--update` still means an existing healthy manager-owned deployment. It does not
+implement Reinstall, adoption, automatic configuration migration or a general
+rollback UI. The manager takes the same exclusive lock and recovers a pending
+transaction before any further mutation. Check and Show use shared locks, remain
+offline/read-only and refuse pending/CRITICAL state.
+
+Discovery is fixed to official repository ID `1125007401`, name `telemt/telemt`.
+Two complete release enumerations use 100-item pages through a short/empty final
+page (at most 100 pages, 180 seconds per enumeration). Inventory drift, duplicate
+IDs/tags/JSON keys, malformed new stable versions and equal-precedence ambiguity
+refuse. Drafts and prereleases, including SemVer prereleases mislabeled stable,
+are excluded. All major/minor series participate; the seven exact historical
+malformed records below are the only quarantine:
+
+| Release ID | Tag | Published UTC |
+| --- | --- | --- |
+| 286377748 | 2.0.0.1 | 2026-02-14T13:29:46Z |
+| 285764063 | 1.2.0.2 | 2026-02-12T16:30:28Z |
+| 278074445 | 1.1.1.0 | 2026-01-19T23:20:01Z |
+| 275857798 | 1.0.3.0 | 2026-01-11T22:02:40Z |
+| 274860393 | 1.0.2.0 | 2026-01-07T15:21:06Z |
+| 273844763 | 1.0.1.0 | 2026-01-02T16:40:50Z |
+| 273320189 | 1.0.0.0 | 2025-12-30T02:32:21Z |
+
+The chosen release is frozen with signed annotated tag/object/commit, GitHub
+verification, release identity and both GNU archive/checksum asset identities.
+Metadata, API digests, exact single checksum filename/digest, archive hash and
+safe one-file extraction must agree before execution. Official HTTPS redirects
+are validated before following. Rechecks occur before download, after precheck,
+just before stopping the old service, and before commit. A newer stable before
+stop aborts; after stop the frozen transaction completes or rolls back.
+
+The root-only schema-1 receipt is
+`/var/lib/telemt-web-manager/telemt-release.json`: installed version, repository,
+architecture, provenance identities/digests, binary hash/size, manager version,
+transaction/generation IDs and timestamps. Generation metadata also binds the
+receipt hash and root-owned DATA marker. All controls are regular non-symlink,
+single-link root:root 0600 files below root-only 0700 state. A pristine v0.1.4
+3.5.12 deployment may migrate under the exclusive lock after embedded binary
+hash, running image and managed health are proven. Its reviewed-baseline receipt
+honestly leaves unavailable release/tag verification fields null. A non-baseline
+missing receipt, partial state or custom binary is never adopted.
+
+Private candidate execution, including version/healthcheck, uses a root-controlled
+chroot, mount/network/PID namespaces, real Telemt UID/private group, only
+CAP_NET_ADMIN and cleared environment. Trusted Ubuntu helpers/libraries are copied;
+`ldd` never examines a candidate. Live DATA, certificates, host root/backups and
+systemd sockets are inaccessible. A transient cgroup limits memory to 1 GiB,
+tasks to 4096, CPU to two cores and lifetime to 180 seconds; disk writes are
+limited to 4 MiB/s on the backing device and the actual cgroup limits are checked.
+Output and command deadlines are bounded.
+Read-only compatibility checks use separately marked private scratch. Normal
+completion reaps it; an exclusive recovery cleans only schema-validated scratch
+whose supervisor is dead, after stopping its derived private cgroup. Live or
+unmarked/unknown scratch refuses automatic cleanup and needs manual review.
+Missing isolation tooling refuses. Precheck uses synthetic DATA and exact TOML,
+including an unknown-key negative. Stopped-state rehearsal uses a separate clone,
+two runtime/shutdown/restart cycles, nonzero quota/reset metadata and semantic
+readback. Only a pristine third clone can become the live candidate generation.
+
+The old service must stop gracefully, with no remaining UID process/cgroup/private
+listener or Telemt-owned firewall state. The authoritative complete DATA inventory
+is then sealed. Fd/O_NOFOLLOW streaming copies use 1 MiB buffers and preserve bytes,
+UID/GID, modes and nanosecond mtime. Bounds are 8 GiB logical data, 100,000 entries,
+depth 32 and 16 MiB total path strings. Symlinks/hardlinks, mounts/bind mounts,
+special files, setid/sticky/writeable metadata, unexpected owners, xattrs/ACLs/
+capabilities and source races refuse. Logical block/inode budgets and a 512 MiB
+reserve are checked before downtime and authoritatively after stop; an existing
+LKG is never deleted to make space. Private probe/evidence storage additionally
+reserves 1 GiB for bounded candidate writes; demands are combined on a shared filesystem.
+
+Fixed private storage is `/var/lib/.telemt-web-manager-update/TRANSACTION/` on the
+same DATA filesystem and `/root/telemt-backups/update-TRANSACTION/` for evidence,
+both root-only. The old complete DATA is renamed into protected storage; binary,
+receipt and sealed inventory are retained. File and parent-directory fsync precede
+success markers. A partial clone/index is never an activation rollback point.
+
+Schema-1 `STATE/update-journal.json` durably records intent before mutation and
+verified result afterward. Phases are STAGING, PREPARED, OLD_STOPPED,
+SNAPSHOT_COMPLETE, CANDIDATE_ACTIVATED, CANDIDATE_RUNNING, COMMITTING, COMMITTED,
+ROLLING_BACK, ROLLBACK_COMPLETE and CRITICAL. Paths derive only from fixed layout
+and validated transaction IDs, never remote JSON paths. Known mixed old/new
+publication gaps can recover; unknown binaries/receipts/generations fail closed.
+
+The exact drop-in `telemt.service.d/50-telemt-web-manager-update.conf` requires and
+orders the root `telemt-web-manager-recovery.service` before Telemt, disables forced
+kill during a graceful stop, and invokes a read-only root ExecCondition. It allows
+only a terminal authoritative generation or a short-lived supervised `/run` permit
+binding transaction/generation/binary, boot ID, supervisor PID/starttime and phase.
+The recovery service uses Type=notify: restoration precedes READY=1, then supervised
+old startup and full health precede ROLLBACK_COMPLETE. It shares the manager lock,
+but a live transaction dependency never waits on its own lock-holding supervisor.
+
+Nonterminal recovery restores the original full old DATA, binary and receipt,
+reloads systemd and proves old process, WEB, path and current-invocation journal
+health with a 15-second dwell. Repeated recovery is idempotent, including a crash
+after the restarted old process legitimately writes data. COMMITTED is authoritative
+and boots the new generation. Catchable INT/TERM/HUP perform rollback; SIGKILL or
+power loss is recovered on the next boot/locked mutation. A killed manager can
+leave an already-started candidate serving in the same boot until recovery runs.
+Failed or ambiguous recovery enters CRITICAL, stops Telemt, closes the gate and
+retains evidence. Do not delete the journal/gate or mix binary/data manually;
+review the complete receipt, sealed index and backups before root-led recovery.
+Disk/fsync failure and external root modifications cannot guarantee recovery.
+
+Activation proves exact process image hash, PID/starttime/invocation, UID/GID,
+CAP_NET_ADMIN, cgroup/OOM/NRestarts, PID-owned listener, Nginx/local/public TLS/HTTP,
+optional SOCKS, authenticated WEB session and current journal. Acceptance samples
+0/5/15/30/60/90/120/150 seconds after readiness; a graceful stop/restart and another
+45 seconds follow. Persistent DATA/quota is validated while stopped before restart.
+Immutable TOML, link, base unit, manifest, Nginx, certificate/renewal and foreign
+firewall state must remain unchanged. WARN stays diagnostic; ERROR/FATAL/panic,
+malformed log transport or any objective failure blocks commit.
+
+After durable commit, one full old LKG is root-normalized with original restore
+metadata retained in the sealed index. The preceding LKG is validated and retired
+only afterward, with a durable resumable retirement marker. Historical audit/binary
+backups remain. Post-commit cleanup failure reports accepted Update plus an explicit
+cleanup warning, never rolls back the accepted generation; it must be resolved
+before another mutation. No menu action restores historical LKG.
+
+Fresh Install writes the unchanged 3.5.12 baseline receipt/generation/gate before
+first start. Repair remains conservative. Uninstall removes the exact live update
+controls, DATA marker, drop-in and recovery unit, while root-owned retained backups/
+LKG and existing certificate policy remain. Account ownership scans stay strict.
+The bootstrap parses deployed recovery schemas and candidate declarations as
+data, without executing either candidate file. Pending/critical/corrupt state,
+unsupported schemas, changed gate contracts and unsafe legacy downgrade refuse
+before atomic manager-pair replacement, including explicit downgrade requests.
+
 ## Check and repair
 
 `--check` leaves managed configuration/services unchanged. It reports versions,
 systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/TLS,
 expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
 lines are not printed. Root is required; private temporary diagnostics are deleted.
-Version reporting is local: manager, installed Telemt and supported Telemt 3.5.12.
-A mismatch reports unsupported status and returns nonzero; no latest-release query
-is made. WARN records only contribute a diagnostic count. ERROR/FATAL and genuine
+Version reporting is local: manager, receipted installed Telemt and Install baseline
+3.5.12. A valid receipted newer version can pass objective health without baseline
+equality; no GitHub query is made. A pristine legacy 3.5.12 can report receipt
+migration pending, without mutating it during Check. Pending/CRITICAL Update refuses
+read-only Check/Show; a locked mutation performs recovery first. WARN records only
+contribute a diagnostic count. ERROR/FATAL and genuine
 Rust panic records fail; malformed journal transport or unsafe controls fail closed.
 Payload words such as `error=`, `conntrack` or `Permission denied` cannot promote
 a WARN. Every line of multiline records is checked for structured fatal prefixes.
@@ -399,11 +523,10 @@ unknown keys fail, final paths never contain staging, config semantics match,
 and incompatible/missing-decoy candidates never reach even the mocked Certbot
 boundary. OS/account/systemd/ACME actions remain fixtures; this is not live issuance.
 
-Updates validate the installed runtime/configuration and compare it with the fixed
-3.5.12 target. Equal versions keep the health checks; older compatible managed
-installs upgrade, while newer ones refuse without downloading or modifying files.
-Failures restore the old binary; config, unit, certificate and Nginx are not migrated.
-No compatibility promise is made for future releases. The real runtime smoke
+Universal Update validates the installed receipt/runtime and the newest stable
+official candidate, with full old-generation rollback. Config, base unit, certificate
+and Nginx are not migrated. Compatibility is tested, never inferred from a future
+version number. The separate Install-baseline runtime smoke
 starts the exact pin with real Linux helpers and CAP_NET_ADMIN in a separate
 network namespace. It first proves owned chains absent, verifies process-owned
 listener/HTTP index again after a measured >=10-second dwell, and refuses pinned
@@ -441,7 +564,8 @@ The bootstrap script itself is fetched from main in the quick command; review it
 or download it before execution if desired. The program pair is never installed
 from mutable main. To test an unpublished PR/commit, use the advanced/manual
 installation workflow with its reviewed immutable checkout.
-The manager's release channel is independent from the fixed Telemt 3.5.12 pin.
+The manager's release channel is independent from the fixed Telemt 3.5.12 Install
+baseline and Universal Update's compatibility-driven official release discovery.
 
 Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
 Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then
@@ -547,15 +671,15 @@ offer additionally requires the immutable platform validation.
 | --- | --- |
 | curl / tar / openssl / jq / python3 / certbot | corresponding same-name package |
 | dig | dnsutils |
-| flock | util-linux |
-| ss | iproute2 |
+| flock, unshare, setpriv, mount | util-linux |
+| ss, ip | iproute2 |
 | iptables, ip6tables, iptables-save, ip6tables-save | iptables |
 | nft / conntrack | nftables / conntrack |
-| getent | libc-bin |
+| getent, ldd (trusted Ubuntu helpers only, never a candidate) | libc-bin |
 | useradd, userdel, groupadd, groupdel | passwd |
 | find | findutils |
 | awk / grep / sed / cmp | mawk / grep / sed / diffutils |
-| cat, chmod, chown, cp, cut, date, dirname, id, install, mktemp, mv, readlink, rm, sha256sum, sleep, stat, timeout, tr, uname, wc | coreutils |
+| cat, chmod, chown, chroot, cp, cut, date, dirname, id, install, mktemp, mv, readlink, rm, rmdir, sha256sum, sleep, stat, timeout, tr, uname, wc | coreutils |
 
 Install/Update/Check/Repair retain the shared tool prerequisites; Uninstall also
 checks groupadd, find and IPv4/IPv6 save commands before mutation. Archive tar is
@@ -563,9 +687,10 @@ retained from the prior declared prerequisites; safe extraction itself is Python
 Git and ShellCheck in the manual development example are not manager auto-install
 targets. Package names never come from user input or external release data.
 
-Owner finding: exact PR #7 candidate 0.1.4 on clean Ubuntu 26.04.1 LTS stopped
-menu Install before mutation because conntrack was absent. The dependency UX
-follow-up has CI fixture coverage; owner repeat live acceptance remains pending.
+Owner acceptance of v0.1.4 completed on clean Ubuntu 26.04.1 LTS: missing tool
+installation through the manager, fresh Install, Show current WEB link, real
+Telegram client use and final Check OK. That historical acceptance does not cover
+Universal Update 0.2.0, whose owner live acceptance remains pending.
 
 ## Current WEB link (manager 0.1.4)
 
@@ -596,14 +721,15 @@ the secret. Config, journals and backups also require secret-safe handling.
 ## Managed uninstall
 
 Managed uninstall was introduced in 0.1.2 as `--uninstall --confirm-uninstall`.
-In the current 0.1.4 menu, Uninstall is item 6 and Exit is item 7.
+In the current 0.2.0 menu, Uninstall is item 6 and Exit is item 7.
 The interactive confirmation is the exact word `UNINSTALL`;
 only then is certificate deletion offered with default N. `--delete-certificate`
 requires both uninstall and explicit confirmation. This removes Telemt, not the
 manager, and does not adopt or replace manual/unmanaged installations.
 
 Ownership validation is separate from the normal installation health loader.
-The complete schema-1 manifest, exact generated unit without drop-ins, exact WEB
+The complete schema-1 manifest, exact generated base unit with only the approved
+manager update gate/drop-in where installed, exact WEB
 vhost/map/upstream, managed configuration/link, safe exclusive roots and exact
 private UID/GID are required. Unknown schema, links/hardlinks, mounted managed
 roots, changed entries, shared account ownership or supplementary groups refuse
