@@ -232,6 +232,19 @@ incompatible/no-op/quota-reset candidates use the same policy as 3.5.13, includi
 ARM receipt policy; they are not an upstream 4.0.0 runtime claim. Late objective
 failures restore full DATA/receipt/binary and prior controls without retries.
 
+Bounded safety regressions distinguish exact manager-owned controls from valid
+certificate renewal and foreign firewall/Nginx changes, including pre-stop aborts
+and activated-candidate rollback. An endpoint/count fixture proves full inventory
+discovery stays pre-downtime and frozen revalidation uses no history enumeration.
+Scoped stopped-DATA fsync faults/interruption precede snapshot authority, three
+recovery-unit/drop-in publication boundaries remain retryable, and terminal boot
+authority survives persistent housekeeping failure while the next mutation and
+bootstrap refuse incomplete cleanup. Runtime/bootstrap immutable-key boundaries
+and shell/helper manager/baseline constants have mechanical parity regressions.
+The existing Ubuntu boot cycle additionally exercises persistent disposable-evidence
+cleanup failure across actual COMMITTED and ROLLBACK_COMPLETE reboots, with ordinary
+CLI mutation refusal; this adds one focused terminal reboot, not another matrix.
+
 The bootstrap root suite validates terminal receipts/journals, generation/binary/
 DATA identity and exact gate contracts without executing the downloaded pair.
 Pending, corrupt, unknown-schema and explicit legacy-downgrade cases refuse before

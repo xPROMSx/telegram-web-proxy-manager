@@ -643,6 +643,29 @@ def nginx_tokens(source):
     return tokens
 
 
+def nginx_owned_stream(parser, host, stream):
+    """Exact owned fragments, independent of unrelated stream configuration."""
+    mappings=[n for n in exact(stream.children,'map') if len(n.args)==3 and n.args[1]=='$ssl_preread_server_name']
+    require(len(mappings)==1)
+    rows=[n for n in expand(mappings[0].children) if n.args[0]==host]
+    upstreams=[n for n in exact(stream.children,'upstream') if n.args==['upstream','twm_frontend']]
+    require(len(rows)==len(upstreams)==1 and rows[0].args==[host,'twm_frontend'] and rows[0].children is None)
+    require([n.args for n in expand(upstreams[0].children)]==[['server','127.0.0.1:7444']])
+    require(sum('twm_frontend' in n.args for n in walk(stream.children))==2,
+            'managed upstream shared or substituted')
+    ranges={}; managed={}
+    for node,literal in ((rows[0],f'    {host} twm_frontend; # telemt-web-manager\n'),
+                        (upstreams[0],'\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n')):
+        source=parser.sources[node.path]; line_start=source.rfind('\n',0,node.start)+1
+        start=node.start-4 if node==rows[0] else line_start-len('\n# telemt-web-manager\n')
+        if node==rows[0]: require(start>=line_start and not source[line_start:start].strip())
+        require(start>=0 and source[start:start+len(literal)]==literal,'managed stream entry changed')
+        key='nginx-map' if node==rows[0] else 'nginx-upstream'
+        managed[key]=hashlib.sha256((str(node.path.relative_to(parser.root))+'\0'+literal).encode()).hexdigest()
+        ranges.setdefault(node.path,[]).append((start,start+len(literal)))
+    return managed,ranges
+
+
 def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False):
     domain(host)
     parser = Nginx(root)
@@ -747,20 +770,7 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         require([n for n in entries if n.args[1] == "twm_frontend"] == existing,
                 "managed upstream shared by another route")
         require(sum("twm_frontend" in n.args for n in walk(nodes)) == 2)
-        row, upstream = existing[0], owned[0]
-        ranges = {}
-        for node, literal in ((row, f"    {host} twm_frontend; # telemt-web-manager\n"),
-                              (upstream, "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n")):
-            source = parser.sources[node.path]
-            line_start = source.rfind("\n", 0, node.start) + 1
-            start = node.start - 4 if node == row else line_start
-            if node == row:
-                require(start >= line_start and not source[line_start:start].strip())
-            if node == upstream:
-                start -= len("\n# telemt-web-manager\n")
-            require(start >= 0 and source[start:start + len(literal)] == literal,
-                    "managed stream entry changed")
-            ranges.setdefault(node.path, []).append((start, start + len(literal)))
+        managed,ranges = nginx_owned_stream(parser,host,stream)
         for path, spans in ranges.items():
             content = parser.sources[path]
             for start, end in sorted(spans, reverse=True): content = content[:start] + content[end:]
@@ -771,6 +781,7 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
             "old": base64.b64encode(p.read_bytes()).decode() if p.exists() else None}
             for p, s in edits.items()]}
     Path(output).write_text(json.dumps(plan))
+    if uninstall: return managed
 
 
 def render_acme(host, webroot):
@@ -1897,8 +1908,9 @@ class UpdateReleases:
                     release=identity, asset=asset(basename), checksum_asset=asset(basename + '.sha256'))
 
     def recheck(self, frozen, require_latest=True):
-        latest = self.latest()
-        if require_latest: require(latest['id'] == frozen['release']['id'], 'new stable release appeared; rerun Update')
+        if require_latest:
+            latest = self.latest()
+            require(latest['id'] == frozen['release']['id'], 'new stable release appeared; rerun Update')
         record = dict(frozen['release'], version=frozen['installed_version'])
         require(self.freeze(record, frozen['architecture']) == frozen, 'frozen upstream provenance drift')
 
@@ -2054,7 +2066,8 @@ class UpdateTree:
         return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
                 info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
-    def inventory(self, root, seal=True):
+    def inventory(self, root, seal=True, durable=False):
+        require(not durable or seal)
         root = Path(root)
         no_managed_mounts([root])
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -2095,6 +2108,7 @@ class UpdateTree:
                             count += len(block); require(count <= info.st_size); digest.update(block)
                         require(count == info.st_size)
                         record['sha256'] = digest.hexdigest()
+                if durable: os.fsync(opened)  # Files first, then their containing directories.
                 if seal:
                     require(self.same(info) == self.same(os.fstat(opened))
                             == self.same(os.stat(name, dir_fd=parent, follow_symlinks=False)), 'DATA changed during inventory')
@@ -2102,11 +2116,15 @@ class UpdateTree:
         try:
             # The root descriptor remains anchored even if a pathname changes.
             parent = os.open(root.parent, flags)
-            try: walk(parent, root.name, '.', 0)
+            try:
+                walk(parent, root.name, '.', 0)
+                if durable: os.fsync(parent)  # Persist the DATA root's directory entry too.
             finally: os.close(parent)
             require(os.fstat(fd).st_ino == root.lstat().st_ino)
         finally: os.close(fd)
-        return dict(schema=1, entries=records, logical_bytes=total)
+        result = dict(schema=1, entries=records, logical_bytes=total)
+        if durable: require(self.inventory(root) == result, 'DATA changed during durability sealing')
+        return result
 
     @staticmethod
     def validate(index):
@@ -2233,7 +2251,8 @@ class UpdateJournal:
                 UpdateReceipt.validate(value[key]['receipt'])
                 require(type(value[key]['receipt_present']) is bool)
         require(type(value['immutable']) is dict and len(value['immutable']) <= 256)
-        require(all(isinstance(k, str) and len(k) < 8192 and UPDATE_HEX.fullmatch(v)
+        require(all(isinstance(k, str) and 0 < len(k) <= 512 and all(32 <= ord(c) < 127 for c in k)
+                    and isinstance(v, str) and UPDATE_HEX.fullmatch(v)
                     for k,v in value['immutable'].items()))
         if value['snapshot'] is not None:
             update_exact(value['snapshot'], {'sha256','entries','logical_bytes','generation_id'})
@@ -2348,11 +2367,15 @@ WantedBy=multi-user.target
 
 def update_gate_contract(layout, allow_absent=False):
     directory = layout.dropin.parent
-    if not directory.exists() and not layout.recovery_unit.exists():
+    if os.path.lexists(directory):
+        safe_path(directory)
+        require(directory.is_dir() and {p.name for p in directory.iterdir()} <= {layout.dropin.name},
+                'foreign Telemt drop-in')
+    if os.path.lexists(layout.recovery_unit):
+        require(update_read(layout.recovery_unit, 4096, (0o644,)) == UPDATE_RECOVERY_UNIT.encode(),
+                'manager recovery unit changed')
+    if not os.path.lexists(layout.dropin):
         require(allow_absent, 'manager start gate missing'); return False
-    safe_path(directory)
-    require(directory.is_dir() and {p.name for p in directory.iterdir()} == {layout.dropin.name},
-            'foreign Telemt drop-in')
     require(update_read(layout.dropin, 4096, (0o644,)) == UPDATE_DROPIN.encode()
             and update_read(layout.recovery_unit, 4096, (0o644,)) == UPDATE_RECOVERY_UNIT.encode(),
             'manager gate/recovery unit changed')
@@ -2361,12 +2384,14 @@ def update_gate_contract(layout, allow_absent=False):
 
 def update_gate_publish(layout):
     if update_gate_contract(layout, allow_absent=True): return
+    # Harmless alone; the drop-in is the final activation point. Never publish
+    # a Telemt Requires dependency before its durable target unit exists.
+    update_write(layout.recovery_unit, UPDATE_RECOVERY_UNIT.encode(), 0o644)
     safe_path(layout.dropin.parent)
-    layout.dropin.parent.mkdir(mode=0o755)
+    layout.dropin.parent.mkdir(mode=0o755, exist_ok=True)
     layout.dropin.parent.chmod(0o755)
     update_fsync(layout.dropin.parent.parent)
     update_write(layout.dropin, UPDATE_DROPIN.encode(), 0o644)
-    update_write(layout.recovery_unit, UPDATE_RECOVERY_UNIT.encode(), 0o644)
 
 
 def update_permit(layout, journal, receipt):
@@ -2502,26 +2527,6 @@ class UpdateSystemd:
                       (['nft','list','ruleset'],['iptables-save'],['ip6tables-save']))
         if clean: require(not re.search(rb'TELEMT_|telemt_conntrack',raw), 'Telemt firewall shutdown incomplete')
         return raw
-
-    def foreign_firewall(self):
-        # Tracked mode has no manager-owned NOTRACK rules. Comparing logical
-        # foreign state detects changes; it never restores/flushes host rules.
-        self.firewall(clean=True)
-        value=update_json(update_run(['nft','-j','list','ruleset'],maximum=8*UPDATE_CHUNK),8*UPDATE_CHUNK)
-        update_exact(value,{'nftables'})
-        require(type(value['nftables']) is list and len(value['nftables'])<=100000)
-        def normalize(item,depth=0):
-            require(depth<=32)
-            if type(item) is dict:
-                return {key:normalize(v,depth+1) for key,v in item.items() if key not in ('handle','packets','bytes')}
-            if type(item) is list: return [normalize(v,depth+1) for v in item]
-            return item
-        nft=[normalize(item) for item in value['nftables'] if 'metainfo' not in item]
-        tables=[]
-        for command in ('iptables-save','ip6tables-save'):
-            raw=update_run([command],maximum=8*UPDATE_CHUNK).decode()
-            tables.append([re.sub(r'\[[0-9]+:[0-9]+\]','[counter]',line) for line in raw.splitlines() if not line.startswith('#')])
-        return hashlib.sha256(json.dumps(dict(nft=nft,iptables=tables),sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
     def conntrack(self):
         paths=update_run(['systemd-path','search-binaries-default'],maximum=4096).decode().strip()
@@ -2677,26 +2682,44 @@ class UpdateEngine:
                'renew-hook':self.layout.path('/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager')}
         manifest=update_json(update_read(paths['manifest'],16384),16384)
         host=domain(manifest['domain'])
-        paths['cert-renewal']=self.layout.path('/etc/letsencrypt/renewal/'+host+'.conf')
-        for name in ('cert','chain','fullchain','privkey'):
-            path=self.layout.path('/etc/letsencrypt/live/'+host+'/'+name+'.pem').resolve(strict=True)
-            require(path.is_relative_to(self.layout.path('/etc/letsencrypt/archive/'+host)))
-            paths['cert-'+name]=path
         if (self.layout.state/'certificate.json').exists(): paths['certificate-state']=self.layout.state/'certificate.json'
-        nginx=Nginx(self.layout.path('/etc/nginx')); nginx.read(nginx.root/'nginx.conf')
-        require(len(nginx.sources)<=240)
-        for path in nginx.sources:
-            require(path.is_relative_to(nginx.root))
-            paths['nginx:'+str(path.relative_to(nginx.root))]=path
+        nginx=self.layout.path('/etc/nginx')
+        paths['nginx-web-vhost']=nginx/'conf.d/telemt-web-manager.conf'
+        acme=nginx/'conf.d/telemt-web-manager-acme.conf'
+        if os.path.lexists(acme): paths['nginx-acme-vhost']=acme
+        parser=Nginx(nginx); streams=exact(parser.read(nginx/'nginx.conf'),'stream')
+        require(len(streams)==1)
+        # Same exact fragments as reverse planning, without treating unrelated
+        # topology/settings as an immutable manager-owned byte contract.
+        values.update(nginx_owned_stream(parser,host,streams[0])[0])
         for key,path in paths.items():
             safe_path(path); values[key]=update_hash(path,16*UPDATE_CHUNK)['sha256']
-        values['foreign-firewall']=self.systemd.foreign_firewall()
         if update_gate_contract(self.layout,allow_absent=True):
             values['gate']=update_hash(self.layout.dropin)['sha256']
             values['recovery-unit']=update_hash(self.layout.recovery_unit)['sha256']
         return values
 
-    def verify_immutable(self): require(self.immutable()==self.journal.value['immutable'], 'immutable deployment bytes changed')
+    def external_contract(self):
+        manifest=update_json(update_read(self.layout.state/'manifest.json',16384),16384)
+        host=domain(manifest['domain']); certroot=self.layout.path('/etc/letsencrypt')
+        webroot=self.layout.path('/var/lib/telemt-web-manager-acme'); nginx=self.layout.path('/etc/nginx')
+        record=certificate_record_value(host,certroot,webroot,nginx)
+        require(record['acme_webroot']==manifest['acme_webroot'])
+        if os.path.lexists(self.layout.state/'certificate.json'):
+            certificate_record_check(self.layout.state,host,certroot,webroot,nginx)
+        # Current lineage, hostname and key pairing, never transaction-start PEM bytes.
+        fullchain=str(certroot/'live'/host/'fullchain.pem'); key=str(certroot/'live'/host/'privkey.pem')
+        require(update_run(['openssl','x509','-in',fullchain,'-noout','-checkhost',host],maximum=16384).strip()==
+                ('Hostname '+host+' does match certificate').encode(), 'current certificate hostname mismatch')
+        update_run(['openssl','x509','-in',fullchain,'-noout','-checkend','0'],maximum=16384)
+        public=update_run(['openssl','x509','-in',fullchain,'-pubkey','-noout'],maximum=16384)
+        require(update_run(['openssl','pkey','-pubin','-outform','DER'],input_data=public,maximum=16384)==
+                update_run(['openssl','pkey','-in',key,'-pubout','-outform','DER'],maximum=16384),
+                'current certificate key mismatch')
+
+    def verify_immutable(self):
+        require(self.immutable()==self.journal.value['immutable'], 'immutable deployment bytes changed')
+        self.external_contract()
 
     def budget(self,binary_bytes):
         index=self.tree.budget(self.layout.data,binary_bytes)
@@ -2873,7 +2896,7 @@ class UpdateEngine:
         update_private_directory(self.layout.backups); update_private_directory(backup)
         update_private_directory(self.layout.stash); update_private_directory(self.layout.trees(transaction))
         try:
-            self.releases.recheck(frozen)
+            self.releases.recheck(frozen,require_latest=False)
             self.budget(128*UPDATE_CHUNK)
             candidate=self.releases.download(frozen,backup)
             new=UpdateReceipt.create(candidate,transaction,uuid.uuid4().hex,frozen=frozen)
@@ -2881,7 +2904,7 @@ class UpdateEngine:
             root=self.isolation.prepare(backup/'precheck',candidate)
             print('Running isolated candidate compatibility and WEB checks before downtime.',flush=True)
             self.isolation.run(root,new['installed_version'])
-            self.releases.recheck(frozen); self.verify_immutable()
+            self.releases.recheck(frozen,require_latest=False); self.verify_immutable()
             self.budget(new['binary']['size'])
             update_copy_stream(self.layout.binary,backup/'old-binary',0o600)
             update_write_json(backup/'old-receipt.json',old)
@@ -2891,7 +2914,7 @@ class UpdateEngine:
             self.step('STOP_OLD',self.systemd.stop,'OLD_STOPPED')
             print('Old service stopped gracefully; sealing complete DATA.',flush=True)
             self.budget(new['binary']['size']); self.systemd.quiet()
-            index=self.tree.inventory(self.layout.data)
+            index=self.tree.inventory(self.layout.data,durable=True)
             update_write_json(backup/'stopped-data-index.json',index)
             self.journal.value['snapshot']=dict(sha256=update_hash(backup/'stopped-data-index.json',64*UPDATE_CHUNK)['sha256'],
                 entries=len(index['entries']),logical_bytes=index['logical_bytes'],generation_id=old['generation_id'])
@@ -3015,20 +3038,34 @@ class UpdateEngine:
                     'unknown DATA at interrupted transition')
 
     def recover(self, force=False, boot=False):
-        self.clean_readonly()
         if not self.layout.journal.exists():
             if boot: raise ValueError('boot recovery journal missing')
+            self.clean_readonly()
             return
         value=self.journal.read()
         require(value['phase']!='CRITICAL', 'critical update retained for manual recovery')
         if value['phase'] in UPDATE_TERMINAL:
             if value['kind']=='baseline-migration' and value['phase']=='ROLLBACK_COMPLETE':
                 self.recover_migration(boot); return
-            update_generation(self.layout)
-            if value['phase']=='COMMITTED': self.finish_committed()
-            else: self.finish_rollback()
+            # Terminal authority is independent of disposable evidence/LKG
+            # housekeeping. READY cannot be held hostage by cleanup failure.
+            update_service_gate(self.layout)
             if boot: update_notify_ready()
+            try:
+                self.clean_readonly()
+                if value['phase']=='COMMITTED': self.finish_committed()
+                else: self.finish_rollback()
+                if self.journal.value['error']=='cleanup-failed':
+                    self.journal.value['error']=None; self.journal.publish()
+            except (ValueError,OSError,subprocess.SubprocessError):
+                self.journal.value['error']='cleanup-failed'
+                try: self.journal.publish()
+                except OSError:
+                    if not boot: raise
+                print('Terminal generation is authoritative; housekeeping remains pending. Next mutation/bootstrap requires cleanup.',file=sys.stderr)
+                if not boot: raise
             return
+        self.clean_readonly()
         if not force and update_supervisor_alive(value['supervisor']):
             # The active lock holder is doing this transaction. systemd recovery
             # is a dependency barrier only; it must not wait on its own parent.
@@ -3075,8 +3112,12 @@ class UpdateEngine:
             print('Rollback complete: old binary, full DATA, receipt and objective health restored.')
         except BaseException:
             if self.journal.value['phase']=='ROLLBACK_COMPLETE':
-                self.journal.value['error']='cleanup-failed'; self.journal.publish()
+                self.journal.value['error']='cleanup-failed'
+                try: self.journal.publish()
+                except OSError:
+                    if not boot: raise
                 print('Old generation restored and healthy; retained evidence cleanup requires manual review.',file=sys.stderr)
+                if boot: return
                 raise
             try:
                 import traceback

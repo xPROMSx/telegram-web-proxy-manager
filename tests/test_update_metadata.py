@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import sys
 import tarfile
@@ -36,6 +37,49 @@ class API:
 
 
 class UpdateMetadataTests(unittest.TestCase):
+    def test_manager_and_reviewed_baseline_constants_match_shell(self):
+        source=(ROOT/'telemt-web-manager.sh').read_text()
+        expected={'SCRIPT_VERSION':s.UPDATE_MANAGER_VERSION,'SUPPORTED_TELEMT_VERSION':s.BASELINE_VERSION,
+            'SUPPORTED_TELEMT_COMMIT':s.BASELINE_COMMIT,'TELEMT_SHA256_X86_64':s.BASELINE_HASHES['x86_64'][0],
+            'TELEMT_SHA256_AARCH64':s.BASELINE_HASHES['aarch64'][0]}
+        for name,value in expected.items():
+            self.assertEqual(re.findall(r'^readonly '+name+r'=([^\s]+)$',source,re.M),[value])
+
+    def test_frozen_revalidation_endpoints_and_bounded_discovery_count(self):
+        selected=release(number=1000); records=[release(f'0.0.{i}',i+1) for i in range(100)]+[selected]
+        name='telemt-x86_64-linux-gnu.tar.gz'
+        def asset(identifier,suffix):
+            filename=name+suffix
+            return dict(id=identifier,name=filename,size=97,state='uploaded',digest='sha256:'+'a'*64,
+                browser_download_url='https://github.com/telemt/telemt/releases/download/3.5.13/'+filename,
+                url=f'https://api.github.com/repos/telemt/telemt/releases/assets/{identifier}')
+        responses={'/releases/1000':selected|{'assets':[asset(10,''),asset(11,'.sha256')]},
+            '/git/ref/tags/3.5.13':dict(ref='refs/tags/3.5.13',object=dict(type='tag',sha='b'*40)),
+            '/git/tags/'+'b'*40:dict(sha='b'*40,tag='3.5.13',object=dict(type='commit',sha='c'*40),
+                verification=dict(verified=True,reason='valid',verified_at='2026-10-03T17:52:11Z'))}
+        api=API(records); enumerate_api=api.api
+        def endpoint(suffix):
+            if suffix in responses: api.calls.append(suffix); return copy.deepcopy(responses[suffix])
+            return enumerate_api(suffix)
+        api.api=endpoint; policy=s.UpdateReleases(api)
+        frozen=policy.freeze(policy.latest(),'x86_64')
+        policy.recheck(frozen,require_latest=False)  # before download
+        policy.recheck(frozen,require_latest=False)  # isolated precheck complete
+        policy.recheck(frozen)  # final pre-STOP latest check
+        count=len(api.calls); api.records.append(release('4.0.0',2000))
+        policy.recheck(frozen,require_latest=False)  # activated transaction ignores new unrelated release
+        self.assertEqual(api.calls[count:],list(responses))
+        self.assertEqual(len(api.calls),27)
+        self.assertEqual(sum(x.startswith('/releases?') for x in api.calls),8)
+        with self.assertRaises(ValueError): policy.recheck(frozen)
+        for key,mutation in (('/releases/1000',lambda x:x['assets'][0].update(digest='sha256:'+'f'*64)),
+                             ('/git/tags/'+'b'*40,lambda x:x['object'].update(sha='f'*40)),
+                             ('/git/ref/tags/3.5.13',lambda x:x['object'].update(type='commit'))):
+            original=copy.deepcopy(responses[key]); mutation(responses[key]); count=len(api.calls)
+            with self.assertRaises(ValueError): policy.recheck(frozen,require_latest=False)
+            self.assertFalse(any(x.startswith('/releases?') for x in api.calls[count:]))
+            responses[key]=original
+
     def test_empty_and_exact_pagination_lengths_require_terminal_page(self):
         for count in (0,100,101,200):
             api=API([release(f'0.0.{i}',i+1) for i in range(count)])

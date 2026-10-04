@@ -28,6 +28,14 @@ HOST='proxy.example.com'
 faulthandler.dump_traceback_later(120,repeat=True)  # Stack locations only; no exception values or locals.
 
 
+def foreign_fixture_state():
+    # Test-only, named unhooked fixtures. Production never fingerprints foreign
+    # host state; retain this independent assertion against accidental flushing.
+    return [s.update_run(command).decode() for command in (
+        ['nft','list','table','inet','twm_foreign_fixture'],
+        ['iptables','-S','TWM_FOREIGN_FIXTURE'],['ip6tables','-S','TWM_FOREIGN_FIXTURE'])]
+
+
 def bash(function, secret=None):
     code='source "$1"; DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10; '+function
     return subprocess.check_output(['bash','-c',code,'twm-guest',str(MANAGER/'telemt-web-manager.sh')],
@@ -63,6 +71,7 @@ WantedBy=multi-user.target
 ''',0o644)
     s.update_run(['systemctl','daemon-reload'])
     s.update_run(['systemctl','enable','--now','twm-foreign-firewall.service'])
+    s.update_write_json(Path('/root/twm-foreign-expected.json'),foreign_fixture_state())
     for path in (layout.config.parent,layout.data,layout.data/'state',layout.data/'public',layout.state,layout.backups):
         path.mkdir(mode=0o700)
         path.chmod(0o700 if path in (layout.state,layout.backups) else 0o750)
@@ -152,6 +161,49 @@ def assert_running(version):
     engine=s.UpdateEngine(); receipt=engine.local_receipt(); assert receipt['installed_version']==version
     engine.systemd.identity(receipt); engine.systemd.path_health(); s.update_service_gate(layout)
     engine.systemd.journal(engine.systemd.identity(receipt)['invocation'])
+    assert foreign_fixture_state()==s.update_json(s.update_read(Path('/root/twm-foreign-expected.json')))
+    return engine
+
+
+def arm_terminal_housekeeping(engine):
+    journal=engine.journal.read(); assert journal['phase'] in s.UPDATE_TERMINAL
+    backup=layout.backup(journal['transaction_id']); path=backup/'precheck'
+    assert not os.path.lexists(path)
+    canary=Path('/root/twm-terminal-cleanup-canary')
+    s.update_write(canary,b'cleanup must never follow this fixture link')
+    path.symlink_to(canary); s.update_fsync(backup)
+    # Known disposable evidence is deliberately unsafe to traverse. This faults
+    # real finish_* persistently, without touching authoritative BIN/DATA/receipt.
+    journal.update(normalized=False,error=None); engine.journal.publish()
+    s.update_write(layout.data/'terminal-authority-canary',b'authoritative DATA must survive cleanup failure')
+    return s.update_generation(layout)
+
+
+def assert_terminal_housekeeping_boot(version,authority,terminal):
+    engine=assert_running(version); journal=engine.journal.read()
+    deadline=time.monotonic()+15
+    while journal['error']!='cleanup-failed':
+        assert time.monotonic()<deadline, 'terminal cleanup failure was not durably recorded'
+        time.sleep(.1); journal=engine.journal.read()
+    assert journal['phase']==terminal and journal['error']=='cleanup-failed' and not journal['normalized']
+    assert s.update_generation(layout)==authority
+    canary=layout.data/'terminal-authority-canary'
+    assert s.update_read(canary)==b'authoritative DATA must survive cleanup failure'
+    status=s.update_run(['systemctl','show','telemt-web-manager-recovery.service','-pActiveState','-pResult']).decode()
+    assert 'ActiveState=active' in status and 'Result=success' in status
+    before=s.update_hash(layout.binary); marker=s.update_read(layout.data/'.telemt-web-manager-generation.json')
+    refused=subprocess.run(['bash',str(MANAGER/'telemt-web-manager.sh'),'--repair'],capture_output=True,timeout=120)
+    assert refused.returncode!=0 and b'tg://' not in refused.stdout+refused.stderr
+    assert s.update_hash(layout.binary)==before and s.update_generation(layout)==authority
+    assert s.update_read(layout.data/'.telemt-web-manager-generation.json')==marker
+    assert s.update_read(canary)==b'authoritative DATA must survive cleanup failure'
+    engine.systemd.identity(authority)
+    path=layout.backup(journal['transaction_id'])/'precheck'; assert path.is_symlink()
+    assert s.update_read(Path('/root/twm-terminal-cleanup-canary'))==b'cleanup must never follow this fixture link'
+    path.unlink(); s.update_fsync(path.parent)
+    engine.recover(); repaired=engine.journal.read()
+    assert repaired['normalized'] and repaired['error'] is None
+    print('TWM_TERMINAL_HOUSEKEEPING_BOOT_OK '+terminal+': authoritative service active; persistent cleanup pending; normal CLI mutation refused; safe cleanup retry',flush=True)
     return engine
 
 
@@ -185,12 +237,13 @@ def main():
         assert len(list(layout.stash.iterdir()))==1,'read-only compatibility scratch survived Check'
         print('TWM_REAL_OFFLINE_CHECK_OK receipted 3.5.13, no GitHub/NIC, real private parser, scratch reaped',flush=True)
         print('TWM_REAL_UPDATE_OK 3.5.12 -> 3.5.13; unchanged TOML/unit/Nginx/certificate/WEB link; 150s+45s restart; one LKG',flush=True)
-        s.update_write_json(PHASE,dict(stage='committed-boot'))
+        authority=arm_terminal_housekeeping(engine)
+        s.update_write_json(PHASE,dict(stage='committed-boot',authority=authority))
         print('TWM_REBOOT_REQUEST committed generation',flush=True)
         s.update_run(['systemctl','reboot']); return
     phase=s.update_json(s.update_read(PHASE)); stage=phase['stage']
     if stage=='committed-boot':
-        assert_running('3.5.13')
+        assert_terminal_housekeeping_boot('3.5.13',phase['authority'],'COMMITTED')
         print('TWM_COMMITTED_BOOT_OK new 3.5.13 authoritative, exact ExecCondition and real recovery unit',flush=True)
         # Return to the exact old retained generation in this DISPOSABLE fixture,
         # then crash a SECOND genuine production Update after candidate startup.
@@ -239,6 +292,12 @@ def main():
         assert not (layout.data/'state/crash-candidate-only').exists()
         assert s.update_quota_read(layout.data/'state/telemt.limit.json',pwd.getpwnam('telemt').pw_uid)['users']['web-user']['used_bytes']>=8192
         print('TWM_NONTERMINAL_BOOT_OK old 3.5.12 binary + FULL DATA + receipt restored; no candidate-only file; real old health; gate opens only after supervised restore',flush=True)
+        engine=s.UpdateEngine(); authority=arm_terminal_housekeeping(engine)
+        s.update_write_json(PHASE,dict(stage='rollback-terminal-boot',authority=authority))
+        print('TWM_REBOOT_REQUEST rollback terminal with pending housekeeping',flush=True)
+        s.update_run(['systemctl','reboot']); return
+    if stage=='rollback-terminal-boot':
+        assert_terminal_housekeeping_boot('3.5.12',phase['authority'],'ROLLBACK_COMPLETE')
         print('TWM_BOOT_ALL_PASS',flush=True)
         s.update_run(['systemctl','poweroff']); return
     raise ValueError('unexpected boot fixture phase')

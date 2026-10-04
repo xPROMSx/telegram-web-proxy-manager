@@ -36,6 +36,37 @@ class UpdateSnapshotTests(unittest.TestCase):
         (destination / 'state/quota.json').write_bytes(b'mutated candidate counter')
         self.assertEqual(self.tree.inventory(self.data), index)
 
+    def test_stopped_durability_seals_every_file_then_directory_and_rechecks(self):
+        before=self.tree.inventory(self.data); flushed=[]; fsync=os.fsync
+        def flush(fd):
+            info=os.fstat(fd); flushed.append((info.st_ino,stat.S_ISDIR(info.st_mode))); fsync(fd)
+        with patch.object(os,'fsync',side_effect=flush):
+            self.assertEqual(self.tree.inventory(self.data,durable=True),before)
+        self.assertEqual({p.stat().st_ino for p in (self.data,*self.data.rglob('*'),self.data.parent)},
+                         {inode for inode,_ in flushed})
+        self.assertGreater(flushed.index((self.data.stat().st_ino,True)),
+                           flushed.index(((self.data/'state/quota.json').stat().st_ino,False)))
+
+    def test_stopped_durability_file_directory_and_interrupt_failure_never_seal(self):
+        for kind in ('file','directory','interrupt'):
+            fsync=os.fsync
+            def flush(fd):
+                directory=stat.S_ISDIR(os.fstat(fd).st_mode)
+                if kind=='interrupt': raise InterruptedError('durability interrupted')
+                if directory==(kind=='directory'): raise OSError(errno.EIO,'durability failed')
+                fsync(fd)
+            with self.subTest(kind=kind),patch.object(os,'fsync',side_effect=flush):
+                with self.assertRaises(OSError): self.tree.inventory(self.data,durable=True)
+
+    def test_stopped_durability_rechecks_changes_during_barrier(self):
+        path=self.data/'state/quota.json'; fsync=os.fsync; changed=[False]
+        def flush(fd):
+            fsync(fd)
+            if not changed[0] and os.fstat(fd).st_ino==path.stat().st_ino:
+                changed[0]=True; path.write_bytes(b'changed during durability')
+        with patch.object(os,'fsync',side_effect=flush),self.assertRaises(ValueError):
+            self.tree.inventory(self.data,durable=True)
+
     def test_large_file_uses_bounded_reads(self):
         path = self.data / 'state/large'
         with path.open('wb') as stream:

@@ -10,7 +10,9 @@ import importlib.util
 import json
 import os
 import signal
+import shutil
 import stat
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -98,6 +100,7 @@ class Isolation:
 
 class Engine(s.UpdateEngine):
     def ownership(self): pass  # This fixture mocks platform/controller identity only.
+    def external_contract(self): pass  # Real certificate/Nginx contracts are covered below and in boot.
     def immutable(self):
         return dict(config=s.update_hash(self.layout.config)['sha256'],**{
                 name:s.update_hash(self.layout.path('/etc/'+name))['sha256']
@@ -171,6 +174,195 @@ class Transactions(unittest.TestCase):
             self.assertEqual(f.engine.tree.inventory(saved),expected)
             self.assertEqual(s.UpdateReceipt.read(f.layout.backup(journal['transaction_id'])/'old-receipt.json'),f.old)
             self.assertFalse((f.layout.backup(journal['transaction_id'])/'rehearsal').exists())
+
+    def managed_host(self):
+        run=s.update_run; f=self.fixture()
+        f.commands.stop()
+        f.commands=patch.object(s,'update_run',side_effect=lambda args,**kw:
+            b'enabled\n' if args[:2]==['systemctl','is-enabled'] else run(args,**kw))
+        f.commands.start()
+        host='proxy.example.com'; nginx=f.layout.path('/etc/nginx')
+        shutil.copytree(ROOT/'tests/fixtures/nginx',nginx)
+        (nginx/'conf.d').mkdir()
+        cert=f.layout.path('/etc/letsencrypt')
+        for name in ('archive/'+host,'live/'+host,'renewal','renewal-hooks/deploy'):
+            (cert/name).mkdir(mode=0o700,parents=True,exist_ok=True)
+        s.update_write(cert/'renewal-hooks/deploy/telemt-web-manager',b'fixture owned renewal hook',0o755)
+        unit=f.layout.path('/etc/systemd/system/telemt.service'); s.update_write(unit,b'fixture owned base unit',0o644)
+        s.nginx_plan(nginx,host,f.root/'nginx-plan')
+        for edit in json.loads((f.root/'nginx-plan').read_text())['edits']:
+            s.update_write(Path(edit['path']),edit['content'].encode(),0o644)
+        s.update_write_json(f.layout.state/'manifest.json',dict(schema=1,domain=host,public_ip='203.0.113.10',
+            unit_sha256=s.update_hash(unit)['sha256'],nginx_sha256=s.update_hash(nginx/'conf.d/telemt-web-manager.conf')['sha256'],acme_webroot=''))
+        s.update_write(f.layout.state/'web-link.txt',b'fixture private link')
+        def rotate(number,subject=host):
+            archive=cert/'archive'/host
+            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','30',
+                '-subj','/CN='+subject,'-addext','subjectAltName=DNS:'+subject,
+                '-keyout',str(archive/f'privkey{number}.pem'),'-out',str(archive/f'cert{number}.pem')],
+                check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+            (archive/f'privkey{number}.pem').chmod(0o600)
+            for part in ('chain','fullchain'): shutil.copyfile(archive/f'cert{number}.pem',archive/f'{part}{number}.pem')
+            for part in ('cert','chain','fullchain','privkey'):
+                link=cert/'live'/host/(part+'.pem'); temporary=link.with_suffix('.new')
+                temporary.symlink_to(archive/f'{part}{number}.pem'); temporary.replace(link)
+            renewal=cert/'renewal'/(host+'.conf')
+            s.update_write(renewal,('version = '+str(number)+'\narchive_dir = '+str(archive)+'\n'+
+                ''.join(part+' = '+str(cert/'live'/host/(part+'.pem'))+'\n' for part in ('cert','chain','fullchain','privkey'))+
+                '[renewalparams]\nauthenticator = standalone\n').encode())
+        rotate(1); f.rotate=rotate
+        s.certificate_record_stage(f.layout.state/'certificate.json',host,cert,f.layout.path('/var/lib/telemt-web-manager-acme'),nginx)
+        f.engine.immutable=lambda:s.UpdateEngine.immutable(f.engine)
+        f.engine.external_contract=lambda:s.UpdateEngine.external_contract(f.engine)
+        f.controls=f.engine.immutable(); f.engine.external_contract()
+        return f
+
+    def test_valid_foreign_firewall_and_certificate_rotation_do_not_poison_recovery(self):
+        for change in ('firewall','certificate'):
+            for stage in ('pre-stop','candidate'):
+                with self.subTest(change=change,stage=stage):
+                    f=self.managed_host(); foreign=f.layout.path('/etc/foreign-firewall.json')
+                    s.update_write_json(foreign,{'quota':{'bytes':4096},'counter':{'bytes':0}})
+                    def changed():
+                        if change=='certificate': f.rotate(2)
+                        else: s.update_write_json(foreign,{'quota':{'bytes':8192},'counter':{'bytes':128}})
+                    if stage=='pre-stop':
+                        check=f.engine.releases.recheck
+                        def before_stop(record,require_latest=True):
+                            check(record,require_latest)
+                            if require_latest: changed(); raise ValueError('pre-STOP refusal after valid external change')
+                        f.engine.releases.recheck=before_stop
+                    else:
+                        accept=f.engine.accept
+                        def activated(receipt,**kw):
+                            if receipt['installed_version']=='3.5.13': changed(); raise ValueError('candidate health failed')
+                            return accept(receipt,**kw)
+                        f.engine.accept=activated
+                    with self.assertRaises(ValueError): f.engine.update()
+                    f.assert_old()
+                    self.assertEqual(s.update_json(s.update_read(foreign))['quota']['bytes'],8192 if change=='firewall' else 4096)
+                    if change=='certificate':
+                        self.assertEqual((f.layout.path('/etc/letsencrypt/live/proxy.example.com/privkey.pem')).resolve().name,'privkey2.pem')
+                        self.assertIn(b'version = 2',s.update_read(f.layout.path('/etc/letsencrypt/renewal/proxy.example.com.conf')))
+                    self.assertFalse(any(k.startswith('cert-') or k=='foreign-firewall' for k in f.controls))
+
+    def test_foreign_nginx_bytes_may_change_but_owned_fragments_remain_exact(self):
+        f=self.managed_host(); nginx=f.layout.path('/etc/nginx')
+        path=nginx/'stream.conf'; original=path.read_bytes()
+        path.write_bytes(original.replace(b'127.0.0.1:8443',b'127.0.0.1:8444')+b'\n# legitimate unrelated administration\n')
+        self.assertEqual(f.engine.immutable(),f.controls)
+        # Full supported-topology discovery may refuse a new foreign map, but
+        # it must not make restoration of intact owned controls impossible.
+        path.write_bytes(path.read_bytes()+b'map $remote_addr $foreign_log { default 1; }\n')
+        self.assertEqual(f.engine.immutable(),f.controls)
+        path.write_bytes(path.read_bytes().replace(b'proxy.example.com twm_frontend',b'foreign.example.com twm_frontend'))
+        with self.assertRaises(ValueError): f.engine.immutable()
+
+    def test_semantic_certificate_still_refuses_unsafe_key_and_foreign_lineage(self):
+        for defect in ('key-mode','lineage','key-pair','hostname'):
+            f=self.managed_host(); cert=f.layout.path('/etc/letsencrypt'); host='proxy.example.com'
+            if defect=='key-mode': (cert/'live'/host/'privkey.pem').resolve().chmod(0o644)
+            elif defect=='lineage':
+                path=cert/'renewal'/(host+'.conf')
+                path.write_bytes(path.read_bytes().replace(str(cert/'archive'/host).encode(),b'/foreign/archive'))
+            elif defect=='hostname': f.rotate(2,'foreign.example.com')
+            else:
+                f.rotate(2); link=cert/'live'/host/'fullchain.pem'; link.unlink(); link.symlink_to(cert/'archive'/host/'fullchain1.pem')
+            with self.assertRaises(ValueError): f.engine.external_contract()
+
+    def test_pre_stop_api_failure_preserves_running_old_without_stop(self):
+        f=self.fixture(); stops=[]; stop=f.controller.stop
+        f.controller.stop=lambda **kw:(stops.append(True),stop(**kw))
+        original=f.engine.releases.recheck
+        def failure(record,require_latest=True):
+            if require_latest: raise ValueError('GitHub API unavailable')
+            original(record,require_latest)
+        f.engine.releases.recheck=failure
+        with self.assertRaises(ValueError): f.engine.update()
+        f.assert_old(); self.assertFalse(stops)
+
+    def test_new_release_after_activation_never_rediscovered(self):
+        f=self.fixture(); checks=[]; original=f.engine.releases.recheck
+        def check(record,require_latest=True):
+            phase=f.engine.journal.value['phase']; checks.append((phase,require_latest))
+            if phase=='CANDIDATE_RUNNING': self.assertFalse(require_latest)
+            original(record,require_latest)
+        f.engine.releases.recheck=check; f.engine.update()
+        self.assertEqual([latest for _,latest in checks],[False,False,True,False])
+
+    def test_data_durability_faults_precede_snapshot_and_candidate_activation(self):
+        for kind in ('file','directory','interrupt'):
+            f=self.fixture(); inventory=f.engine.tree.inventory; calls=[]
+            def seal(root,seal=True,durable=False):
+                if not durable: return inventory(root,seal)
+                self.assertEqual(f.engine.journal.value['phase'],'OLD_STOPPED')
+                self.assertIsNone(f.engine.journal.value['snapshot'])
+                fsync=os.fsync
+                def flush(fd):
+                    directory=stat.S_ISDIR(os.fstat(fd).st_mode)
+                    if kind=='interrupt': raise InterruptedError('seal interrupted')
+                    if directory==(kind=='directory'): raise OSError(errno.EIO,'seal fsync failed')
+                    fsync(fd)
+                with patch.object(os,'fsync',side_effect=flush): return inventory(root,seal,durable=True)
+            f.engine.tree.inventory=seal; start=f.controller.start
+            def starting(): calls.append(s.UpdateReceipt.read(f.layout.receipt)['installed_version']); start()
+            f.controller.start=starting
+            with self.assertRaises(OSError): f.engine.update()
+            f.assert_old(); self.assertNotIn('3.5.13',calls)
+            self.assertIsNone(s.UpdateJournal(f.layout).read()['snapshot'])
+
+    def test_gate_migration_publication_crashes_are_safe_and_retryable(self):
+        for boundary in ('before-unit','after-unit','after-dropin'):
+            f=self.fixture(); s.update_remove_gate(f.layout)
+            for path in (f.layout.journal,f.layout.receipt,f.layout.generation,f.layout.data/'.telemt-web-manager-generation.json'): path.unlink()
+            before=f.engine.tree.inventory(f.layout.data)
+            f.engine.accept=lambda receipt,**kw:f.controller.identity(receipt)
+            publish=s.update_write
+            def crash(path,raw,mode=0o600):
+                if boundary=='before-unit' and Path(path)==f.layout.recovery_unit: os._exit(75)
+                publish(path,raw,mode)
+                if (boundary=='after-unit' and Path(path)==f.layout.recovery_unit) or (boundary=='after-dropin' and Path(path)==f.layout.dropin): os._exit(75)
+            pid=os.fork()
+            if pid==0:
+                with patch.object(s,'update_write',side_effect=crash): f.engine.migrate(f.old)
+                os._exit(77)
+            _,status=os.waitpid(pid,0); self.assertEqual(os.waitstatus_to_exitcode(status),75)
+            self.assertEqual(f.layout.dropin.exists(),boundary=='after-dropin')
+            self.assertEqual(f.layout.recovery_unit.exists(),boundary!='before-unit')
+            if f.layout.dropin.exists(): self.assertTrue(f.layout.recovery_unit.exists())
+            else: self.assertFalse(s.update_gate_contract(f.layout,allow_absent=True))
+            f.engine.recover(); restored=f.engine.tree.inventory(f.layout.data)
+            # Migration adds/removes only the generation marker, legitimately
+            # changing DATA root directory mtime; all other metadata/bytes stay exact.
+            restored['entries'][0]['mtime_ns']=before['entries'][0]['mtime_ns']
+            self.assertEqual(restored,before)
+            self.assertEqual(f.controller.show()['ActiveState'],'active')
+            self.assertFalse(f.layout.dropin.exists()); self.assertFalse(f.layout.recovery_unit.exists())
+            f.engine.migrate(f.old); s.update_service_gate(f.layout)
+
+    def test_terminal_boot_authority_survives_persistent_housekeeping_failure(self):
+        for terminal in ('COMMITTED','ROLLBACK_COMPLETE'):
+            f=self.fixture(fail_new=terminal=='ROLLBACK_COMPLETE')
+            operation='finish_committed' if terminal=='COMMITTED' else 'finish_rollback'
+            finish=getattr(f.engine,operation)
+            def fail_housekeeping():
+                if f.engine.journal.value['snapshot']: raise OSError(errno.EIO,'persistent housekeeping failure')
+                return finish()
+            setattr(f.engine,operation,fail_housekeeping)
+            if terminal=='COMMITTED': f.engine.update()
+            else:
+                with self.assertRaises(OSError): f.engine.update()
+            before=f.engine.tree.inventory(f.layout.data); receipt=s.update_generation(f.layout); ready=[]
+            f.controller.state(False)
+            with patch.object(s,'update_notify_ready',side_effect=lambda:ready.append(True)):
+                f.engine.recover(boot=True)
+            self.assertEqual(ready,[True]); s.update_service_gate(f.layout)
+            self.assertEqual(s.update_generation(f.layout),receipt); self.assertEqual(f.engine.tree.inventory(f.layout.data),before)
+            journal=s.UpdateJournal(f.layout).read()
+            self.assertEqual(journal['phase'],terminal); self.assertEqual(journal['error'],'cleanup-failed')
+            self.assertFalse(journal['normalized']); f.controller.start()
+            self.assertEqual(f.controller.show()['ActiveState'],'active')
+            with self.assertRaises(OSError): f.engine.update()
 
     def test_arm64_policy_receipt_generation_and_full_rollback_match_x86(self):
         for bad in (False,True):

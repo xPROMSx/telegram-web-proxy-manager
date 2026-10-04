@@ -108,6 +108,28 @@ class BootstrapBarrier(unittest.TestCase):
                 f.layout.state.rmdir()
             self.invoke(f)
 
+    def test_runtime_and_bootstrap_immutable_key_boundaries_agree(self):
+        for key,accepted in (('a'*512,True),('a'*513,False),('',False),('é',False),('tab\tkey',False),('del\x7f',False)):
+            with self.subTest(length=len(key),accepted=accepted):
+                f=self.fixture(); journal=s.UpdateJournal(f.layout).read()
+                journal['immutable']={key:'a'*64}
+                if accepted: s.UpdateJournal.validate(journal)
+                else:
+                    with self.assertRaises(ValueError): s.UpdateJournal.validate(journal)
+                s.update_write_json(f.layout.journal,journal)
+                self.invoke(f,success=accepted)
+
+    def test_generated_terminal_journals_pass_and_pending_housekeeping_refuses(self):
+        for rollback in (False,True):
+            f=self.fixture(); f.controller.fail_new=rollback
+            if rollback:
+                with self.assertRaises(ValueError): f.engine.update()
+            else: f.engine.update()
+            journal=s.UpdateJournal(f.layout).read(); s.UpdateJournal.validate(journal)
+            self.invoke(f,success=True)
+            journal['error']='cleanup-failed'; s.update_write_json(f.layout.journal,journal)
+            self.invoke(f)
+
 
 if __name__=='__main__':
     if os.geteuid()!=0: raise SystemExit('Use an isolated root test environment')

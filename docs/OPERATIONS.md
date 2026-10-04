@@ -317,8 +317,13 @@ CAP_NET_ADMIN, cgroup/OOM/NRestarts, PID-owned listener, Nginx/local/public TLS/
 optional SOCKS, authenticated WEB session and current journal. Acceptance samples
 0/5/15/30/60/90/120/150 seconds after readiness; a graceful stop/restart and another
 45 seconds follow. Persistent DATA/quota is validated while stopped before restart.
-Immutable TOML, link, base unit, manifest, Nginx, certificate/renewal and foreign
-firewall state must remain unchanged. WARN stays diagnostic; ERROR/FATAL/panic,
+Exact byte invariants cover manager-owned TOML, link, base unit, manifest, renewal
+hook, certificate ownership record, WEB/ACME vhosts and managed stream fragments.
+Certbot may rotate its valid owned lineage: current paths, private-key permissions,
+domain/key pairing and renewal ownership are checked, not historical PEM/renewal
+bytes. Foreign firewall and unrelated Nginx changes are never restored or flushed;
+Telemt-owned firewall cleanup and objective topology/TLS checks remain required.
+WARN stays diagnostic; ERROR/FATAL/panic,
 malformed log transport or any objective failure blocks commit.
 
 After durable commit, one full old LKG is root-normalized with original restore
@@ -327,6 +332,15 @@ only afterward, with a durable resumable retirement marker. Historical audit/bin
 backups remain. Post-commit cleanup failure reports accepted Update plus an explicit
 cleanup warning, never rolls back the accepted generation; it must be resolved
 before another mutation. No menu action restores historical LKG.
+
+The final double latest-release inventory check runs before stopping old Telemt.
+Later revalidation checks only the frozen release/tag/assets; a newly published
+unrelated release cannot change an activated transaction. After graceful stop,
+every supported DATA file and directory is fsynced through no-follow descriptors
+and rechecked before the rollback generation is sealed. Recovery unit publication
+precedes the drop-in that activates its dependency. A valid terminal authoritative
+generation may boot while housekeeping is pending; cleanup errors stay visible
+and block subsequent mutation/bootstrap until resolved.
 
 Fresh Install writes the unchanged 3.5.12 baseline receipt/generation/gate before
 first start. Repair remains conservative. Uninstall removes the exact live update

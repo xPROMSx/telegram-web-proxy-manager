@@ -390,7 +390,8 @@ def bootstrap_recovery_barrier():
             or authoritative['receipt']!=receipt or authoritative['receipt_present'] is not True
             or generation['generation_id']!=receipt['generation_id'] or generation['binary']!=receipt['binary']
             or generation['receipt_sha256']!=hashlib.sha256(json.dumps(receipt,sort_keys=True,separators=(',',':')).encode()+b'\n').hexdigest()
-            or type(journal['normalized']) is not bool or (journal['snapshot'] and not journal['normalized'])):
+            or type(journal['normalized']) is not bool or journal['error']=='cleanup-failed'
+            or (journal['snapshot'] and not journal['normalized'])):
             raise ValueError('Deployed generation or retention is incomplete; recover before manager replacement')
         prefix=state.parents[2]
         binary=prefix/'usr/local/bin/telemt'; safe(binary,regular=True)

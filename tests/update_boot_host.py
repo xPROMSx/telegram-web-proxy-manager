@@ -10,7 +10,7 @@ import uuid
 
 family,work,source,artifacts=sys.argv[1:]
 work=Path(work); combined=[]
-for attempt in range(3):
+for attempt in range(4):
     name='twm-boot-'+uuid.uuid4().hex
     log=work/f'boot-{family}-{attempt}.log'
     command=['docker','run','--rm','--name',name,'--network=none','--cap-drop=ALL','--cap-add=DAC_OVERRIDE',
@@ -50,8 +50,9 @@ for attempt in range(3):
                 subprocess.run(['docker','kill','--signal=KILL',name],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 process.wait(timeout=20)
     if any('TWM_BOOT_ALL_PASS' in line for line in combined): break
-else: raise AssertionError('three actual boots did not complete committed + nonterminal recovery')
+else: raise AssertionError('four actual boots did not complete committed/nonterminal recovery and terminal housekeeping regressions')
 assert all(any(marker in line for line in combined) for marker in
     ('TWM_BASELINE_ISOLATION_OK','TWM_HOSTILE_ISOLATION_ALL_PASS','TWM_FILESYSTEM_REAL_PASS',
-     'TWM_REAL_UPDATE_OK','TWM_REAL_OFFLINE_CHECK_OK','TWM_COMMITTED_BOOT_OK','TWM_HARD_POWERLOSS_READY','TWM_NONTERMINAL_BOOT_OK'))
+     'TWM_REAL_UPDATE_OK','TWM_REAL_OFFLINE_CHECK_OK','TWM_COMMITTED_BOOT_OK','TWM_HARD_POWERLOSS_READY','TWM_NONTERMINAL_BOOT_OK',
+     'TWM_TERMINAL_HOUSEKEEPING_BOOT_OK COMMITTED','TWM_TERMINAL_HOUSEKEEPING_BOOT_OK ROLLBACK_COMPLETE'))
 print(f'REAL Ubuntu {family} boot/systemd/official Update/hard-power-loss recovery: PASS; no skips or fallback',flush=True)
