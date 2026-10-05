@@ -296,7 +296,13 @@ Every existing safety step remains enabled. Namespace, cgroup, boot, real-binary
 or helper absence fails the job; there is no skip/fallback/continue-on-error.
 CI proves these bounded contracts, not real Telegram transport, Internet SOCKS
 egress, production Let's Encrypt renewal or owner-host coexistence. The owner completed live acceptance of the existing updater architecture.
-New 1.0.0 cover/presentation behavior still requires separate owner acceptance.
+Separate owner acceptance of 1.0.0 completed on Ubuntu 26.04 x86_64 after companion
+3x-ui Auto Nginx Fresh Install. Existing Let's Encrypt certificate reuse, real
+Telegram, CSP-compatible Fake Sites/Service Status, random cover changes and TTY
+progress passed. Normal Update 3.5.12 → 3.5.14 completed 150s + 45s acceptance and
+preserved TOML, index.html, cover.css and WEB-link bytes. COMMITTED journal and
+matching receipt/manager/DATA generations were verified; final Check OK reported
+errors=0, warnings=0. These are owner live results, not additional CI claims.
 
 
 ## Cover / progress targeted coverage (1.0.0)

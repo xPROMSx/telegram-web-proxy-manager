@@ -715,7 +715,8 @@ installation through the manager, fresh Install, Show current WEB link, real
 Telegram client use and final Check OK. That historical acceptance does not cover
 Universal Update 0.2.0. Its separate owner acceptance is now complete: baseline 3.5.12,
 real automatic Update to 3.5.14, Telegram WEB, 150s + 45s acceptance, controlled restart,
-COMMITTED metadata and final Check OK. New 1.0.0 cover/UI acceptance remains pending.
+COMMITTED metadata and final Check OK. Separate 1.0.0 cover/UI acceptance is also
+complete; the exact candidate and results are recorded below.
 
 ## Current WEB link (manager 0.1.4)
 
@@ -860,4 +861,20 @@ the cursor or using a background process. NO_COLOR disables ANSI colors; TERM=du
 and non-TTY keep line-oriented diagnostics. The renderer does not change 150s + 45s
 acceptance, validation samples, WEB probes, transaction order or rollback decisions.
 Failure ends the progress line and retains stage/error/rollback information.
-Owner acceptance of these new 1.0.0 presentation/cover paths is still required.
+Owner live acceptance of these 1.0.0 paths completed on Ubuntu 26.04 x86_64 after
+`xPROMSx/3x-ui-auto-nginx` Fresh Install, using exact manager commit
+`1b23cf92b1a1a6b69b7d47b3e47ac3bd28dfcc9d`. Telemt Fresh Install 3.5.12 reused the
+existing Let's Encrypt certificate; SOCKS5 upstream and real Telegram WEB passed.
+The initial inline-CSS CSP failure was fixed with local `/cover.css`, preserving
+strict CSP. Fake Sites, Service Status, random cover changes and TTY progress passed.
+
+Normal Update 3.5.12 → 3.5.14 passed 150s stability + 45s restart acceptance.
+TOML, index.html, cover.css and WEB-link bytes remained identical through Update.
+The journal was COMMITTED (`kind=update`, `error=null`, `restored=false`,
+`normalized=true`), with identical receipt/manager/DATA generation IDs. Official
+3.5.14 commit: `9d5b896bb695c55e2905b82f276da84e45a0a2ec`; installed binary SHA256:
+`feb1d8779de0b86c6c43d1b871020ec94b11fad9fec5612b07b278edfd2181ff`.
+A subsequent random cover change changed index.html while cover.css remained
+6772 bytes, SHA256 `8bf41f327d642d6f5b63e2efa368335c18729e58a389357ff56175c0f860c4d4`.
+Final Check: OK, errors=0, warnings=0. Real Telegram passed after both Update and
+cover change. This records owner-provided live evidence, not a new Codex VPS test.

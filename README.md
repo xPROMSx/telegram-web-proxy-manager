@@ -116,8 +116,11 @@ Nginx/Xray/3x-ui, не настраивает firewall и не принимае�
 История owner acceptance: v0.1.1 — Install/recovery; v0.1.2 — Uninstall/certificate;
 v0.1.3 — Update 3.5.11 → 3.5.12; v0.1.4 — WEB-link/dependency UX. Архитектура
 Universal Update также прошла owner live acceptance, включая 3.5.12 → 3.5.14,
-Telegram и финальный Check OK. Новые cover/UI функции 1.0.0 требуют отдельной приёмки
-перед публикацией. CI не подтверждает все серверы и конфигурации.
+Telegram и финальный Check OK. Owner acceptance 1.0.0 завершён на Ubuntu 26.04 x86_64
+после Fresh Install companion 3x-ui Auto Nginx: Fake Sites с локальным `/cover.css`
+и строгой CSP, Service Status, смена cover и TTY progress — PASS. Update 3.5.12 → 3.5.14
+сохранил TOML, HTML/CSS и WEB link byte-for-byte; Telegram работает, финальный Check OK
+(errors=0, warnings=0). CI не подтверждает все серверы и конфигурации.
 
 ## Документация
 

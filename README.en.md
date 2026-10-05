@@ -116,8 +116,11 @@ Unknown topologies/unsafe paths fail closed. Keep configs, journals and backups 
 Owner acceptance history: v0.1.1 — Install/recovery; v0.1.2 — Uninstall/certificates;
 v0.1.3 — Update 3.5.11 → 3.5.12; v0.1.4 — WEB-link/dependency UX. Universal Update
 architecture also passed owner live acceptance, including 3.5.12 → 3.5.14,
-Telegram and final Check OK. New 1.0.0 cover/UI features require separate acceptance
-before publication. CI does not establish support for every server/configuration.
+Telegram and final Check OK. Owner acceptance of 1.0.0 completed on Ubuntu 26.04 x86_64
+after companion 3x-ui Auto Nginx Fresh Install: Fake Sites with local `/cover.css`
+and strict CSP, Service Status, cover changes and TTY progress — PASS. Update 3.5.12 → 3.5.14
+preserved TOML, HTML/CSS and the WEB link byte-for-byte; Telegram works and final Check OK
+(errors=0, warnings=0). CI does not establish support for every server/configuration.
 
 ## Documentation
 
