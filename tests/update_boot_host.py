@@ -22,7 +22,7 @@ for attempt in range(4):
         '-virtfs','local,path=/src,mount_tag=source,security_model=none,readonly=on',
         '-virtfs','local,path=/evidence,mount_tag=evidence,security_model=none,readonly=on',
         '-object','rng-random,id=rng0,filename=/dev/urandom','-device','virtio-rng-pci,rng=rng0',
-        '-append','root=/dev/vda rw console=ttyS0 init=/sbin/init systemd.mask=systemd-networkd-wait-online.service']
+        '-append','root=/dev/vda1 rw console=ttyS0 init=/sbin/init systemd.mask=systemd-networkd-wait-online.service']
     cut=False; deadline=time.monotonic()+1200; offset=0; buffer=b''
     with log.open('wb') as output:
         process=subprocess.Popen(command,stdout=output,stderr=subprocess.STDOUT)
@@ -52,7 +52,7 @@ for attempt in range(4):
     if any('TWM_BOOT_ALL_PASS' in line for line in combined): break
 else: raise AssertionError('four actual boots did not complete committed/nonterminal recovery and terminal housekeeping regressions')
 assert all(any(marker in line for line in combined) for marker in
-    ('TWM_BASELINE_ISOLATION_OK','TWM_HOSTILE_ISOLATION_ALL_PASS','TWM_FILESYSTEM_REAL_PASS',
+    ('TWM_PARTITION_IO_CONTRACT_OK','TWM_BASELINE_ISOLATION_OK','TWM_HOSTILE_ISOLATION_ALL_PASS','TWM_FILESYSTEM_REAL_PASS',
      'TWM_REAL_UPDATE_OK','TWM_REAL_OFFLINE_CHECK_OK','TWM_COMMITTED_BOOT_OK','TWM_HARD_POWERLOSS_READY','TWM_NONTERMINAL_BOOT_OK',
      'TWM_TERMINAL_HOUSEKEEPING_BOOT_OK COMMITTED','TWM_TERMINAL_HOUSEKEEPING_BOOT_OK ROLLBACK_COMPLETE'))
 print(f'REAL Ubuntu {family} boot/systemd/official Update/hard-power-loss recovery: PASS; no skips or fallback',flush=True)

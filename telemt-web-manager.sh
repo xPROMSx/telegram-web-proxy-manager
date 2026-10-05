@@ -947,7 +947,7 @@ load_installation() {
     [[ ${actual%% *} == "$expected" ]] || die 'Nginx vhost changed; manual review required'
     helper config-info "$CONFIG" >"$TMP/config-info" || die 'automatic update/migration not possible; manual review required'
     helper runtime-contract "$CONFIG" "$DATA" || die 'Runtime/write paths require manual review; existing TOML was not changed'
-    installed_compatibility || die 'Installed binary rejected managed TOML; no changes made'
+    installed_compatibility || die 'Installed compatibility/isolation validation failed; no changes made'
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
     [[ $(jq -r '.public_ip // ""' "$STATE/manifest.json") == "" ||

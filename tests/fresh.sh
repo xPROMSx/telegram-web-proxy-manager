@@ -289,6 +289,16 @@ before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file")
 install_manager >"$SANDBOX/rerun.log" 2>&1
 [[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file") == "$before" ]]
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
+before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file")
+set +e
+(set -Eeuo pipefail; installed_compatibility() { return 1; }; load_installation) >"$SANDBOX/isolation-failure.log" 2>&1
+result=$?
+set -e
+[[ $result != 0 ]]
+grep -q 'Installed compatibility/isolation validation failed; no changes made' "$SANDBOX/isolation-failure.log"
+if grep -q 'rejected managed TOML\|tg://' "$SANDBOX/isolation-failure.log"; then exit 1; fi
+[[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file") == "$before" ]]
+printf 'ok - compatibility infrastructure failure is secret-safe, does not blame TOML and makes no managed changes\n'
 cp "$CONFIG" "$SANDBOX/original.toml"
 sed 's/secret_mode = "dd"/secret_mode = "plain"/' "$CONFIG" >"$SANDBOX/drift"
 cp "$SANDBOX/drift" "$CONFIG"

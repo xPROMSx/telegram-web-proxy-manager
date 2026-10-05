@@ -217,6 +217,16 @@ def main():
         old=engine.local_receipt(allow_legacy=True)
         private=Path('/root/baseline-isolation'); private.mkdir(0o700)
         probe=engine.isolation.prepare(private/'root',layout.binary)
+        # Inspect the real effective leaf contract for the same trusted path
+        # and single property the production isolated service receives.
+        inspect_io="from pathlib import Path; p=Path('/proc/self/cgroup').read_text().strip()[4:]; print((Path('/sys/fs/cgroup')/p/'io.max').read_text(),end='')"
+        effective=s.update_run(['systemd-run','--quiet','--wait','--pipe','--collect',
+            '--property=IOWriteBandwidthMax='+str(probe)+' 4194304',
+            '/usr/bin/python3','-c',inspect_io]).decode()
+        s.update_isolated_io_contract(effective)
+        device=probe.stat().st_dev; filesystem=f'{os.major(device)}:{os.minor(device)}'
+        assert filesystem!=effective.split()[0], 'partition/backing-device distinction was not exercised'
+        print('TWM_PARTITION_IO_CONTRACT_OK filesystem='+filesystem+' effective='+effective.strip(),flush=True)
         engine.isolation.run(probe,'3.5.12')
         print('TWM_BASELINE_ISOLATION_OK official 3.5.12, private UID/CAP_NET_ADMIN/WEB/strict parser/quota/shutdown',flush=True)
         sys.path.insert(0,str(ROOT/'tests'))

@@ -3589,6 +3589,19 @@ class UpdateIsolation:
             raise
 
 
+def update_isolated_io_contract(raw):
+    # systemd resolves the trusted IOWriteBandwidthMax path to its backing
+    # block device, which need not equal the filesystem's st_dev (partitions).
+    # This leaf receives exactly one limit; reject missing/extra/malformed rows
+    # and verify the effective contract without guessing the device identity.
+    rows=raw.splitlines()
+    require(len(rows)==1, 'private candidate disk resource limit unavailable')
+    fields=rows[0].split()
+    require(len(fields)==5 and re.fullmatch(r'[0-9]+:[0-9]+',fields[0]) is not None
+            and set(fields[1:])=={'rbps=max','wbps=4194304','riops=max','wiops=max'},
+            'private candidate disk resource limit unavailable')
+
+
 def update_isolated_run(root, expected_version, mode):
     require(os.geteuid()==0 and mode in ('precheck','rehearsal','parseonly'))
     root=Path(root); update_private_directory(root); update_version(expected_version)
@@ -3604,11 +3617,7 @@ def update_isolated_run(root, expected_version, mode):
     require((cgroup/'memory.max').read_text().strip()==str(1024**3)
             and (cgroup/'pids.max').read_text().strip()=='4096')
     cpu=(cgroup/'cpu.max').read_text().split(); require(len(cpu)==2 and cpu[0].isdigit() and int(cpu[0])==2*int(cpu[1]))
-    device=root.stat().st_dev
-    expected=f'{os.major(device)}:{os.minor(device)}'
-    rows=[row.split() for row in (cgroup/'io.max').read_text().splitlines()]
-    require(any(row[0]==expected and 'wbps=4194304' in row[1:] for row in rows),
-            'private candidate disk resource limit unavailable')
+    update_isolated_io_contract((cgroup/'io.max').read_text())
     # Never pass the manager's HTTP/proxy/GitHub credentials into a candidate.
     os.environ.clear(); os.environ.update(PATH='/usr/sbin:/usr/bin:/sbin:/bin',LANG='C',HOME='/var/lib/telemt')
     # The outer parent stays private 0700. Inside chroot, the real telemt UID

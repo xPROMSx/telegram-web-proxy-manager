@@ -41,4 +41,16 @@ chown --reference=/work "/work/boot-$family"
 cp boot/vmlinuz-*-generic "/work/boot-$family/vmlinuz"
 cp boot/initrd.img-*-generic "/work/boot-$family/initrd.img"
 truncate -s 6G "/work/boot-$family/disk.img"
-mke2fs -q -t ext4 -F -d /tmp/twm-guest "/work/boot-$family/disk.img"
+# A real partition-backed root reproduces systemd resolving filesystem vda1
+# to backing device vda for IOWriteBandwidthMax; no additional VM is needed.
+python3 - "/work/boot-$family/disk.img" <<'PY'
+import struct
+import sys
+with open(sys.argv[1], 'r+b') as disk:
+    mbr=bytearray(512)
+    mbr[446:462]=struct.pack('<B3sB3sII',0x80,b'\xff'*3,0x83,b'\xff'*3,2048,6*1024**3//512-2048)
+    mbr[510:512]=b'\x55\xaa'
+    disk.write(mbr)
+PY
+mke2fs -q -t ext4 -b 4096 -F -E offset=1048576 -d /tmp/twm-guest \
+    "/work/boot-$family/disk.img" 1572608
