@@ -91,6 +91,38 @@ elapsed = time.monotonic_ns() - int(sys.argv[1])
 assert elapsed >= 10_000_000_000, 'minimum ten-second post-readiness dwell required'
 print(f'ok - REAL post-readiness runtime dwell {elapsed / 1e9:.3f}s >= 10s; PID/listener/HTTP index remain healthy')
 PY
+    # Static assets are cached at config load. Atomic replacement is visible only
+    # after the same graceful restart used by Change cover site.
+    cp "$fixture/http-body" "$fixture/old-cover"
+    python3 - "$ROOT" "$fixture/data/public" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('cover_runtime',sys.argv[1]+'/lib/safety.py')
+s = importlib.util.module_from_spec(spec); sys.modules[spec.name] = s; spec.loader.exec_module(s)
+s.cover_atomic(sys.argv[2],s.SERVICE_STATUS)
+PY
+    curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
+        http://127.0.0.1:18080/ -o "$fixture/http-body"
+    cmp -s "$fixture/http-body" "$fixture/old-cover"
+    kill -TERM "$pid"
+    for ((i=0; i<1800; i++)); do
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then die 'Cover restart graceful shutdown timed out'; fi
+    wait "$pid"
+    env -u RUST_LOG "$candidate" "$fixture/runtime.toml" >>"$fixture/stderr" 2>&1 &
+    pid=$!
+    ready=0
+    for ((i=0; i<900; i++)); do
+        kill -0 "$pid" || die 'Real Telemt exited during cover restart'
+        if ss -H -ltnp 'sport = :18080' | grep -Fq "pid=$pid," &&
+           curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
+                http://127.0.0.1:18080/ -o "$fixture/http-body"; then ready=1; break; fi
+        sleep 0.1
+    done
+    (( ready )) || die 'Cover restart listener/HTTP did not become ready'
+    cmp -s "$fixture/http-body" "$fixture/data/public/index.html"
+    printf 'ok - REAL atomic cover replacement: cached before restart; new Service Status served after verified restart\n'
     if grep -Fq "${failure_patterns[@]}" "$fixture/stderr"; then
         die 'Pinned runtime has conntrack reconciliation/retry failure'
     fi

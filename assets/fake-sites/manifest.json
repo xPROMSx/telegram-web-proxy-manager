@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "sites": [
+    {
+      "id": "site-02",
+      "size": 2454,
+      "sha256": "cbc8bf570ee6cecf5ad2089b87d31ee5502f4b19abe65de8af6767cccf0f67eb"
+    },
+    {
+      "id": "site-03",
+      "size": 2287,
+      "sha256": "86e41f5b9be51dde377fc38efcf9268293d867f9cc5043831391fbcb9d074d41"
+    },
+    {
+      "id": "site-04",
+      "size": 3285,
+      "sha256": "9ea160b849f434efb815b238d776d4f0fcdea821540d779d6b0c522971aa81bd"
+    }
+  ]
+}

@@ -10,7 +10,8 @@ import os
 import signal
 import subprocess
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+import io
 import stat
 import tarfile
 import re
@@ -1560,12 +1561,12 @@ def web_link_value(manifest_raw, config_raw, link_raw):
     return expected[:-1].decode('ascii')
 
 
-def web_link_read(path, modes, limit):
+def web_link_read(path, modes, limit, owner=0):
     safe_path(path)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         before = os.fstat(fd)
-        require(stat.S_ISREG(before.st_mode) and before.st_uid == 0
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == owner
                 and before.st_nlink == 1 and stat.S_IMODE(before.st_mode) in modes
                 and before.st_size <= limit)
         raw = bytearray()
@@ -1607,11 +1608,543 @@ def display_web_link(state, config):
     print(f'Saved locally:\n  {Path(state) / "web-link.txt"}\n\n{rule}')
 
 
+COVER_BUNDLE = {
+    "schema": 1,
+    "sites": [
+        {
+            "id": 'site-02',
+            "size": 2454,
+            "sha256": 'cbc8bf570ee6cecf5ad2089b87d31ee5502f4b19abe65de8af6767cccf0f67eb',
+            "html": """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BuildRight Co. — Under Construction</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f4f5f7;
+    font-family: Georgia, 'Times New Roman', serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+  .card {
+    background: #ffffff;
+    border-radius: 4px;
+    box-shadow: 0 2px 24px rgba(0,0,0,0.08);
+    padding: 3.5rem 3rem;
+    max-width: 540px;
+    width: 100%;
+    text-align: center;
+    border-top: 5px solid #f4a100;
+  }
+  .icon {
+    font-size: 4rem;
+    margin-bottom: 1.5rem;
+    line-height: 1;
+  }
+  h1 {
+    font-size: 2rem;
+    color: #1a1a2e;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    letter-spacing: -0.5px;
+  }
+  .subtitle {
+    font-size: 1rem;
+    color: #555;
+    line-height: 1.7;
+    margin-bottom: 2rem;
+  }
+  .tape {
+    background: #f4a100;
+    color: #1a1a2e;
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    padding: 0.5rem 1.5rem;
+    display: inline-block;
+    transform: rotate(-1deg);
+    margin-bottom: 2rem;
+  }
+  .progress-bar {
+    background: #e9ecef;
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+  }
+  .progress-fill {
+    background: linear-gradient(90deg, #f4a100, #ffca28);
+    height: 100%;
+    width: 68%;
+    border-radius: 999px;
+  }
+  .progress-label {
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: #999;
+    text-align: right;
+  }
+  .brand {
+    margin-top: 2rem;
+    font-size: 0.8rem;
+    color: #aaa;
+    letter-spacing: 0.1em;
+    font-family: Arial, sans-serif;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#128679;</div>
+    <h1>Under Construction</h1>
+    <p class="subtitle">
+      We're working hard to build something great for you.
+      Our team is putting the finishing touches on our new website.
+    </p>
+    <div class="tape">Work in progress</div>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+    <p class="progress-label">68% complete</p>
+    <p class="brand">BuildRight Co. &mdash; Building Better Together</p>
+  </div>
+</body>
+</html>
+""",
+        },
+        {
+            "id": 'site-03',
+            "size": 2287,
+            "sha256": '86e41f5b9be51dde377fc38efcf9268293d867f9cc5043831391fbcb9d074d41',
+            "html": """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GreenLeaf Tech — Launching Soon</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: linear-gradient(135deg, #0f3d1e 0%, #1a5c2a 40%, #0d4d1f 100%);
+    color: #d4edda;
+    font-family: 'Trebuchet MS', Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    text-align: center;
+  }
+  .leaf {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 0 12px rgba(72,199,100,0.5));
+  }
+  .brand {
+    font-size: 0.85rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #6fcf7c;
+    margin-bottom: 3rem;
+  }
+  h1 {
+    font-size: clamp(2.2rem, 7vw, 5rem);
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.1;
+    margin-bottom: 1.5rem;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.4);
+  }
+  h1 span { color: #48c764; }
+  .body-text {
+    font-size: 1.1rem;
+    color: #a8d5b0;
+    max-width: 480px;
+    line-height: 1.8;
+    margin-bottom: 3rem;
+  }
+  .badge-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 3rem;
+  }
+  .badge {
+    background: rgba(72, 199, 100, 0.15);
+    border: 1px solid rgba(72, 199, 100, 0.4);
+    color: #6fcf7c;
+    padding: 0.4rem 1.1rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+  }
+  .footer-line {
+    font-size: 0.75rem;
+    color: #5a8c65;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="leaf">&#127807;</div>
+  <p class="brand">GreenLeaf Tech</p>
+  <h1>We're Launching<br><span>Soon</span></h1>
+  <p class="body-text">
+    We're building a greener future through sustainable technology.
+    Our platform is almost ready — join us as we grow something remarkable.
+  </p>
+  <div class="badge-row">
+    <span class="badge">Sustainable Cloud</span>
+    <span class="badge">Carbon Neutral</span>
+    <span class="badge">Open Source</span>
+  </div>
+  <p class="footer-line">GreenLeaf Tech &copy; 2025 &mdash; Growing Tomorrow, Today</p>
+</body>
+</html>
+""",
+        },
+        {
+            "id": 'site-04',
+            "size": 3285,
+            "sha256": '9ea160b849f434efb815b238d776d4f0fcdea821540d779d6b0c522971aa81bd',
+            "html": """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alex Chen — Portfolio Coming Soon</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: linear-gradient(160deg, #1a0533 0%, #2d1055 50%, #1e0840 100%);
+    font-family: 'Palatino Linotype', Palatino, Georgia, serif;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+  }
+  @media (max-width: 700px) {
+    body { grid-template-columns: 1fr; padding: 3rem 2rem; }
+    .right { display: none; }
+  }
+  .left {
+    padding: 4rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .eyebrow {
+    font-size: 0.75rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #b07eff;
+    margin-bottom: 1.5rem;
+  }
+  h1 {
+    font-size: clamp(2rem, 4vw, 3.5rem);
+    color: #ffffff;
+    line-height: 1.15;
+    font-weight: 400;
+    margin-bottom: 0.5rem;
+  }
+  h1 em {
+    font-style: italic;
+    color: #c89fff;
+  }
+  .role {
+    font-size: 0.9rem;
+    color: #9b6fcc;
+    letter-spacing: 0.1em;
+    margin-bottom: 2rem;
+  }
+  p {
+    font-size: 1rem;
+    color: #c4a8e8;
+    line-height: 1.9;
+    max-width: 380px;
+    margin-bottom: 2.5rem;
+  }
+  .divider {
+    width: 40px;
+    height: 1px;
+    background: #7c3aed;
+    margin-bottom: 2.5rem;
+  }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(124, 58, 237, 0.2);
+    border: 1px solid rgba(124, 58, 237, 0.5);
+    padding: 0.5rem 1.2rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #b07eff;
+    letter-spacing: 0.08em;
+  }
+  .dot {
+    width: 7px; height: 7px;
+    background: #7c3aed;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .right {
+    padding: 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .art {
+    width: 260px; height: 320px;
+    border: 1px solid rgba(124,58,237,0.4);
+    border-radius: 8px;
+    background: rgba(124,58,237,0.08);
+    position: relative;
+    overflow: hidden;
+  }
+  .art::before {
+    content: '';
+    position: absolute;
+    top: -40%; left: -40%;
+    width: 180%; height: 180%;
+    background: radial-gradient(circle, rgba(124,58,237,0.3) 0%, transparent 65%);
+  }
+  .art-label {
+    position: absolute;
+    bottom: 1.2rem; left: 1.2rem;
+    font-size: 0.7rem;
+    color: rgba(176,126,255,0.5);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="left">
+    <p class="eyebrow">Portfolio</p>
+    <h1>Alex Chen &mdash;<br><em>Designer</em></h1>
+    <p class="role">UI / UX &nbsp;&bull;&nbsp; Brand Identity &nbsp;&bull;&nbsp; Motion</p>
+    <div class="divider"></div>
+    <p>
+      Something carefully crafted is on the way. A new portfolio showcasing
+      the intersection of form, function, and feeling. Coming soon.
+    </p>
+    <span class="status"><span class="dot"></span>Currently in development</span>
+  </div>
+  <div class="right">
+    <div class="art">
+      <div class="art-label">Work preview</div>
+    </div>
+  </div>
+</body>
+</html>
+""",
+        },
+    ],
+}
+
+from html.parser import HTMLParser
+import secrets
+
+COVER_LIMIT = 32768
+SERVICE_STATUS = b'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Service Status</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101827;color:#e8eef7;font:16px system-ui,sans-serif}main{padding:3rem;border:1px solid #29364b;border-radius:20px;background:#172235;text-align:center}i{display:inline-block;width:12px;height:12px;border-radius:50%;background:#50d890;margin-right:10px}h1{font-size:1.5rem}p{color:#b4c2d6}</style></head><body><main><h1>Service Status</h1><p><i></i>All systems operational</p></main></body></html>\n'''
+
+
+class CoverHTML(HTMLParser):
+    """Small local HTML/CSS only; no executable or externally loaded content."""
+    def handle_starttag(self, tag, attrs):
+        require(tag in {'html','head','meta','title','style','body','main','div','span','p',
+                        'h1','h2','h3','br','i','em','strong','section','footer'}, 'unsafe cover HTML')
+        allowed = {'lang','charset','name','content','class','id'}
+        require(all(key in allowed and value is not None for key,value in attrs), 'unsafe cover attribute')
+        if tag == 'meta':
+            require(all(key in {'charset','name','content'} for key,_ in attrs))
+            require(not any(key == 'name' and value != 'viewport' for key,value in attrs))
+
+
+def cover_assets(bundle=None):
+    bundle = COVER_BUNDLE if bundle is None else bundle
+    require(type(bundle) is dict and set(bundle) == {'schema','sites'} and type(bundle['schema']) is int
+            and bundle['schema'] == 1 and type(bundle['sites']) is list and 1 <= len(bundle['sites']) <= 8,
+            'invalid cover manifest')
+    result = {}
+    for item in bundle['sites']:
+        require(type(item) is dict and set(item) == {'id','size','sha256','html'})
+        require(type(item['id']) is str and re.fullmatch(r'site-[0-9]{2}', item['id'])
+                and item['id'] not in result)
+        require(type(item['size']) is int and 0 < item['size'] <= COVER_LIMIT
+                and type(item['html']) is str and len(item['html']) <= COVER_LIMIT and type(item['sha256']) is str
+                and re.fullmatch(r'[0-9a-f]{64}', item['sha256']))
+        raw = item['html'].encode('utf-8')
+        require(len(raw) == item['size'] and hashlib.sha256(raw).hexdigest() == item['sha256'],
+                'cover integrity check failed')
+        require(not re.search(r'url\s*\(|@import|expression\s*\(|\\|https?\s*:',item['html'],re.I),
+                'external or active cover content')
+        parser = CoverHTML(convert_charrefs=True); parser.feed(item['html']); parser.close()
+        result[item['id']] = raw
+    return result
+
+
+def cover_choose(current=None):
+    choices = [raw for raw in cover_assets().values() if raw != current]
+    require(bool(choices), 'no different cover available')
+    return secrets.choice(choices)
+
+
+def cover_atomic(directory, raw, initial=False):
+    """Anchored, bounded single-file publication with verified rollback bytes."""
+    directory = Path(directory); path = directory/'index.html'; safe_path(path)
+    require(0 < len(raw) <= COVER_LIMIT and not os.path.ismount(directory))
+    parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = '.twm-cover-' + uuid.uuid4().hex
+    old = None; published = False
+    try:
+        before = os.fstat(parent)
+        require(before.st_uid == os.geteuid() and not before.st_mode & 0o022)
+        if initial:
+            require(not os.path.lexists(path), 'cover already exists')
+        else:
+            old = web_link_read(path, {0o440}, COVER_LIMIT)
+            original = path.lstat()
+            require(original.st_gid == before.st_gid)
+        def publish(content):
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+            with os.fdopen(fd,'wb') as output:
+                os.fchown(output.fileno(), os.geteuid(), before.st_gid)
+                os.fchmod(output.fileno(),0o440)
+                output.write(content); output.flush(); os.fsync(output.fileno())
+            require(os.fstat(parent).st_ino == directory.lstat().st_ino
+                    and os.fstat(parent).st_dev == directory.lstat().st_dev)
+            os.replace(temporary,'index.html',src_dir_fd=parent,dst_dir_fd=parent)
+            os.fsync(parent)
+        try:
+            if old is not None: require(path.lstat() == original, 'cover changed concurrently')
+            # Signals cannot interrupt publication/verification between durable bytes.
+            with fresh_signal_window():
+                published = True
+                publish(raw)
+                fd = os.open('index.html',os.O_RDONLY | os.O_NOFOLLOW,dir_fd=parent)
+                try:
+                    info = os.fstat(fd)
+                    require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
+                            and info.st_gid == before.st_gid and stat.S_IMODE(info.st_mode) == 0o440)
+                    require(os.read(fd,COVER_LIMIT+1) == raw, 'cover publication verification failed')
+                finally: os.close(fd)
+        except BaseException:
+            try: os.unlink(temporary,dir_fd=parent)
+            except FileNotFoundError: pass
+            if published:
+                if old is not None: publish(old)
+                else:
+                    try: os.unlink('index.html',dir_fd=parent); os.fsync(parent)
+                    except FileNotFoundError: pass
+            raise
+    finally:
+        try: os.unlink(temporary,dir_fd=parent)
+        except FileNotFoundError: pass
+        os.close(parent)
+
+
+def cover_initial(directory, source=None):
+    try:
+        if source:
+            raw = web_link_read(source,{0o440},COVER_LIMIT,owner=os.geteuid())
+            require(raw in [SERVICE_STATUS,*cover_assets().values()], 'unknown staged cover')
+        else: raw = cover_choose()
+    except (ValueError,UnicodeError):
+        print('Cover assets unavailable; using Service Status.',file=sys.stderr)
+        raw = SERVICE_STATUS
+    cover_atomic(directory,raw,initial=True)
+
+
+def cover_change(state, config, data, mode, previous):
+    current_web_link(state,config)  # Silent manager ownership/domain/secret proof.
+    runtime_contract(config,data)
+    account = fresh_identity(data)
+    directory = Path(data)/'public'
+    safe_path(directory)
+    require(directory.lstat().st_uid == 0 and directory.lstat().st_gid == int(account['group'][2])
+            and stat.S_IMODE(directory.lstat().st_mode) == 0o750)
+    current = web_link_read(directory/'index.html',{0o440},COVER_LIMIT)
+    known = [SERVICE_STATUS,*cover_assets().values()]
+    require(current in known, 'Unknown current cover; manual review required')
+    if mode == 'restore':
+        raw = web_link_read(previous,{0o600},COVER_LIMIT)
+        require(raw in known)
+    else:
+        require(mode in ('random','default'))
+        raw = cover_choose(current) if mode == 'random' else SERVICE_STATUS
+        require(not os.path.lexists(previous)); update_write(previous,current)
+    cover_atomic(directory,raw)
+
+
+class UpdateProgress:
+    """Presentation only. Deadlines, samples and transaction authority stay in Engine."""
+    def __init__(self, stream=None):
+        self.stream = stream or sys.stdout
+        self.enabled = self.stream.isatty() and os.environ.get('TERM','') != 'dumb'
+        self.color = self.enabled and not os.environ.get('NO_COLOR')
+        self.stage = None; self.line = False; self.failed = False
+
+    def end_line(self):
+        if self.line: print(file=self.stream,flush=True); self.line = False
+
+    def event(self, stage, legacy):
+        if not self.enabled: print(legacy,file=self.stream,flush=True); return
+        if self.stage == stage: return
+        self.end_line(); self.stage = stage
+        labels = {1:'Verifying release',2:'Compatibility check',3:'Preparing safe update',
+                  4:'Stability check',5:'Restart verification'}
+        print(f'[{stage}/5] {labels[stage]}…',file=self.stream,flush=True)
+
+    def wait(self, deadline, start, total):
+        if not self.enabled:
+            remaining = deadline-time.monotonic()
+            if remaining > 0: time.sleep(remaining)
+            return
+        while True:
+            now = time.monotonic(); elapsed = min(total,max(0,int(now-start)))
+            filled = min(10,int(elapsed*10/max(1,total))); bar = '█'*filled+'░'*(10-filled)
+            green,reset = ('\033[32m','\033[0m') if self.color else ('','')
+            print(f'\r[{self.stage}/5] {green}[{bar}]{reset} {elapsed:3d} / {total} s — Please wait…',
+                  end='',file=self.stream,flush=True); self.line = True
+            if now >= deadline: break
+            time.sleep(min(1,deadline-now))
+
+    def sample(self, sample):
+        if not self.enabled:
+            print(f'Acceptance sample {sample}s: process, cgroup, path and current journal OK',file=self.stream,flush=True)
+
+    def finish(self, message, failed=False):
+        self.end_line()
+        self.failed = self.failed or failed
+        if self.enabled: print(('✗ ' if failed else '✓ ')+message,file=self.stream,flush=True)
+
+    def log(self, message):
+        self.end_line()
+        print(message,file=self.stream,flush=True)
+
+
+
 # Universal updater. These components share the canonical, atomically installed
 # helper with the older parser APIs; bootstrap continues to install one pair.
 UPDATE_SCHEMA = 1
 UPSTREAM_REPOSITORY = dict(id=1125007401, full_name='telemt/telemt')
-UPDATE_MANAGER_VERSION = '0.2.0'
+UPDATE_MANAGER_VERSION = '1.0.0'
 BASELINE_VERSION = '3.5.12'
 BASELINE_COMMIT = 'c4555e25f39dd5be200ccf6353f7d82bfcf89131'
 BASELINE_HASHES = {
@@ -1768,7 +2301,7 @@ class UpdateHTTP:
     def request(self, url, maximum):
         self.official_url(url)
         request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'telemt-web-manager/0.2.0'})
+            'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'telemt-web-manager/1.0.0'})
         with self.open(request) as response:
             final = urllib.parse.urlsplit(response.url)
             require(final.scheme == 'https' and final.hostname in
@@ -1791,7 +2324,7 @@ class UpdateHTTP:
         # streams through the same TLS client directly to an exclusive file.
         require(0 < size <= 128 * UPDATE_CHUNK)
         require(url.startswith('https://github.com/telemt/telemt/releases/download/'))
-        request = urllib.request.Request(url, headers={'User-Agent': 'telemt-web-manager/0.2.0'})
+        request = urllib.request.Request(url, headers={'User-Agent': 'telemt-web-manager/1.0.0'})
         deadline = time.monotonic() + 180
         with self.open(request) as response:
             final = urllib.parse.urlsplit(response.url)
@@ -2580,7 +3113,12 @@ class UpdateSystemd:
     def journal(self, invocation):
         raw=update_run(['journalctl','-u','telemt.service','_SYSTEMD_INVOCATION_ID='+invocation,
                         '--no-pager','-o','json'],maximum=16*UPDATE_CHUNK)
-        require(classify_journal(raw.decode())==0, 'fatal current-invocation journal record')
+        if sys.stdout.isatty() and os.environ.get('TERM','') != 'dumb':
+            summary = io.StringIO()
+            with redirect_stdout(summary): result = classify_journal(raw.decode())
+            if result: print(summary.getvalue(),end='',file=sys.stderr)
+        else: result = classify_journal(raw.decode())
+        require(result==0, 'fatal current-invocation journal record')
 
     def path_health(self):
         manager=self.layout.path('/opt/telemt-web-manager/telemt-web-manager.sh')
@@ -2612,6 +3150,7 @@ class UpdateEngine:
     """
     def __init__(self, layout=None, systemd=None, releases=None, isolation=None):
         self.layout=layout or UpdateLayout(); self.systemd=systemd or UpdateSystemd(self.layout)
+        self.progress=UpdateProgress()
         account=fresh_identity(str(self.layout.data))
         self.tree=UpdateTree(int(account['user'][2]),int(account['user'][3]))
         self.releases=releases or UpdateReleases(); self.journal=UpdateJournal(self.layout)
@@ -2748,13 +3287,13 @@ class UpdateEngine:
         probe=UpdateWEBProbe(read_config(self.layout.config)); probe.run(full=True)
         start=time.monotonic()
         samples=(0,5,15,30,60,90,120,150) if first==150 else tuple(sorted({0,min(5,first),min(15,first),first}))
+        self.progress.event(4 if first == 150 else 5, "Candidate stability acceptance" if first == 150 else "Restarted candidate acceptance")
         for sample in samples:
-            remaining=start+sample-time.monotonic()
-            if remaining>0: time.sleep(remaining)
+            self.progress.wait(start+sample,start,first)
             require(self.systemd.identity(receipt)==identity, 'Telemt identity/restart changed during acceptance')
             self.systemd.path_health(); self.systemd.journal(identity['invocation'])
             self.verify_immutable()
-            print(f'Acceptance sample {sample}s: process, cgroup, path and current journal OK',flush=True)
+            self.progress.sample(sample)
         require(time.monotonic()-start>=first)
         probe.run(full=False)
         self.systemd.firewall()
@@ -2870,9 +3409,11 @@ class UpdateEngine:
         self.ownership()
         old=self.local_receipt(allow_legacy=True)
         self.systemd.identity(old); self.systemd.path_health()
+        self.progress.event(1, 'Discovering official stable Telemt release.')
         latest=self.releases.latest(); frozen=self.releases.freeze(latest,update_architecture())
         comparison=version_compare(latest['version'],old['installed_version'])
-        print('Verified official stable candidate: '+latest['version']+'; installed: '+old['installed_version'],flush=True)
+        self.progress.event(1, 'Verified official stable candidate: '+latest['version']+'; installed: '+old['installed_version'])
+        if self.progress.enabled: print('Updating Telemt '+old['installed_version']+' → '+latest['version'],flush=True)
         require(comparison>=0, 'installed release is newer; automatic downgrade refused')
         if comparison==0:
             require(latest['version']==old['installed_version'], 'non-exact equal version requires manual review')
@@ -2898,7 +3439,7 @@ class UpdateEngine:
             new=UpdateReceipt.create(candidate,transaction,uuid.uuid4().hex,frozen=frozen)
             self.journal.value['new']=dict(receipt=new,receipt_present=True); self.journal.publish()
             root=self.isolation.prepare(backup/'precheck',candidate)
-            print('Running isolated candidate compatibility and WEB checks before downtime.',flush=True)
+            self.progress.event(2, 'Running isolated candidate compatibility and WEB checks before downtime.')
             self.isolation.run(root,new['installed_version'])
             self.releases.recheck(frozen,require_latest=False); self.verify_immutable()
             self.budget(new['binary']['size'])
@@ -2908,7 +3449,7 @@ class UpdateEngine:
             self.journal.value['phase']='PREPARED'; self.journal.publish()
             self.releases.recheck(frozen); self.verify_immutable()
             self.step('STOP_OLD',self.systemd.stop,'OLD_STOPPED')
-            print('Old service stopped gracefully; sealing complete DATA.',flush=True)
+            self.progress.event(3, 'Old service stopped gracefully; sealing complete DATA.')
             self.budget(new['binary']['size']); self.systemd.quiet()
             index=self.tree.inventory(self.layout.data,durable=True)
             update_write_json(backup/'stopped-data-index.json',index)
@@ -2919,7 +3460,7 @@ class UpdateEngine:
             self.step('MOVE_OLD_DATA',lambda:self.rename(self.layout.data,trees/'old'),'SNAPSHOT_COMPLETE')
             require(self.tree.inventory(trees/'old')==index)
             root=self.isolation.prepare(backup/'rehearsal',candidate,trees/'old',index)
-            print('Rehearsing stopped DATA on the isolated candidate, including restart/readback.',flush=True)
+            self.progress.event(3, 'Rehearsing stopped DATA on the isolated candidate, including restart/readback.')
             self.isolation.run(root,new['installed_version'],rehearsal=True)
             require(self.tree.inventory(trees/'old')==index); self.verify_immutable()
             self.tree.clone(trees/'old',trees/'working',index)
@@ -2929,7 +3470,7 @@ class UpdateEngine:
             self.step('REPLACE_RECEIPT',lambda:self.publish_receipt(new),'CANDIDATE_ACTIVATED')
             self.journal.intent('START_CANDIDATE'); update_permit(self.layout,self.journal,new)
             self.systemd.start(); self.journal.result('CANDIDATE_RUNNING'); update_permit(self.layout,self.journal,new)
-            print('Candidate activated; beginning objective 150s acceptance and 45s restarted acceptance.',flush=True)
+            self.progress.event(4, 'Candidate activated; beginning objective 150s acceptance and 45s restarted acceptance.')
             self.accept(new,first=150,second=45)
             self.releases.recheck(frozen,require_latest=False); self.verify_immutable()
             require(self.tree.inventory(trees/'old')==index and update_generation(self.layout)==new)
@@ -2937,8 +3478,13 @@ class UpdateEngine:
             self.step('COMMIT',lambda:require(update_generation(self.layout)==new),'COMMITTED')
             update_clear_permit(self.layout)
             self.finish_committed()
-            print('Updated to '+new['installed_version']+'. TOML and deployment controls preserved byte-for-byte.')
+            if self.progress.enabled:
+                self.progress.finish('Telemt updated successfully: '+old['installed_version']+' → '+new['installed_version'])
+            else: print('Updated to '+new['installed_version']+'. TOML and deployment controls preserved byte-for-byte.')
         except BaseException:
+            message = ('Update committed; housekeeping requires manual review.' if self.journal.value['phase']=='COMMITTED'
+                       else 'Update failed at '+str(self.progress.stage)+'/5; validating rollback.')
+            self.progress.finish(message,failed=True)
             if self.journal.value['phase']!='COMMITTED':
                 self.journal.value['error']='validation-failed'; self.journal.publish()
                 self.recover(force=True)
@@ -3105,7 +3651,7 @@ class UpdateEngine:
             self.accept(old,first=15)
             self.journal.value['phase']='ROLLBACK_COMPLETE'; self.journal.value['intent']=None; self.journal.publish()
             self.finish_rollback()
-            print('Rollback complete: old binary, full DATA, receipt and objective health restored.')
+            self.progress.log('Rollback complete: old binary, full DATA, receipt and objective health restored.')
         except BaseException:
             if self.journal.value['phase']=='ROLLBACK_COMPLETE':
                 self.journal.value['error']='cleanup-failed'
@@ -3309,7 +3855,13 @@ def update_command(command, args):
     try:
         engine=UpdateEngine(layout)
         if command=='update-universal':
-            with update_exclusive_lock(layout): engine.update()
+            try:
+                with update_exclusive_lock(layout): engine.update()
+            except BaseException:
+                if not engine.progress.failed:
+                    engine.progress.finish('Update failed at stage '+str(engine.progress.stage)+'/5; no success reported.',failed=True)
+                raise
+            finally: engine.progress.end_line()
         else:
             boot=bool(args)
             if boot and layout.journal.exists():
@@ -3705,6 +4257,10 @@ def main():
     command, *args = sys.argv[1:]
     if command.startswith('update-'):
         update_command(command,args)
+    elif command == "cover-initial":
+        cover_initial(*args)
+    elif command == "cover-change":
+        cover_change(*args)
     elif command == "semver":
         _, pre = semver(args[0])
         require(len(args) == 1 or (args[1] == "stable" and not pre))

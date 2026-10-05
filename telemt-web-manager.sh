@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=0.2.0
+readonly SCRIPT_VERSION=1.0.0
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1
@@ -457,8 +457,7 @@ write_managed_decoy() {
     local directory=$1
     helper safe-path "$directory/index.html" || return 1
     [[ -d $directory && ! -L $directory && ! -e $directory/index.html && ! -L $directory/index.html ]] || return 1
-    say '<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>' >"$directory/index.html" || return 1
-    chmod 0440 "$directory/index.html"
+    helper cover-initial "$directory" "${2:-}"
 }
 
 prepare_compatibility_data() {
@@ -829,6 +828,26 @@ show_current_web_link() {
     present_web_link
 }
 
+change_cover_site() {
+    local choice since
+    load_installation
+    printf '1. Random new cover\n2. Restore Service Status\n3. Cancel\n'
+    read -r -p '> ' choice
+    case $choice in 1) choice=random;; 2) choice=default;; 3) say 'Cover change cancelled.'; return;; *) die 'Invalid selection';; esac
+    helper cover-change "$STATE" "$CONFIG" "$DATA" "$choice" "$TMP/cover-previous" || die 'Cover change refused; manual review required'
+    # Telemt caches static_directory assets at config load, so verified restart is necessary.
+    since=$(now)
+    if restart_service && wait_ready 90 && path_health && recent_logs "$since"; then
+        say 'Cover site changed successfully.'
+    else
+        helper cover-change "$STATE" "$CONFIG" "$DATA" restore "$TMP/cover-previous" || die 'Cover restoration failed; manual review required'
+        if ! restart_service || ! wait_ready 90 || ! path_health; then
+            die 'Previous cover restored; service requires manual review'
+        fi
+        die 'Cover activation failed; previous cover restored'
+    fi
+}
+
 install_manager() {
     if [[ -f $STATE/manifest.json ]]; then
         local requested_domain=$DOMAIN
@@ -886,7 +905,7 @@ install_manager() {
     done
     if [[ ! -e $STATE ]]; then helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700; fi
     track_file "$DATA/public/index.html"
-    write_managed_decoy "$DATA/public" || die 'Unable to create managed decoy'
+    write_managed_decoy "$DATA/public" "$TMP/compat-data/public/index.html" || die 'Unable to create managed decoy'
     chown root:telemt "$DATA/public/index.html"
     chmod 0440 "$DATA/public/index.html"
     track_file "$CONFIG"
@@ -1205,29 +1224,32 @@ main() {
     done
     if [[ -z $action ]]; then
         [[ -t 0 ]] || die 'No interactive terminal; specify an action'
-        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Uninstall Telemt\n7. Exit\n'
+        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telemt\n8. Exit\n'
         read -r -p '> ' choice
         MENU_ACTION=1
-        case $choice in 1) action=--install; INTERACTIVE_INSTALL=1;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=show-web-link;; 6) action=--uninstall;; 7) return;; *) die 'Invalid selection';; esac
+        case $choice in 1) action=--install; INTERACTIVE_INSTALL=1;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=show-web-link;; 6) action=change-cover;; 7) action=--uninstall;; 8) return;; *) die 'Invalid selection';; esac
     fi
     if (( CONFIRM_UNINSTALL || DELETE_CERTIFICATE )); then
         [[ $action == --uninstall ]] || die 'Uninstall flags require --uninstall'
         (( ! DELETE_CERTIFICATE || CONFIRM_UNINSTALL )) || die '--delete-certificate requires --confirm-uninstall'
     fi
     if [[ $action == show-web-link ]]; then show_current_web_link; return; fi
-    preflight "$action"
+    if [[ $action == change-cover ]]; then preflight --repair; else preflight "$action"; fi
     TMP=$(mktemp -d /tmp/telemt-web-manager.XXXXXXXX)
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
-    if [[ $action == --check ]]; then
+    if [[ $action == change-cover ]]; then
+        take_lock
+        pending_update || die 'Pending/critical Update; cover change refused'
+    elif [[ $action == --check ]]; then
         take_lock shared
         pending_update || die 'Pending/critical Update; Check remains read-only'
     else
         take_lock
         recover_update || die 'Pending Update recovery requires manual review'
     fi
-    case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; --uninstall) uninstall_manager;; esac
+    case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; change-cover) change_cover_site;; --uninstall) uninstall_manager;; esac
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

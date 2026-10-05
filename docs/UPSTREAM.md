@@ -4,7 +4,7 @@ Supported Telemt: **3.5.12** (fresh Install baseline).
 
 The current release and source were verified through official GitHub metadata and
 actual downloads on 3 October 2026 (UTC). Manager SCRIPT_VERSION is
-0.2.0. Fresh Install stays deliberately fixed. Universal Update enumerates the
+1.0.0. Fresh Install stays deliberately fixed. Universal Update enumerates the
 complete official release history, choosing the highest stable SemVer across all
 series and verifying its compatibility; it does not select an unchecked latest URL.
 
@@ -67,7 +67,8 @@ liveness, not a real Telegram client exchange. Legacy 3.5.12 still requires upli
 sequence/ack without conveyor. Generated TOML and the base unit are unchanged.
 Full isolated state rehearsal and post-activation checks decide compatibility,
 including synthetic compatible/incompatible 4.0.0; version numbers never substitute
-for these checks. Owner live acceptance of 0.2.0 remains pending.
+for these checks. Owner live acceptance of 0.2.0 is complete, including automatic 3.5.12 → 3.5.14,
+real Telegram and final Check OK. New 1.0.0 cover/UI acceptance remains pending.
 
 ## Reviewed 3.5.11 -> 3.5.12 compatibility
 
@@ -316,3 +317,20 @@ uses actual cloned stopped DATA; quota preservation compares existing per-user
 used_bytes/reset semantics, not derived top-level metadata. Synthetic non-empty
 quota belongs only to separate CI fixtures. Owner live acceptance of this quota
 follow-up remains pending; the previous refusal rolled back safely to 3.5.12.
+
+
+## Static cover behavior (1.0.0)
+
+Reviewed baseline 3.5.12 source at
+`c4555e25f39dd5be200ccf6353f7d82bfcf89131`: `src/config/load/runtime_web.rs`
+loads bounded no-follow static files into `WebStaticAsset.body` at config load;
+`src/web/http/decoy.rs` serves cached bytes. Therefore atomic index replacement
+requires a verified Telemt restart, rather than assuming per-request disk reads.
+The existing real namespace runtime smoke verifies both cached-before-restart and
+new-cover-after-restart behavior. TOML/static_directory and Nginx remain unchanged.
+
+Three HTML/CSS covers were copied from read-only companion
+`xPROMSx/3x-ui-auto-nginx` commit `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd`,
+site-02/site-03/site-04. Their source copies, size/SHA256 manifest and embedded
+helper bundle are manager-owned and mechanically matched. No runtime dependency,
+remote content, third-party script or new bootstrap component is introduced.

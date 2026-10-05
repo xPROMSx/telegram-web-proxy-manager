@@ -5,7 +5,7 @@
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
 
-Supported Telemt: **3.5.12** (fresh Install baseline). Universal Update 0.2.0 is
+Supported Telemt: **3.5.12** (fresh Install baseline). Universal Update (introduced in 0.2.0) is
 compatibility-driven across all stable SemVer series. See [upstream provenance](UPSTREAM.md) and the
 [REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
 
@@ -713,7 +713,9 @@ targets. Package names never come from user input or external release data.
 Owner acceptance of v0.1.4 completed on clean Ubuntu 26.04.1 LTS: missing tool
 installation through the manager, fresh Install, Show current WEB link, real
 Telegram client use and final Check OK. That historical acceptance does not cover
-Universal Update 0.2.0, whose owner live acceptance remains pending.
+Universal Update 0.2.0. Its separate owner acceptance is now complete: baseline 3.5.12,
+real automatic Update to 3.5.14, Telegram WEB, 150s + 45s acceptance, controlled restart,
+COMMITTED metadata and final Check OK. New 1.0.0 cover/UI acceptance remains pending.
 
 ## Current WEB link (manager 0.1.4)
 
@@ -723,8 +725,9 @@ Universal Update 0.2.0, whose owner live acceptance remains pending.
 3. Check
 4. Repair
 5. Show current WEB link
-6. Uninstall Telemt
-7. Exit
+6. Change cover site
+7. Uninstall Telemt
+8. Exit
 ```
 
 Item 5 uses a shared manager lock and reads the existing private
@@ -744,7 +747,7 @@ the secret. Config, journals and backups also require secret-safe handling.
 ## Managed uninstall
 
 Managed uninstall was introduced in 0.1.2 as `--uninstall --confirm-uninstall`.
-In the current 0.2.0 menu, Uninstall is item 6 and Exit is item 7.
+In the 1.0.0 menu, Uninstall is item 7 and Exit is item 8.
 The interactive confirmation is the exact word `UNINSTALL`;
 only then is certificate deletion offered with default N. `--delete-certificate`
 requires both uninstall and explicit confirmation. This removes Telemt, not the
@@ -828,3 +831,33 @@ refuse certificate cleanup before Certbot deletion. Nginx is tested
 before/after removal; a failed activation restores the previous ACME vhost.
 Failure reports “Telemt uninstall succeeded. Certificate cleanup failed or
 requires manual review” and retains backup evidence; Telemt is not resurrected.
+
+
+## Cover sites and Update presentation (1.0.0)
+
+Fresh Install automatically selects one of three manager-owned single-file covers.
+The bounded schema-1 manifest records stable IDs, byte sizes and SHA256. HTML and
+manifest are embedded in the atomically installed canonical helper; the collection
+is shipped from the same exact manager commit, without runtime downloads or a
+companion-repository dependency. Only local HTML/CSS is allowed. Invalid assets
+fall back to the built-in Service Status / All systems operational page.
+
+Menu item 6 offers Random new cover, Restore Service Status and Cancel. Random
+avoids the current known site when another exists. Unknown/manual HTML (including
+a legacy Welcome page) is not overwritten: manual review is required. Manager
+ownership, TOML identity, account, safe ancestors, root ownership and 0440 mode
+are verified under the exclusive mutation lock; pending Update is refused.
+The publication uses a same-directory no-follow temporary file, root:telemt, 0440,
+file/directory fsync and atomic replace. Failed publication verification restores
+previous bytes and removes staging files. Telemt snapshots static_directory assets
+at config load, so the existing verified restart/readiness/path/journal checks are
+required. Failed activation restores the old cover and verifies its restart.
+The operation does not change TOML, certificate, Nginx, receipt, generation or journal,
+and does not create an Update transaction. Normal full-DATA Update preserves covers.
+
+TTY Update shows five stages and elapsed stability/restart progress, without hiding
+the cursor or using a background process. NO_COLOR disables ANSI colors; TERM=dumb
+and non-TTY keep line-oriented diagnostics. The renderer does not change 150s + 45s
+acceptance, validation samples, WEB probes, transaction order or rollback decisions.
+Failure ends the progress line and retains stage/error/rollback information.
+Owner acceptance of these new 1.0.0 presentation/cover paths is still required.
