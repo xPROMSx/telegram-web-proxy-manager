@@ -8,7 +8,7 @@ Adds a WEB proxy to shared HTTPS port 443 with direct Telegram egress or optiona
 
 ## Features
 
-- Deployment on top of [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro)
+- Deployment on top of [xPROMSx/3x-ui-auto-nginx](https://github.com/xPROMSx/3x-ui-auto-nginx)
   infrastructure with a recognized Nginx `stream` / `ssl_preread` topology:
   existing routes, Xray configuration and 3x-ui settings/database are preserved.
 - Install, Update, Check, Repair and Uninstall Telemt through a menu or non-interactive commands.
@@ -16,9 +16,11 @@ Adds a WEB proxy to shared HTTPS port 443 with direct Telegram egress or optiona
 - Official Telemt SHA256, configuration and health verification; rollback on install/update failure.
 - Hardened systemd service; existing TOML preserved during Telemt updates.
 
-3x-ui-pro compatibility is tested with installer and patcher configurations at revision
-`a2c430cd6dec7c86d873dcda3544a61e7ac41144`. This is not an official integration:
-arbitrary, modified and future topologies need separate review.
+Supported order: `xPROMSx/3x-ui-auto-nginx` Fresh Install → Telemt WEB Manager Install.
+CI checks the `x-ui-latest.sh` topology at revision `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd`.
+A deliberate full 3x-ui rebuild removes Nginx routes: Telemt must then be installed/
+integrated again. `x-ui-patch.sh` is outside the mandatory contract.
+Arbitrary, modified and future topologies need separate review.
 
 ## Quick installation
 

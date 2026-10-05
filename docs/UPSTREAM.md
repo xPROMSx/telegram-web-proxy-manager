@@ -240,7 +240,7 @@ without promising persistence if shutdown exceeds that bound.
 
 ## ACME compatibility contract
 
-Both reviewed 3x-ui-pro scripts also emit `sites-available/80.conf`: one IPv4
+The current reviewed xPROMSx/3x-ui-auto-nginx Fresh Install script emits `sites-available/80.conf`: one IPv4
 listen 80, exact panel/reality names and `return 301 https://$host$request_uri`.
 For occupied port 80, the manager verifies sockets belong to the active Nginx
 master or its workers, with matching executable, and parses the recognized stream
@@ -298,3 +298,21 @@ asset URL and unambiguous digest, no candidate execution before verification,
 root-only config/backups/staging, suppressed candidate diagnostics and raw journals,
 signal rollback, managed manifest/hash checks and required public HTTPS probe.
 No production VPS or secrets were used. See both READMEs for intentional boundaries.
+
+## Current 3x-ui topology and quota compatibility review
+
+The mandatory topology fixture uses `xPROMSx/3x-ui-auto-nginx` `x-ui-latest.sh`,
+commit `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd`, Git blob
+`c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81`. Only inert Nginx heredocs are rendered;
+the installer is not executed. Supported order is 3x-ui Fresh Install followed
+by manager Install. A deliberate 3x-ui full rebuild removes existing routes and
+requires Telemt installation/integration again. `x-ui-patch.sh` is not mandatory.
+Historical reviews above remain records of their original revisions.
+
+Official `src/quota_state.rs` is byte-identical between 3.5.12 and 3.5.13
+(SHA256 `ea39da751a742ba2df59fc2ef364c0bc04c1e305b214070c776b23fefcafd26e`).
+Telemt derives the top-level reset timestamp from user records on save. Rehearsal
+uses actual cloned stopped DATA; quota preservation compares existing per-user
+used_bytes/reset semantics, not derived top-level metadata. Synthetic non-empty
+quota belongs only to separate CI fixtures. Owner live acceptance of this quota
+follow-up remains pending; the previous refusal rolled back safely to 3.5.12.

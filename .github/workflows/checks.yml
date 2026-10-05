@@ -79,7 +79,7 @@ jobs:
         run: sudo bash tests/renewal.sh
       - name: Real Nginx stream and TLS fixture
         run: bash tests/nginx.sh
-      - name: Current reviewed 3x-ui-pro installer and patcher topologies
+      - name: Reviewed xPROMSx/3x-ui-auto-nginx Fresh Install topology
         run: bash tests/three-x-ui.sh
       - name: Real Ubuntu 24.04 systemd boot, official Update, hostile isolation, filesystem and abrupt power-loss recovery (offline QEMU)
         run: bash tests/update_boot.sh 24.04

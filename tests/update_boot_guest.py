@@ -132,9 +132,8 @@ WantedBy=multi-user.target
     s.update_run(['systemctl','stop','telemt.service'],timeout=190); engine.systemd.quiet()
     print('TWM_SETUP_OLD_HEALTH_AND_GRACEFUL_STOP_OK',flush=True)
     quota=layout.data/'state/telemt.limit.json'
-    if quota.exists(): quota.unlink()
-    s.update_quota_seed(quota,dict(last_reset_epoch_secs=1700000000,
-        users={'web-user':dict(used_bytes=8192,last_reset_epoch_secs=1700000000)}),uid,gid)
+    assert s.update_quota_read(quota,uid)==dict(last_reset_epoch_secs=0,users={})
+    print('TWM_EMPTY_QUOTA_BASELINE_OK actual graceful-stop state; no synthetic user',flush=True)
     s.update_run(['systemctl','start','telemt.service'],timeout=100)
     return engine
 
@@ -229,6 +228,22 @@ def main():
         print('TWM_PARTITION_IO_CONTRACT_OK filesystem='+filesystem+' effective='+effective.strip(),flush=True)
         engine.isolation.run(probe,'3.5.12')
         print('TWM_BASELINE_ISOLATION_OK official 3.5.12, private UID/CAP_NET_ADMIN/WEB/strict parser/quota/shutdown',flush=True)
+        # Separate CI-only noncanonical persisted-user regression. Never seed
+        # the live deployment used by the production Update/power-cut tests.
+        synthetic=engine.isolation.prepare(private/'synthetic-root',ARTIFACTS/'x86_64/candidate')
+        quota=synthetic/'var/lib/telemt/state/telemt.limit.json'
+        uid=pwd.getpwnam('telemt').pw_uid; gid=pwd.getpwnam('telemt').pw_gid
+        seed=dict(last_reset_epoch_secs=0,users={'web-user':dict(used_bytes=8192,last_reset_epoch_secs=1700000000)})
+        fd=os.open(quota,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        try:
+            os.fchown(fd,uid,gid); os.write(fd,json.dumps(seed).encode()); os.fsync(fd)
+        finally: os.close(fd)
+        s.update_fsync(quota.parent)
+        engine.isolation.run(synthetic,'3.5.13',rehearsal=True)
+        canonical=s.update_quota_read(quota,uid)
+        assert canonical['last_reset_epoch_secs']==1700000000
+        s.update_quota_preserve(seed,quota,uid)
+        print('TWM_SYNTHETIC_QUOTA_CANONICALIZED_OK separate CI-only user state; two isolated runtime cycles',flush=True)
         sys.path.insert(0,str(ROOT/'tests'))
         import update_isolation_guest
         update_isolation_guest.run(s,engine,ROOT)
@@ -242,6 +257,9 @@ def main():
         journal=s.UpdateJournal(layout).read(); assert journal['phase']=='COMMITTED' and journal['normalized']
         assert len(list(layout.stash.iterdir()))==1
         assert s.UpdateTree.validate(s.update_json(s.update_read(layout.backup(journal['transaction_id'])/'stopped-data-index.json',64*s.UPDATE_CHUNK)))
+        stopped=layout.trees(journal['transaction_id'])/'old/state/telemt.limit.json'
+        assert s.update_quota_read(stopped,pwd.getpwnam('telemt').pw_uid)==dict(last_reset_epoch_secs=0,users={})
+        print('TWM_EMPTY_QUOTA_UPDATE_OK official 3.5.12 -> 3.5.13; actual stopped empty quota; rehearsal and activation',flush=True)
         check=s.update_run(['bash','/opt/telemt-web-manager/telemt-web-manager.sh','--check'],timeout=240)
         assert b'Check result: OK' in check and b'tg://' not in check
         assert len(list(layout.stash.iterdir()))==1,'read-only compatibility scratch survived Check'
@@ -300,7 +318,7 @@ def main():
         journal=s.UpdateJournal(layout).read(); assert journal['phase']=='ROLLBACK_COMPLETE'
         assert s.UpdateReceipt.read(layout.receipt)==phase['old']
         assert not (layout.data/'state/crash-candidate-only').exists()
-        assert s.update_quota_read(layout.data/'state/telemt.limit.json',pwd.getpwnam('telemt').pw_uid)['users']['web-user']['used_bytes']>=8192
+        assert s.update_quota_read(layout.data/'state/telemt.limit.json',pwd.getpwnam('telemt').pw_uid)==dict(last_reset_epoch_secs=0,users={})
         print('TWM_NONTERMINAL_BOOT_OK old 3.5.12 binary + FULL DATA + receipt restored; no candidate-only file; real old health; gate opens only after supervised restore',flush=True)
         engine=s.UpdateEngine(); authority=arm_terminal_housekeeping(engine)
         s.update_write_json(PHASE,dict(stage='rollback-terminal-boot',authority=authority))

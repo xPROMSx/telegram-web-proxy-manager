@@ -36,7 +36,7 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | ACME transactions | — | — | M | — | R | — | — |
 | Renewal hook/socket/scheduler (sudo) | — | — | M | — | R | — | — |
 | Nginx stream/TLS | — | — | — | — | R | — | — |
-| Reviewed 3x-ui-pro topologies | — | — | — | — | R | — | — |
+| Reviewed 3x-ui Fresh topology | — | — | — | — | R | — | — |
 
 | Same CI step/test | listener | HTTP | TLS | Nginx | Certbot | SOCKS | journal/log classifier |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -66,7 +66,7 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | ACME transactions | M | M | M | M | M | — | — |
 | Renewal hook/socket/scheduler (sudo) | M | — | R (self-signed) | M | M (renewal settings) | — | — |
 | Nginx stream/TLS | R | R | R (self-signed) | R | — | — | — |
-| Reviewed 3x-ui-pro topologies | R | R | R (self-signed) | R | — | — | — |
+| Reviewed 3x-ui Fresh topology | R | R | R (self-signed) | R | — | — | — |
 
 `upstream.sh`, `staging.sh` and the positive download probe execute the real pinned
 binary's version/healthcheck CLI, not a server. Healthcheck with API disabled is
@@ -265,7 +265,14 @@ private namespaces/cgroups and strict parser, stopped full-DATA rehearsal/quota
 readback, authenticated WEB, PID-owned listener, real local/public-path Nginx TLS/
 HTTP and actual journal. Public-path DNS resolves to the guest fixture, not the
 Internet. Acceptance dwells 150 seconds, restarts gracefully and dwells 45 seconds;
-all immutable controls and unrelated real firewall state are preserved.
+Timed samples retain process/cgroup/path/journal/deployment checks; full WEB runs
+once at each readiness and lightweight WEB once at each interval end.
+The real Update and power-cut rollback use actual empty baseline quota
+`{"last_reset_epoch_secs":0,"users":{}}`, with no synthetic production user.
+A separate private CI rehearsal tests a non-empty user with a noncanonical top-level
+reset timestamp; canonicalization is accepted while per-user semantics survive.
+Focused quota tests reject user disappearance, used_bytes decrease and user reset
+changes. All immutable controls and unrelated real firewall state are preserved.
 
 Four hostile compiled ELF probes exercise denied host files/environment/systemd/
 network access, a hung version command with detached child, bounded log flooding

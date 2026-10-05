@@ -264,8 +264,10 @@ whose supervisor is dead, after stopping its derived private cgroup. Live or
 unmarked/unknown scratch refuses automatic cleanup and needs manual review.
 Missing isolation tooling refuses. Precheck uses synthetic DATA and exact TOML,
 including an unknown-key negative. Stopped-state rehearsal uses a separate clone,
-two runtime/shutdown/restart cycles, nonzero quota/reset metadata and semantic
-readback. Only a pristine third clone can become the live candidate generation.
+two runtime/shutdown/restart cycles and semantic readback of actual stopped DATA.
+Production never seeds synthetic quota: missing/empty old users impose no quota
+preservation claim. An existing web-user must retain its reset timestamp and
+nondecreasing used_bytes; top-level reset time is derived and may be canonicalized. Only a pristine third clone can become the live candidate generation.
 
 The old service must stop gracefully, with no remaining UID process/cgroup/private
 listener or Telemt-owned firewall state. The authoritative complete DATA inventory
@@ -316,7 +318,10 @@ Activation proves exact process image hash, PID/starttime/invocation, UID/GID,
 CAP_NET_ADMIN, cgroup/OOM/NRestarts, PID-owned listener, Nginx/local/public TLS/HTTP,
 optional SOCKS, authenticated WEB session and current journal. Acceptance samples
 0/5/15/30/60/90/120/150 seconds after readiness; a graceful stop/restart and another
-45 seconds follow. Persistent DATA/quota is validated while stopped before restart.
+45 seconds follow. A full WEB probe runs after each readiness, with one lightweight
+probe at each interval end. Timed samples retain identity/cgroup/listener/path,
+current journal and deployment contracts without opening a new WEB session each
+time. Persistent DATA/quota is validated while stopped before restart.
 Exact byte invariants cover manager-owned TOML, link, base unit, manifest, renewal
 hook, certificate ownership record, WEB/ACME vhosts and managed stream fragments.
 Certbot may rotate its valid owned lineage: current paths, private-key permissions,
@@ -458,8 +463,12 @@ WEB link worked from a real Telegram client. Current-invocation logs reported
 release blocker. This pin update alone does not require a reboot. No Reinstall
 operation is introduced; this acceptance does not establish all deployment combinations.
 
-Both 3x-ui-pro scripts are downloaded at the pinned commit, Git blob hashes checked,
-and Nginx heredocs rendered with inert values. Installer/patcher are never executed.
+The reviewed xPROMSx/3x-ui-auto-nginx Fresh Install script is downloaded at commit
+`59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd` (blob
+`c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81`); Nginx heredocs are rendered with
+inert values. The installer is never executed. Supported order is 3x-ui Fresh
+Install → manager Install. A deliberate destructive 3x-ui full rebuild requires
+Telemt installation/integration again; patcher reruns are not a mandatory contract.
 Tests cover mocked full install, idempotence, byte-for-byte rollback and real
 Nginx/TLS/PROXY/XFF over IPv4/IPv6. Minimal fixtures cover unsafe variants/include
 cycles. Real Nginx checks ACME challenges/404 and preserved HTTP redirects. Python
@@ -502,8 +511,8 @@ A normal Ubuntu nginx.conf includes mime.types. Earlier real-Nginx tests used a
 synthetic main config without this include: upstream heredocs were covered but
 package-owned configuration was omitted. CI now copies the installed package's
 actual mime.types bytes into each isolated trusted Nginx tree, parses both plans,
-asserts its snapshot hash, then runs real Nginx with it, including both pinned
-3x-ui-pro topologies. No production config or include trust expansion is needed.
+asserts its snapshot hash, then runs real Nginx with it, including the pinned
+xPROMSx/3x-ui-auto-nginx Fresh Install topology. No production config or include trust expansion is needed.
 
 The parser marks flat types{} entries as data records. Generic directive traversal
 and include expansion cannot see them as listen/server_name/include/etc. Ordinary

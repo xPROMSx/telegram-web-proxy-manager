@@ -479,6 +479,48 @@ class Transactions(unittest.TestCase):
                     with self.assertRaises(ValueError): f.engine.update()
                 f.assert_old(); self.assertEqual(calls[0],1,'a failed objective assertion must not be retried')
 
+    def test_acceptance_web_probes_only_at_readiness_and_interval_end(self):
+        f=self.fixture(); clock=[0.0]; calls=[]; paths=[]; journals=[]; controls=[]
+        original=f.engine.accept; verify=f.engine.verify_immutable
+        f.engine.accept=lambda receipt,**kwargs: original(receipt,**kwargs) if receipt==f.old else s.UpdateEngine.accept(f.engine,receipt,**kwargs)
+        f.controller.path_health=lambda:paths.append(clock[0])
+        f.controller.journal=lambda invocation:journals.append(clock[0])
+        def immutable(): controls.append(clock[0]); verify()
+        f.engine.verify_immutable=immutable
+        with patch.object(s,'read_config',return_value=dict(web=dict(vhosts=[dict(host='proxy.example.com')]),access=dict(users={'web-user':'1'*32}))),patch.object(s.UpdateWEBProbe,'run',side_effect=lambda full:calls.append((clock[0],full))),patch.object(s.time,'monotonic',side_effect=lambda:clock[0]),patch.object(s.time,'sleep',side_effect=lambda delay:clock.__setitem__(0,clock[0]+delay)):
+            f.engine.update()
+        self.assertEqual(calls,[(0.0,True),(150.0,False),(150.0,True),(195.0,False)])
+        for sample in (0,5,15,30,60,90,120,150,155,165,195):
+            self.assertIn(sample,paths); self.assertIn(sample,journals); self.assertIn(sample,controls)
+        self.assertEqual(s.UpdateJournal(f.layout).read()['phase'],'COMMITTED')
+
+    def test_real_quota_semantics_at_post_activation_restart_and_full_rollback(self):
+        user=dict(used_bytes=8192,last_reset_epoch_secs=1700000000)
+        for case in ('empty','canonicalized','decrease','missing-user','reset-change'):
+            with self.subTest(case=case):
+                f=self.fixture(); clock=[0.0]; quota=f.layout.data/'state/telemt.limit.json'
+                old=dict(last_reset_epoch_secs=0,users={} if case=='empty' else {'web-user':dict(user)})
+                def write(value):
+                    quota.write_text(json.dumps(value)); quota.chmod(0o600); os.chown(quota,UID,GID)
+                write(old); f.original=f.engine.tree.inventory(f.layout.data)
+                start=f.controller.start
+                def candidate_start():
+                    start()
+                    if s.UpdateReceipt.read(f.layout.receipt)==f.old: return
+                    new=dict(last_reset_epoch_secs=1700000000,users={} if case in ('empty','missing-user') else {'web-user':dict(user)})
+                    if case=='decrease': new['users']['web-user']['used_bytes']-=1
+                    if case=='reset-change': new['users']['web-user']['last_reset_epoch_secs']+=1
+                    write(new)
+                f.controller.start=candidate_start
+                original=f.engine.accept
+                f.engine.accept=lambda receipt,**kwargs: original(receipt,**kwargs) if receipt==f.old else s.UpdateEngine.accept(f.engine,receipt,**kwargs)
+                with patch.object(s,'read_config',return_value=dict(web=dict(vhosts=[dict(host='proxy.example.com')]),access=dict(users={'web-user':'1'*32}))),patch.object(s.UpdateWEBProbe,'run'),patch.object(s.time,'monotonic',side_effect=lambda:clock[0]),patch.object(s.time,'sleep',side_effect=lambda delay:clock.__setitem__(0,clock[0]+delay)):
+                    if case in ('empty','canonicalized'):
+                        f.engine.update(); self.assertEqual(s.UpdateJournal(f.layout).read()['phase'],'COMMITTED')
+                    else:
+                        with self.assertRaises(ValueError): f.engine.update()
+                        f.assert_old(); self.assertEqual(s.update_quota_read(quota,UID),old)
+
     def test_graceful_candidate_restart_stop_and_start_failures_restore_full_old_generation(self):
         config=dict(web=dict(vhosts=[dict(host='proxy.example.com')]),access=dict(users={'web-user':'1'*32}))
         for defect in ('stop','start'):

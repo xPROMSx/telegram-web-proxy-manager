@@ -2752,23 +2752,19 @@ class UpdateEngine:
             remaining=start+sample-time.monotonic()
             if remaining>0: time.sleep(remaining)
             require(self.systemd.identity(receipt)==identity, 'Telemt identity/restart changed during acceptance')
-            self.systemd.path_health(); self.systemd.journal(identity['invocation']); probe.run(full=False)
+            self.systemd.path_health(); self.systemd.journal(identity['invocation'])
             self.verify_immutable()
-            print(f'Acceptance sample {sample}s: process, cgroup, path, WEB and current journal OK',flush=True)
+            print(f'Acceptance sample {sample}s: process, cgroup, path and current journal OK',flush=True)
         require(time.monotonic()-start>=first)
+        probe.run(full=False)
         self.systemd.firewall()
         if second is not None:
             self.journal.intent('STOP_CANDIDATE'); self.systemd.stop(); self.journal.result()
             self.tree.inventory(self.layout.data)  # Stopped writer; validate all persisted DATA objects.
             old_quota=self.layout.trees(self.journal.value['transaction_id'])/'old/state/telemt.limit.json'
             new_quota=self.layout.data/'state/telemt.limit.json'
-            if old_quota.exists():
-                old=update_quota_read(old_quota,self.tree.uid); new=update_quota_read(new_quota,self.tree.uid)
-                require(old['last_reset_epoch_secs']==new['last_reset_epoch_secs'])
-                for user,value in old['users'].items():
-                    require(user in new['users'] and new['users'][user]['used_bytes']>=value['used_bytes']
-                            and new['users'][user]['last_reset_epoch_secs']==value['last_reset_epoch_secs'],
-                            'candidate reset persisted quota during activation')
+            old=update_quota_read(old_quota,self.tree.uid) if os.path.lexists(old_quota) else None
+            update_quota_preserve(old,new_quota,self.tree.uid)
             self.journal.intent('START_CANDIDATE'); update_permit(self.layout,self.journal,receipt)
             self.systemd.start(); self.journal.result()
             update_permit(self.layout,self.journal,receipt)
@@ -3467,19 +3463,18 @@ def update_quota_read(path, uid):
     finally: os.close(fd)
 
 
-def update_quota_seed(path, value, uid, gid):
-    """Write only the fixed file in an already private rehearsal state dir."""
-    require(path.name=='telemt.limit.json' and path.parent.name=='state')
-    parent=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
-    try:
-        info=os.fstat(parent)
-        require(info.st_uid==uid and info.st_gid==gid and stat.S_IMODE(info.st_mode)==0o750)
-        fd=os.open(path.name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o640,dir_fd=parent)
-        with os.fdopen(fd,'wb') as output:
-            os.fchown(output.fileno(),uid,gid); os.fchmod(output.fileno(),0o640)
-            output.write(json.dumps(value).encode()+b'\n'); output.flush(); os.fsync(output.fileno())
-        os.fsync(parent)
-    finally: os.close(parent)
+def update_quota_preserve(old, path, uid):
+    """Compare actual persisted user semantics; top-level reset is derived.
+
+    No persisted users means no quota preservation claim. Telemt may create or
+    canonicalize its empty quota file; the complete DATA safety checks still run.
+    """
+    if old is None or not old['users']: return
+    new=update_quota_read(path,uid)
+    for user,value in old['users'].items():
+        require(user in new['users'] and new['users'][user]['used_bytes']>=value['used_bytes']
+                and new['users'][user]['last_reset_epoch_secs']==value['last_reset_epoch_secs'],
+                'candidate reset or lost persisted quota state')
 
 
 class UpdateIsolation:
@@ -3581,7 +3576,7 @@ class UpdateIsolation:
             try:
                 stage=update_json(update_read(Path(root)/'probe-stage.json',4096),4096)
                 update_exact(stage,{'stage'})
-                require(stage['stage'] in ('namespace','version','parser','unknown-key','quota-seed',
+                require(stage['stage'] in ('namespace','version','parser','unknown-key','quota-baseline',
                     'readiness','listener','capability','WEB','WEB-bootstrap','WEB-Hello','WEB-session-replay',
                     'WEB-uplink','WEB-downlink','WEB-close','shutdown','firewall','quota-readback','complete'))
                 print('Isolated probe failed at trusted stage: '+stage['stage'],file=sys.stderr,flush=True)
@@ -3650,15 +3645,9 @@ def update_isolated_run(root, expected_version, mode):
     require(rejected and update_hash(config)==before, 'candidate parsing/config preservation failed')
     if mode=='parseonly':
         print('Isolated installed version and strict immutable TOML parser: OK'); return
-    checkpoint('quota-seed')
+    checkpoint('quota-baseline')
     quota_path=root/'var/lib/telemt/state/telemt.limit.json'
-    seed=dict(last_reset_epoch_secs=1700000000,users={'web-user':dict(used_bytes=8192,last_reset_epoch_secs=1700000000)})
-    if quota_path.exists(): seed=update_quota_read(quota_path,identity['uid'])
-    seed['users'].setdefault('web-user',dict(used_bytes=8192,last_reset_epoch_secs=1700000000))
-    seed['users']['web-user']['used_bytes']=max(8192,seed['users']['web-user']['used_bytes'])
-    # This is private rehearsal state, never the pristine publication clone.
-    if quota_path.exists(): quota_path.unlink()
-    update_quota_seed(quota_path,seed,identity['uid'],identity['gid'])
+    old_quota=update_quota_read(quota_path,identity['uid']) if os.path.lexists(quota_path) else None
     for cycle in range(2 if mode=='rehearsal' else 1):
         process=subprocess.Popen(command+['/etc/telemt/telemt.toml'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                                  start_new_session=True,env=dict(os.environ,PATH='/usr/sbin:/usr/bin:/sbin:/bin'))
@@ -3706,11 +3695,7 @@ def update_isolated_run(root, expected_version, mode):
             for name,arguments in (('nft',['list','ruleset']),('iptables-save',[]),('ip6tables-save',[])))
         require(not re.search(rb'TELEMT_|telemt_conntrack',firewall), 'private firewall cleanup failed')
         checkpoint('quota-readback')
-        actual=update_quota_read(quota_path,identity['uid'])
-        require(actual['last_reset_epoch_secs']==seed['last_reset_epoch_secs']
-                and actual['users']['web-user']['last_reset_epoch_secs']==seed['users']['web-user']['last_reset_epoch_secs']
-                and actual['users']['web-user']['used_bytes']>=seed['users']['web-user']['used_bytes'],
-                'candidate reset or lost persisted quota state')
+        update_quota_preserve(old_quota,quota_path,identity['uid'])
     require(update_hash(config)==before)
     checkpoint('complete')
     print('Isolated exact version, strict parser, WEB/replay/bounded poll/Pong/close, quota and shutdown: OK')
