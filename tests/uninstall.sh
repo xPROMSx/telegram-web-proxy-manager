@@ -46,6 +46,9 @@ eval "$(declare -f helper | sed '1s/helper/real_helper/')"
 runtime_fixture() { python3 "$ROOT/tests/uninstall_runtime_fixture.py" "$@"; }
 helper() {
     if [[ ${variation:-} == metadata-fail && $1 == uninstall-backup ]]; then return 1; fi
+    if [[ $1 == update-gate-contract && $scenario == *-generation ]]; then
+        python3 "$ROOT/tests/update_state_fixture.py" contract "$case_dir"; return
+    fi
     real_helper "$@"
 }
 # A synchronous child runs after ownership validation and while service-active
@@ -87,6 +90,8 @@ systemctl() {
         show)
             if [[ $* == *FragmentPath* && -f $UNIT ]]; then printf '%s\n' "$UNIT";
             elif [[ $* == *DropInPaths* && $scenario == dropin ]]; then printf foreign.conf;
+            elif [[ $* == *DropInPaths* && $scenario == *-generation && -f ${UNIT}.d/50-telemt-web-manager-update.conf ]]; then
+                printf '%s' "${UNIT}.d/50-telemt-web-manager-update.conf";
             elif [[ $* == *ActiveState* ]]; then
                 if [[ -f $case_dir/active ]]; then printf active; else printf inactive; fi
             fi;;
@@ -118,11 +123,23 @@ systemctl() {
 }
 dns_preflight() { helper domain "$DOMAIN"; helper ipv4 "$PUBLIC_IP"; }
 socks_probe() { return 0; }
+initialize_update_state() {
+    if [[ $scenario == *-generation ]]; then
+        python3 "$ROOT/tests/update_state_fixture.py" baseline "$case_dir"
+    fi
+    # Existing legacy cases deliberately use a synthetic baseline binary.
+    return 0
+}
 wait_ready() { [[ -f $case_dir/active ]]; }
 path_health() { helper runtime-contract "$CONFIG" "$DATA"; helper config-info "$CONFIG" >/dev/null; }
 recent_logs() { return 0; }
 download_candidate() {
-    CANDIDATE="$TMP/candidate" RELEASE=$SUPPORTED_TELEMT_VERSION
+    CANDIDATE="$TMP/candidate"
+    if [[ $scenario == *-generation ]]; then
+        cp "${TELEMT_UPDATE_ARTIFACTS:?Verified official baseline required}/baseline" "$CANDIDATE"
+        [[ $(sha256sum "$CANDIDATE" | cut -d' ' -f1) == 53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964 ]]
+        chmod 0755 "$CANDIDATE"; return
+    fi
     # Keep production's version and strict supplied-config probe assertions.
     printf '#!/bin/sh\nversion=%s\n' "$SUPPORTED_TELEMT_VERSION" >"$CANDIDATE"
     cat >>"$CANDIDATE" <<'EOF'
@@ -170,7 +187,7 @@ uninstall_remove_files() {
     if [[ $scenario == runtime-churn* ]]; then runtime_fixture check-backup "$DATA" "$BACKUP" "$case_dir/stopped-tree" || return 1; fi
     real_uninstall_remove_files || return 1
     if [[ $scenario == signal ]]; then kill -TERM "$BASHPID"; fi
-    [[ $scenario != failure-C && $scenario != runtime-churn-rollback ]]
+    [[ $scenario != failure-C && $scenario != failure-C-generation && $scenario != runtime-churn-rollback ]]
 }
 uninstall_remove_account() {
     real_uninstall_remove_account || return 1
@@ -178,7 +195,9 @@ uninstall_remove_account() {
 }
 files_snapshot() {
     for extra in "$case_dir/original-toml" "$case_dir/foreign-owned"; do if [[ -f $extra ]]; then sha256sum "$extra"; fi; done
-    command find "$CONFIG_DIR" "$DATA" "$STATE" "$NGINX_ROOT" -type f -exec sha256sum {} +; sha256sum "$BIN" "$UNIT" "$RENEW_HOOK"; }
+    command find "$CONFIG_DIR" "$DATA" "$STATE" "$NGINX_ROOT" -type f -exec sha256sum {} +; sha256sum "$BIN" "$UNIT" "$RENEW_HOOK"
+    if [[ -d ${UNIT}.d ]]; then command find "${UNIT}.d" -type f -exec sha256sum {} +; fi
+    if [[ -f ${UNIT%/*}/telemt-web-manager-recovery.service ]]; then sha256sum "${UNIT%/*}/telemt-web-manager-recovery.service"; fi; }
 foreign_snapshot() { command find "$CERT_ROOT/archive/foreign.example.com" "$CERT_ROOT/live/foreign.example.com" "$CERT_ROOT/renewal/foreign.example.com.conf" "$CERT_ROOT/accounts" -type f -exec sha256sum {} + | sort; }
 cert_snapshot() { command find "$CERT_ROOT" -type f -exec sha256sum {} + | sort; }
 runtime_refusals() {
@@ -239,7 +258,7 @@ runtime_refusals() {
 }
 for scenario in preserve-standalone preserve-webroot stopped expired delete delete-failure \
     failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
-    runtime-churn runtime-churn-rollback runtime-refusals; do
+    runtime-churn runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     export UNINSTALL_FIXTURE_ROOT=$case_dir FIXTURE_ACCOUNTS="$case_dir/accounts"
     BIN="$case_dir/bin/telemt" CONFIG_DIR="$case_dir/config" CONFIG="$CONFIG_DIR/telemt.toml"
@@ -247,6 +266,12 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     NGINX_ROOT="$case_dir/nginx" CERT_ROOT="$case_dir/certs" ACME_ROOT="$case_dir/acme"
     RENEW_HOOK="$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager" BACKUP_ROOT="$case_dir/backups"
     LOCK="$case_dir/lock" TMP="$case_dir/tmp"
+    if [[ $scenario == *-generation ]]; then
+        BIN="$case_dir/usr/local/bin/telemt" CONFIG_DIR="$case_dir/etc/telemt" CONFIG="$CONFIG_DIR/telemt.toml"
+        UNIT="$case_dir/etc/systemd/system/telemt.service" DATA="$case_dir/var/lib/telemt" STATE="$case_dir/var/lib/telemt-web-manager"
+        BACKUP_ROOT="$case_dir/root/telemt-backups"
+        mkdir -p "$case_dir/usr/local/bin" "$case_dir/etc/systemd/system" "$case_dir/var/lib" "$case_dir/root"
+    fi
     mkdir -p "$TMP" "$case_dir/bin" "$case_dir/manager/lib"
     cp "$ROOT/telemt-web-manager.sh" "$case_dir/manager/telemt-web-manager.sh"
     cp "$ROOT/lib/safety.py" "$case_dir/manager/lib/safety.py"
@@ -263,6 +288,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$case_dir/install.log" 2>&1
     result=$?; set -e
     if (( result )); then cat "$case_dir/install.log"; exit 1; fi
+    if [[ $scenario == *-generation ]]; then python3 "$ROOT/tests/update_state_fixture.py" create "$case_dir"; fi
     [[ -f $STATE/manifest.json && -f $STATE/certificate.json && $(cat "$case_dir/issuance") == issued ]]
     if [[ $scenario == runtime-* ]]; then runtime_fixture seed "$DATA"; fi
     if [[ $scenario == runtime-churn-rollback ]]; then
@@ -328,7 +354,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     nss_before=$(cat "$FIXTURE_ACCOUNTS/passwd" "$FIXTURE_ACCOUNTS/group")
     prior_services=$(wc -l <"$case_dir/services")
     mkdir -p "$TMP"; CONFIRM_UNINSTALL=1 DELETE_CERTIFICATE=0
-    if [[ $scenario == delete || $scenario == delete-failure || $scenario == foreign-lineage ]]; then DELETE_CERTIFICATE=1; fi
+    if [[ $scenario == delete || $scenario == delete-generation || $scenario == delete-failure || $scenario == foreign-lineage ]]; then DELETE_CERTIFICATE=1; fi
     set +e
     (set -Eeuo pipefail; trap cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM HUP;
      take_lock; uninstall_manager) >"$case_dir/uninstall.log" 2>&1
@@ -347,6 +373,9 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
         preserve-*|legacy-preserve|stopped|expired)
             [[ $result == 0 && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json && -f $RENEW_HOOK ]]
+            if [[ $scenario == preserve-generation ]]; then
+                [[ ! -e $STATE/telemt-release.json && ! -e $STATE/telemt-generation.json && ! -e $STATE/update-journal.json && ! -e ${UNIT}.d && ! -e ${UNIT%/*}/telemt-web-manager-recovery.service ]]
+            fi
             cmp "$case_dir/before-cert" <(cert_snapshot)
             if [[ $kind == webroot ]]; then helper acme-state "$NGINX_ROOT" "$DOMAIN" "$ACME_ROOT"; fi
             if [[ $scenario == preserve-* ]]; then
@@ -360,9 +389,9 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
                 helper runtime-contract "$CONFIG" "$DATA"
                 printf 'ok - managed install -> uninstall keep %s certificate -> fresh same-domain install; ZERO new issuance, same key/serial/renewal; WEB contract recreated\n' "$kind"
             else printf 'ok - managed %s deployment uninstalled without Telemt health/certificate-expiry gate\n' "$scenario"; fi;;
-        delete|delete-failure)
+        delete|delete-generation|delete-failure)
             [[ ! -e $BIN && ! -e $STATE/manifest.json && ! -e $FIXTURE_ACCOUNTS/passwd ]]
-            if [[ $scenario == delete ]]; then
+            if [[ $scenario == delete || $scenario == delete-generation ]]; then
                 [[ $result == 0 && ! -e $CERT_ROOT/live/$DOMAIN && ! -e $STATE && ! -e $ACME_ROOT && ! -e $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]]
                 [[ ! -e $RENEW_HOOK ]]
                 printf 'ok - installed real Certbot delete removes EXACT local lineage and unused webroot/state; foreign lineage/account unchanged\n'
@@ -398,6 +427,21 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
             ! tail -n +"$((prior_services+1))" "$case_dir/services" | grep -Eq '^(disable|stop|start|reload|daemon-reload)'
             printf 'ok - uninstall %s ownership/lock refusal BEFORE destructive mutation\n' "$scenario";;
     esac
+    if [[ $scenario == *-generation ]]; then
+        python3 "$ROOT/tests/update_state_fixture.py" retained "$case_dir"
+        if [[ $scenario == failure-C-generation || $scenario == preserve-generation ]]; then
+            helper update-gate-contract
+            [[ -f $STATE/telemt-release.json && -f $STATE/telemt-generation.json && -f $STATE/update-journal.json ]]
+            if [[ $scenario == failure-C-generation ]]; then
+                printf 'ok - v0.2 uninstall rollback restores exact receipt/journal/generation/gate/recovery and prior service; root-owned LKG retained\n'
+            else
+                printf 'ok - v0.2 uninstall-preserve-cert -> fresh Install recreates baseline receipt/generation/gate BEFORE start; ZERO issuance, root-owned LKG retained\n'
+            fi
+        else
+            [[ ! -e $STATE/telemt-release.json && ! -e $STATE/telemt-generation.json && ! -e $STATE/update-journal.json && ! -e ${UNIT}.d && ! -e ${UNIT%/*}/telemt-web-manager-recovery.service ]]
+            printf 'ok - v0.2 uninstall removes exact update controls; root-normalized sealed LKG/evidence retained and account cleanup remains strict\n'
+        fi
+    fi
     if [[ -n $blocker ]]; then kill -0 "$blocker"; kill "$blocker"; wait "$blocker" || true; blocker=''; fi
     unset FIXTURE_GROUPDEL_FAIL
     if [[ $scenario == mount ]]; then umount "$DATA"; fi

@@ -1,11 +1,12 @@
 # Upstream audit
 
-Supported Telemt: **3.5.12**.
+Supported Telemt: **3.5.12** (fresh Install baseline).
 
 The current release and source were verified through official GitHub metadata and
 actual downloads on 3 October 2026 (UTC). Manager SCRIPT_VERSION is
-0.1.4. The supported release is deliberately fixed; production never queries
-`releases/latest` to choose a Telemt candidate.
+0.2.0. Fresh Install stays deliberately fixed. Universal Update enumerates the
+complete official release history, choosing the highest stable SemVer across all
+series and verifying its compatibility; it does not select an unchecked latest URL.
 
 | Provenance | Verified value |
 | --- | --- |
@@ -25,10 +26,48 @@ signing-key authentication; asset digests are integrity checks, not signatures.
 CI mechanically compares the production pin, docs, real downloaded binary, staging
 healthcheck binary and runtime binary. A changed asset fails closed.
 
-Fresh install only downloads the pin. `--check` reports installed/supported versions
-without a latest query. Update keeps equal-version health checks, upgrades older
-compatible manager-owned installations to the pin and refuses newer versions before
-download. A future upstream release needs a newer reviewed manager.
+Fresh Install downloads only this pin. Check uses a local validated receipt plus
+objective health, with no GitHub dependency or version equality. Universal Update
+checks exact release identity even on equal versions and refuses downgrade/custom
+build ambiguity. The full contract is in [OPERATIONS](OPERATIONS.md#universal-update-020).
+
+## Universal Update 0.2.0 provenance and compatibility
+
+The task-start official stable release was **3.5.13**, release ID `402625235`,
+published `2026-10-03T17:52:11Z`. It is an actual test target, not a new Install pin.
+
+| Official 3.5.13 evidence | Value |
+| --- | --- |
+| Signed annotated tag object | `d1b24a42e5d8ffc8b1ff4d33f56c2ff43fbf668b`; GitHub verified/valid |
+| Source commit | `d3de9865cf5d088809fdf728059bcb2b0841db67` |
+| x86_64 GNU archive SHA256 | `92021ad31520302bfbfe4a13b49adc9d129ec48a08699f81515e9c55668be9fa` |
+| aarch64 GNU archive SHA256 | `9aec3a87e730c6dc0d1baaffcdde3dde9bada1e892c6b96195c0740919f3de52` |
+| Extracted x86_64 ELF SHA256 | `c9cd424b51dfe1dfba870c4ed456baaf32615127cd3d89dc69baa94502c53942` |
+| Extracted aarch64 ELF SHA256 | `d280700fe1508f4b1e13119d422c8a5dba20fd38a71e099fbcf68791c09903e3` |
+
+Discovery verifies repository ID `1125007401` / `telemt/telemt`, two complete
+paginated inventories, exact release/tag/commit identities, verified signed
+annotated tag, architecture-specific GNU asset and checksum asset, API digests,
+single exact checksum entry and downloaded bytes before safe extraction. Drift,
+duplicate identities/JSON keys, ambiguous equal precedence, unsafe archives or
+incomplete inventories refuse. Drafts/prereleases are excluded; exactly seven
+malformed historical release identities are quarantined, not a general malformed
+version exemption. Rechecks freeze identity throughout the transaction.
+
+This trusts GitHub's verification and official release channel. SHA256 is integrity
+evidence, not reproducible-build attestation or independent signer-key authentication.
+An upstream/account/platform compromise remains a trust boundary.
+
+The trusted WEB probe performs HMAC-authenticated bootstrap, Hello/Welcome,
+session replay, sequenced uplink/ack/replay, conveyor negotiation when exposed,
+bounded authenticated downlink and close without evaluating candidate Javascript.
+The current upstream idle poll returns HTTP 204/cursor 0. A Ping, if emitted,
+must pass cursor/replay/Pong validation; an idle response proves bounded session
+liveness, not a real Telegram client exchange. Legacy 3.5.12 still requires uplink
+sequence/ack without conveyor. Generated TOML and the base unit are unchanged.
+Full isolated state rehearsal and post-activation checks decide compatibility,
+including synthetic compatible/incompatible 4.0.0; version numbers never substitute
+for these checks. Owner live acceptance of 0.2.0 remains pending.
 
 ## Reviewed 3.5.11 -> 3.5.12 compatibility
 
@@ -44,15 +83,17 @@ and conntrack startup/admission changes.
 | Generated upstream unit adds AF_NETLINK | The manager unit already allows AF_INET, AF_INET6, AF_UNIX and AF_NETLINK with CAP_NET_ADMIN only. No unit change is needed. |
 | ME recovery and NAT cancellation | Managed `use_middle_proxy = false` remains unchanged; direct and SOCKS5 configuration healthchecks still apply. |
 
-Production changes are limited to manager version and reviewed release constants.
+In the historical manager 0.1.3 pin review, production changes were limited to
+manager version and reviewed release constants.
 Generated TOML/unit, candidate compatibility, runtime paths, WEB profile, direct/
 SOCKS upstream and severity classification are unchanged. Real 3.5.12 config and
 staging healthchecks and the isolated runtime smoke exercise these contracts.
-Update fixtures accept a managed 3.5.11 source, preserve TOML bytes, restore the
+Those Update fixtures accepted a managed 3.5.11 source, preserved TOML bytes, restored the
 old binary after candidate/runtime rejection, handle equal versions and refuse
 newer or same-precedence non-exact builds. An additional Update fixture uses the
 real digest-verified 3.5.12 candidate against existing TOML; its 3.5.11 source
-binary and service lifecycle remain synthetic.
+binary and service lifecycle were synthetic. Current Universal Update coverage
+uses full-generation filesystem crash fixtures and actual Ubuntu boot tests instead.
 
 The historical live acceptance below covers 0.1.1/0.1.2 with Telemt 3.5.11.
 Separate owner-run live acceptance used exact PR #6 manager 0.1.3 files from
@@ -199,7 +240,7 @@ without promising persistence if shutdown exceeds that bound.
 
 ## ACME compatibility contract
 
-Both reviewed 3x-ui-pro scripts also emit `sites-available/80.conf`: one IPv4
+The current reviewed xPROMSx/3x-ui-auto-nginx Fresh Install script emits `sites-available/80.conf`: one IPv4
 listen 80, exact panel/reality names and `return 301 https://$host$request_uri`.
 For occupied port 80, the manager verifies sockets belong to the active Nginx
 master or its workers, with matching executable, and parses the recognized stream
@@ -257,3 +298,21 @@ asset URL and unambiguous digest, no candidate execution before verification,
 root-only config/backups/staging, suppressed candidate diagnostics and raw journals,
 signal rollback, managed manifest/hash checks and required public HTTPS probe.
 No production VPS or secrets were used. See both READMEs for intentional boundaries.
+
+## Current 3x-ui topology and quota compatibility review
+
+The mandatory topology fixture uses `xPROMSx/3x-ui-auto-nginx` `x-ui-latest.sh`,
+commit `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd`, Git blob
+`c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81`. Only inert Nginx heredocs are rendered;
+the installer is not executed. Supported order is 3x-ui Fresh Install followed
+by manager Install. A deliberate 3x-ui full rebuild removes existing routes and
+requires Telemt installation/integration again. `x-ui-patch.sh` is not mandatory.
+Historical reviews above remain records of their original revisions.
+
+Official `src/quota_state.rs` is byte-identical between 3.5.12 and 3.5.13
+(SHA256 `ea39da751a742ba2df59fc2ef364c0bc04c1e305b214070c776b23fefcafd26e`).
+Telemt derives the top-level reset timestamp from user records on save. Rehearsal
+uses actual cloned stopped DATA; quota preservation compares existing per-user
+used_bytes/reset semantics, not derived top-level metadata. Synthetic non-empty
+quota belongs only to separate CI fixtures. Owner live acceptance of this quota
+follow-up remains pending; the previous refusal rolled back safely to 3.5.12.

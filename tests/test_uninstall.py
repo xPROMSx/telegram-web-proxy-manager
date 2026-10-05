@@ -237,7 +237,7 @@ class UninstallTests(unittest.TestCase):
         import select
         import time
         master, slave=pty.openpty()
-        code=('source "$1"; preflight() { :; }; need() { :; }; take_lock() { :; }; '
+        code=('source "$1"; preflight() { :; }; need() { :; }; take_lock() { :; }; recover_update() { :; }; '
               'uninstall_load() { DOMAIN=proxy.example.com; }; '
               'backup_begin() { echo UNEXPECTED_BACKUP; exit 99; }; main')
         p=subprocess.Popen(['bash','-c',code,'fixture',str(ROOT/'telemt-web-manager.sh')],

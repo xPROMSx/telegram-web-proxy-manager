@@ -8,7 +8,7 @@ sandbox=$(mktemp -d)
 trap 'rm -rf -- "$sandbox"' EXIT
 export DEPENDENCY_TOOL_DIR="$sandbox/tools"
 mkdir "$DEPENDENCY_TOOL_DIR"
-for tool in "${!TOOL_PACKAGES[@]}" nginx systemctl systemd-path journalctl; do
+for tool in "${!TOOL_PACKAGES[@]}" nginx systemctl systemd-run systemd-path journalctl; do
     [[ $tool != conntrack ]] || continue
     printf '#!/bin/bash\nexit 0\n' >"$DEPENDENCY_TOOL_DIR/$tool"
     chmod 0755 "$DEPENDENCY_TOOL_DIR/$tool"
@@ -25,6 +25,7 @@ chmod 0755 "$DEPENDENCY_TOOL_DIR/systemd-path"
 # after its root/systemd/Ubuntu guards, before TMP, lock or install work.
 preflight() { check_dependencies; }
 take_lock() { /usr/bin/touch "$sandbox/lock-reached"; }
+recover_update() { [[ -f $sandbox/lock-reached ]]; /usr/bin/touch "$sandbox/recovery-reached"; }
 install_manager() { /usr/bin/touch "$sandbox/install-reached"; }
 for missing in conntrack useradd userdel groupdel; do
     if [[ $missing != conntrack ]]; then
@@ -36,21 +37,21 @@ for missing in conntrack useradd userdel groupdel; do
     (PATH=$DEPENDENCY_TOOL_DIR; main --install --domain proxy.example.com --public-ip 203.0.113.10) >"$sandbox/refused" 2>&1
     result=$?
     set -e
-    [[ $result != 0 && ! -e $sandbox/install-reached && ! -e $sandbox/lock-reached ]]
+    [[ $result != 0 && ! -e $sandbox/install-reached && ! -e $sandbox/lock-reached && ! -e $sandbox/recovery-reached ]]
     grep -q "$missing -> package: ${TOOL_PACKAGES[$missing]}" "$sandbox/refused"
     if [[ $missing != conntrack ]]; then mv "$sandbox/$missing" "$DEPENDENCY_TOOL_DIR/$missing"; fi
     printf 'ok - missing %s preflight refuses before release/Certbot/Nginx/files/directories/accounts/systemd and lock setup\n' "$missing"
 done
 (PATH=$DEPENDENCY_TOOL_DIR; main --install --domain proxy.example.com --public-ip 203.0.113.10) >"$sandbox/accepted" 2>&1
-[[ -f $sandbox/install-reached && -f $sandbox/lock-reached ]]
+[[ -f $sandbox/install-reached && -f $sandbox/lock-reached && -f $sandbox/recovery-reached ]]
 printf 'ok - available conntrack and account tools continue normal fresh dispatch\n'
 # A command available only in the administrator's PATH is not sufficient for systemd.
 printf '#!/bin/bash\nprintf "/missing-runtime-path\\n"\n' >"$DEPENDENCY_TOOL_DIR/systemd-path"
-rm "$sandbox/install-reached" "$sandbox/lock-reached"
+rm "$sandbox/install-reached" "$sandbox/lock-reached" "$sandbox/recovery-reached"
 set +e
 (PATH=$DEPENDENCY_TOOL_DIR; main --install) >"$sandbox/runtime-refused" 2>&1
 result=$?
 set -e
-[[ $result != 0 && ! -e $sandbox/install-reached && ! -e $sandbox/lock-reached ]]
+[[ $result != 0 && ! -e $sandbox/install-reached && ! -e $sandbox/lock-reached && ! -e $sandbox/recovery-reached ]]
 grep -Fq "conntrack is installed but is not available on systemd's default executable PATH; check: systemd-path search-binaries-default" "$sandbox/runtime-refused"
 printf 'ok - systemd runtime PATH must independently find conntrack; service PATH is not overridden\n'

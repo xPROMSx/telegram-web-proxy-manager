@@ -8,7 +8,7 @@ Adds a WEB proxy to shared HTTPS port 443 with direct Telegram egress or optiona
 
 ## Features
 
-- Deployment on top of [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro)
+- Deployment on top of [xPROMSx/3x-ui-auto-nginx](https://github.com/xPROMSx/3x-ui-auto-nginx)
   infrastructure with a recognized Nginx `stream` / `ssl_preread` topology:
   existing routes, Xray configuration and 3x-ui settings/database are preserved.
 - Install, Update, Check, Repair and Uninstall Telemt through a menu or non-interactive commands.
@@ -16,9 +16,11 @@ Adds a WEB proxy to shared HTTPS port 443 with direct Telegram egress or optiona
 - Official Telemt SHA256, configuration and health verification; rollback on install/update failure.
 - Hardened systemd service; existing TOML preserved during Telemt updates.
 
-3x-ui-pro compatibility is tested with installer and patcher configurations at revision
-`a2c430cd6dec7c86d873dcda3544a61e7ac41144`. This is not an official integration:
-arbitrary, modified and future topologies need separate review.
+Supported order: `xPROMSx/3x-ui-auto-nginx` Fresh Install → Telemt WEB Manager Install.
+CI checks the `x-ui-latest.sh` topology at revision `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd`.
+A deliberate full 3x-ui rebuild removes Nginx routes: Telemt must then be installed/
+integrated again. `x-ui-patch.sh` is outside the mandatory contract.
+Arbitrary, modified and future topologies need separate review.
 
 ## Quick installation
 
@@ -47,7 +49,7 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Manager 0.1.4 menu:
+Manager 0.2.0 menu:
 
 ```text
 1. Install
@@ -62,7 +64,7 @@ Manager 0.1.4 menu:
 | Function | Purpose |
 | --- | --- |
 | Install | Install Telemt and configure its systemd service, certificate and integration with recognized Nginx. |
-| Update | Update the **Telemt binary** to the supported version with validation and rollback on failure. Does not update the manager or TOML. |
+| Update | Verify the newest official stable Telemt and transactionally activate a compatible candidate; failure restores the old binary, full DATA and receipt. Does not update the manager or TOML. |
 | Check | Verify managed files, versions, service, HTTP/TLS, SOCKS5 and certificate renewal without changing configuration or services. |
 | Repair | Restart verified Telemt and reload validated Nginx configuration. Does not reconstruct changed or damaged files. |
 | Show current WEB link | Display the existing manager-owned WEB link only in an interactive terminal; no repair or file changes. |
@@ -150,10 +152,12 @@ retained for manual review. Unmanaged Telemt replacement is outside this feature
 
 - **Ubuntu 24.04/26.04**, x86_64 or aarch64, systemd, Bash 5+, Python 3.11+.
   The installer also requires curl and CA certificates.
-- Supported Telemt: **3.5.12**. Install and update use only this reviewed release
-  with embedded official SHA256 values. Older managed installations must pass
-  compatibility checks; newer installations are never downgraded.
-  A future Telemt release requires a new reviewed manager version.
+- Supported Telemt: **3.5.12** is the reviewed fresh Install baseline with unchanged
+  embedded commit/SHA256 pins. Update selects the newest stable release only from
+  `telemt/telemt`, across all major/minor versions, then verifies provenance,
+  existing TOML, persistent DATA and runtime compatibility. Incompatible candidates
+  refuse; no downgrade or automatic TOML migration. Check verifies the installed
+  local receipt and objective health, without GitHub or baseline-version equality.
 - Active Nginx with SSL, HTTP/2, realip and `stream` / `ssl_preread`;
   one recognized SNI map/router, IPv4 `:443`, outgoing PROXY protocol
   and an HTTP `conf.d/*.conf` include. Existing `[::]:443` is preserved.
@@ -180,9 +184,12 @@ retained for manual review. Unmanaged Telemt replacement is outside this feature
 - A certificate may survive failed issuance validation with incomplete renewal
   state. Reinstallation refuses; use [ACME recovery](docs/OPERATIONS.md#certificate-recovery)
   rather than blindly deleting Certbot assets.
-- SIGINT/TERM/HUP trigger transaction rollback. Power loss, SIGKILL, disk failure
-  and external root changes require manual recovery.
-  Backups in `/root/telemt-backups/` are private and never automatically deleted.
+- SIGINT/TERM/HUP trigger rollback. Update's durable journal and systemd gate restore
+  the old generation on the next boot after SIGKILL/power loss; durable COMMITTED
+  starts the accepted new generation. Unknown/corrupt state closes the gate for
+  manual review. Disk failure and external root changes remain recovery boundaries.
+  Private backup/evidence is retained; one complete LKG is kept, retiring its
+  predecessor only after the next successful commit. [Details](docs/OPERATIONS.md#universal-update-020).
 
 ## VPS validation
 
@@ -221,10 +228,12 @@ not a new regression or release blocker. This acceptance does not validate every
 configuration or architecture.
 Reinstall is not added in 0.1.3.
 
-While preparing 0.1.4 live acceptance, the owner installed the exact PR #7 candidate
-on clean Ubuntu 26.04.1 LTS. Menu Install safely stopped before mutation because
-`conntrack` was absent. The follow-up package-install offer still requires repeat
-live acceptance of this scenario.
+Owner live acceptance of v0.1.4 completed successfully on clean Ubuntu 26.04.1 LTS:
+missing dependency installation through the manager, fresh Install, Show current
+WEB link, real client use and final Check OK.
+
+Universal Update v0.2.0 still requires separate owner live acceptance of the exact
+PR bytes. CI and disposable cloud VMs do not replace a real deployment check.
 
 ## Advanced / manual installation
 

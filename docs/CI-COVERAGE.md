@@ -1,6 +1,8 @@
 # CI coverage truth table
 
-Supported Telemt: **3.5.12**. This inventory describes `.github/workflows/checks.yml`.
+Supported Telemt: **3.5.12** (fresh Install baseline). Manager 0.2.0 Update selects
+the newest verified official stable release by compatibility, without a major/minor
+restriction. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means
 both occur in the named step. Static unit/config text inspection is not a running
 systemd service or a real process capability test. Real filesystem ownership here
@@ -16,19 +18,25 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | Bootstrap SemVer / preflight | — | — | — | — | R | — | — |
 | Private WEB link/root PTY | M (fresh fixture) | M | M | M | R | — | — |
 | Fresh account rollback (sudo) | — | — | — | R | R | — | — |
-| Pin provenance / upstream | R/M | M (Update fixture only) | M (Update fixture only) | M | R | M | M |
+| Pin provenance / upstream | R/M | — | — | — | R | — | — |
 | Pinned staging | R | M | M | M | R | M | M |
 | Real pinned runtime (sudo/unshare) | R | R | — | — | R | R | R |
 | Pin evidence equality | — | — | — | — | — | — | — |
 | Manager bootstrap (sudo) | — | — | — | — | R | — | — |
-| Pinned upgrade/version rollback | M | M | M | M | R | M | M |
+| Version/parser/offline receipt | R/M | — | — | — | R | — | — |
+| Managed uninstall/certificate cycle | R/M | M | M | M | R | M | M |
+| Universal official provenance (both GNU arches) | R | — | — | — | R | — | — |
+| Universal transaction/crash matrix (sudo) | M | M | M | M | R | M | M |
+| Bootstrap recovery barrier (sudo) | — | — | — | — | R | — | — |
+| Ubuntu 24.04/26.04 boot + power cut | R/M | R | R | R | R | R | R |
+| ARM64 CLI (qemu-user) | R | R (CLI only) | — | — | R | — | — |
 | nf_tables diagnostic bridge | — | — | — | — | — | R | R |
 | Writable-state/unit contracts | — | — | — | — | — | — | — |
 | Shared/exclusive lock races | — | — | — | — | R | — | — |
 | ACME transactions | — | — | M | — | R | — | — |
 | Renewal hook/socket/scheduler (sudo) | — | — | M | — | R | — | — |
 | Nginx stream/TLS | — | — | — | — | R | — | — |
-| Reviewed 3x-ui-pro topologies | — | — | — | — | R | — | — |
+| Reviewed 3x-ui Fresh topology | — | — | — | — | R | — | — |
 
 | Same CI step/test | listener | HTTP | TLS | Nginx | Certbot | SOCKS | journal/log classifier |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -38,30 +46,36 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | Fresh / fresh-rollback | M | M | M | M | M | M | R (mock journal transport) |
 | Download integrity | — | — | — | — | — | — | — |
 | Bootstrap SemVer / preflight | — | — | — | — | — | — | — |
+| Private WEB link/root PTY | — | — | — | — | — | — | — |
 | Fresh account rollback (sudo) | — | — | — | — | — | — | — |
-| Pin provenance / upstream | M (Update fixture only) | — | — | — | — | M (Update fixture only) | M (Update fixture only) |
+| Pin provenance / upstream | — | — | — | — | — | M (config only) | — |
 | Pinned staging | M | M | M | M | M | M (config real) | R (mock journal transport) |
 | Real pinned runtime (sudo/unshare) | R | R | — | — | — | — | R (actual streams + injected fatal negatives) |
 | Pin evidence equality | — | — | — | — | — | — | — |
 | Manager bootstrap (sudo) | — | — | — | — | — | — | — |
-| Pinned upgrade/version rollback | M | M | M | M | — | M | M |
+| Version/parser/offline receipt | — | — | — | — | — | M (config only) | — |
+| Managed uninstall/certificate cycle | M | M | R (self-signed) | M | R (local deletion)/M | — | M |
+| Universal official provenance (both GNU arches) | — | — | — | — | — | — | — |
+| Universal transaction/crash matrix (sudo) | M | M | M | M | — | M | M |
+| Bootstrap recovery barrier (sudo) | — | — | — | — | — | — | — |
+| Ubuntu 24.04/26.04 boot + power cut | R | R | R (self-signed) | R | M (local lineage) | — | R |
+| ARM64 CLI (qemu-user) | — | — | — | — | — | R (config only) | — |
 | nf_tables diagnostic bridge | — | — | — | — | — | — | R (synthetic WARN containing real diagnostic) |
 | Writable-state/unit contracts | — | — | — | — | — | — | — |
 | Shared/exclusive lock races | — | — | — | — | — | — | — |
 | ACME transactions | M | M | M | M | M | — | — |
 | Renewal hook/socket/scheduler (sudo) | M | — | R (self-signed) | M | M (renewal settings) | — | — |
 | Nginx stream/TLS | R | R | R (self-signed) | R | — | — | — |
-| Reviewed 3x-ui-pro topologies | R | R | R (self-signed) | R | — | — | — |
+| Reviewed 3x-ui Fresh topology | R | R | R (self-signed) | R | — | — | — |
 
 `upstream.sh`, `staging.sh` and the positive download probe execute the real pinned
 binary's version/healthcheck CLI, not a server. Healthcheck with API disabled is
 configuration validation. `REAL_CANDIDATE` in fresh means that same boundary only;
 readiness, service lifecycle, path health and journal source remain fixtures.
-`upstream.sh` also runs the Update regression with its real digest-verified 3.5.12
-candidate and a synthetic managed 3.5.11 source. It checks the existing TOML with
-the actual candidate, upgrades the binary and asserts byte-identical TOML;
-service/readiness, ownership and journal boundaries remain mocked. The separate
-synthetic suite retains equal/custom/newer refusals and candidate/runtime rollback.
+`upstream.sh` also runs strict parser/version regressions with its real verified
+3.5.12 binary and unchanged TOML. Complete binary/DATA activation and rollback now
+run in the stronger universal root transaction suite and the real boot fixtures;
+the previous binary-only shell transaction is no longer production Update.
 
 The runtime step has no mocked helpers, process, socket, HTTP or capability result.
 It starts the actual official digest-verified pin with production-generated config
@@ -191,5 +205,95 @@ continuation without a manager restart; no CI package set is changed by these te
 The native-root WEB-link fixture additionally exercises actual Ubuntu/architecture/
 init guards before apt and actual menu Show with conntrack, Nginx, Certbot and
 systemd tools absent. The original strict private-file/TTY/color tests remain.
-The owner clean Ubuntu finding is recorded in OPERATIONS; follow-up live acceptance
-is pending, and mocked apt fixtures do not claim real-server package installation.
+The owner clean Ubuntu finding is recorded in OPERATIONS. Live acceptance of
+published v0.1.4 completed dependency installation, fresh Install, menu link
+display, real Telegram connection and Check. Mocked apt fixtures themselves do
+not claim real-server package installation. Owner acceptance of v0.2.0 remains pending.
+
+## Universal generation Update (0.2.0)
+
+`test_update_metadata.py` covers double complete pagination (including exact page
+multiples), all stable version series, the seven exact historical quarantines,
+duplicate/malformed/ambiguous metadata, inventory drift, signed annotated tags,
+commit/asset changes and both-architecture archive/sidecar/receipt agreement.
+`test_update_protocol.py` checks authenticated Hello/Welcome, session replay,
+uplink sequence/ack/replay even without conveyor negotiation, optional conveyor,
+bounded idle 204 or Ping/Pong downlink, DELETE and malformed/decoy negatives. HTTP
+transport is real for its bounded-header/body cases; protocol responses are fixtures.
+
+`test_update_snapshot.py` uses real temporary files and bounded streaming, including
+65 MiB ordinary and 70 MiB sparse files, short reads/writes, concurrent growth/
+replacement/membership changes and unsealed partial clones. Root transactions add
+real fsync/rename publication, ENOSPC/EIO/inode/block failures, every forward and
+rollback intent/result crash boundary, partial metadata/clone/LKG publication,
+INT/TERM/HUP, idempotent recovery, CRITICAL/gate refusal and retained root-owned LKG.
+Service/API/isolation are explicitly mocked there. Synthetic compatible 4.0.0 and
+incompatible/no-op/quota-reset candidates use the same policy as 3.5.13, including
+ARM receipt policy; they are not an upstream 4.0.0 runtime claim. Late objective
+failures restore full DATA/receipt/binary and prior controls without retries.
+
+Bounded safety regressions distinguish exact manager-owned controls from valid
+certificate renewal and foreign firewall/Nginx changes, including pre-stop aborts
+and activated-candidate rollback. An endpoint/count fixture proves full inventory
+discovery stays pre-downtime and frozen revalidation uses no history enumeration.
+Scoped stopped-DATA fsync faults/interruption precede snapshot authority, three
+recovery-unit/drop-in publication boundaries remain retryable, and terminal boot
+authority survives persistent housekeeping failure while the next mutation and
+bootstrap refuse incomplete cleanup. Runtime/bootstrap immutable-key boundaries
+and shell/helper manager/baseline constants have mechanical parity regressions.
+The existing Ubuntu boot cycle additionally exercises persistent disposable-evidence
+cleanup failure across actual COMMITTED and ROLLBACK_COMPLETE reboots, with ordinary
+CLI mutation refusal; this adds one focused terminal reboot, not another matrix.
+
+The bootstrap root suite validates terminal receipts/journals, generation/binary/
+DATA identity and exact gate contracts without executing the downloaded pair.
+Pending, corrupt, unknown-schema and explicit legacy-downgrade cases refuse before
+pair staging. The Uninstall suite also runs generation-aware preserve/reinstall,
+explicit delete and removal-failure rollback: new receipt/journal/gate controls
+are removed or restored, root-normalized LKG stays retained, and fresh same-domain
+Install uses the actual verified baseline ELF with zero certificate issuance.
+
+`update_provenance.py` actually queries official GitHub metadata, verifies the
+signed 3.5.13 tag, downloads and hashes both GNU archives/sidecars, extracts each
+ELF safely and writes schema-1 receipts outside the checkout. It independently
+verifies the 3.5.12 baseline archive and embedded ELF identity. It executes no ELF.
+
+`update_boot.sh` runs offline disposable QEMU guests with real Ubuntu 24.04 and
+26.04 PID 1 systemd. Each family exercises the official 3.5.12 baseline and full
+3.5.13 Update: exact generated TOML/base unit, real Telemt UID/CAP_NET_ADMIN,
+private namespaces/cgroups and strict parser, stopped full-DATA rehearsal/quota
+readback, authenticated WEB, PID-owned listener, real local/public-path Nginx TLS/
+HTTP and actual journal. Public-path DNS resolves to the guest fixture, not the
+Internet. Acceptance dwells 150 seconds, restarts gracefully and dwells 45 seconds;
+Timed samples retain process/cgroup/path/journal/deployment checks; full WEB runs
+once at each readiness and lightweight WEB once at each interval end.
+The real Update and power-cut rollback use actual empty baseline quota
+`{"last_reset_epoch_secs":0,"users":{}}`, with no synthetic production user.
+A separate private CI rehearsal tests a non-empty user with a noncanonical top-level
+reset timestamp; canonicalization is accepted while per-user semantics survive.
+Focused quota tests reject user disappearance, used_bytes decrease and user reset
+changes. All immutable controls and unrelated real firewall state are preserved.
+
+Four hostile compiled ELF probes exercise denied host files/environment/systemd/
+network access, a hung version command with detached child, bounded log flooding
+and an always-successful fake 4.0.0 healthcheck rejected by the unknown-key negative.
+Eleven real unsafe DATA objects include same-device bind mounts, devices, ACL and
+capability xattrs. A committed reboot proves the new generation starts through the
+exact gate. The host then abruptly kills only the disposable QEMU container during
+a second nonterminal Update; the next real boot restores old binary/full DATA/
+receipt, rejects candidate-only data, proves old health and opens the gate under
+the real recovery unit. Guest transport uses recorded, separately verified official
+metadata/artifacts because the guest has no NIC; this does not replace the live
+GitHub provenance step. Self-signed certificates/local renewal metadata avoid ACME.
+
+`update_arm.sh` executes the actual official ARM64 3.5.13 ELF under qemu-user for
+version, direct/SOCKS config healthcheck and strict unknown-key refusal, with no
+network, a read-only image and dropped candidate capabilities. ARM metadata,
+downloads, extraction, receipts and synthetic update/rollback policy are covered;
+native ARM systemd/runtime acceptance is not claimed.
+
+Every existing safety step remains enabled. Namespace, cgroup, boot, real-binary
+or helper absence fails the job; there is no skip/fallback/continue-on-error.
+CI proves these bounded contracts, not real Telegram transport, Internet SOCKS
+egress, production Let's Encrypt renewal or owner-host coexistence. The owner must
+live-test exact v0.2.0 bytes and a deliberate rollback before release.

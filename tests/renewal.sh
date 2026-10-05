@@ -84,6 +84,7 @@ reset_hook
 # Test the actual check orchestration with only unrelated runtime diagnostics mocked.
 load_installation() { certificate_health_contract; }
 binary_version() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; }
+installed_release_identity() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; } # Provenance is a separate fixture boundary.
 listener_ready() { return 0; }
 path_health() { return 0; }
 recent_logs() { return 0; }

@@ -1,6 +1,6 @@
 """Render pinned upstream Nginx heredocs with inert example values, never eval.
 
-The installer/patcher is not executed. Sources can be read from a local checkout
+The installer is not executed. Sources can be read from a local checkout
 or fetched from the recorded upstream commit; fixtures contain no live secrets.
 """
 import argparse
@@ -9,12 +9,16 @@ from pathlib import Path
 import re
 import urllib.request
 
-COMMIT = "a2c430cd6dec7c86d873dcda3544a61e7ac41144"
+REPOSITORY = "xPROMSx/3x-ui-auto-nginx"
+COMMIT = "59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd"
+BLOB = "c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81"
 VALUES = {
     "domain": "panel.example.com", "reality_domain": "reality.example.com",
     "sub_path": "subscription", "json_path": "json", "xhttp_path": "xhttp",
     "panel_path": "panel", "diag_path": "/diagnostics/",
     "diag_token": "fixture-placeholder-not-a-credential",
+    "ws_port": "2097", "ws_path": "websocket",
+    "trojan_port": "2098", "trojan_path": "grpc",
     "panel_port": "2053", "sub_port": "2096", "mtr_backend_port": "9080",
     "http2_listen": " http2", "http2_on": "",
 }
@@ -46,21 +50,18 @@ def render(text):
 
 
 def build(root, script, source=None):
+    if script != "x-ui-latest.sh":
+        raise ValueError("only the reviewed Fresh Install topology is supported")
     if source:
-        text = (Path(source) / script).read_text(encoding="utf-8")
+        data = (Path(source) / script).read_bytes()
     else:
-        url = f"https://raw.githubusercontent.com/mozaroc/3x-ui-pro/{COMMIT}/{script}"
+        url = f"https://raw.githubusercontent.com/{REPOSITORY}/{COMMIT}/{script}"
         with urllib.request.urlopen(url, timeout=30) as response:
-            text = response.read().decode("utf-8")
-    # Git blob hashes record the exact sources investigated, independent of CRLF
-    # conversion in local Windows checkouts.
-    text = text.replace("\r\n", "\n")
-    expected = {"x-ui-latest.sh": "671ca1e17b0162493b05cf3086968d1b43b5547f",
-                "x-ui-patch.sh": "dc506e80e371c7768177881fd0b3b7676c55bf3f"}
-    data = text.encode()
+            data = response.read()
     actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
-    if actual != expected[script]:
+    if actual != BLOB:
         raise ValueError("upstream fixture source differs from reviewed blob")
+    text = data.decode("utf-8").replace("\r\n", "\n")
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     (root / "conf.d").mkdir(exist_ok=True)
@@ -93,7 +94,7 @@ def build(root, script, source=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("root")
-    parser.add_argument("--script", choices=("x-ui-latest.sh", "x-ui-patch.sh"), required=True)
+    parser.add_argument("--script", choices=("x-ui-latest.sh",), required=True)
     parser.add_argument("--source")
     options = parser.parse_args()
     build(options.root, options.script, options.source)

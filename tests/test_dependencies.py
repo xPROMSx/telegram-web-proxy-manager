@@ -13,8 +13,9 @@ from test_safety import ROOT
 # Independent inventory of the production commands; existing platform is mocked.
 TOOLS = ('curl tar openssl jq dig certbot flock ss sha256sum timeout iptables ip6tables '
          'nft conntrack getent useradd userdel groupdel awk grep sed cmp cat chmod chown cp cut '
-         'date dirname id install mktemp mv readlink rm sleep stat tr uname wc '
-         'groupadd find iptables-save ip6tables-save nginx systemctl systemd-path journalctl').split()
+         'date dirname id install mktemp mv readlink rm rmdir sleep stat tr uname wc '
+         'unshare setpriv chroot ip mount ldd groupadd find iptables-save ip6tables-save '
+         'nginx systemctl systemd-path journalctl systemd-run').split()
 MANUAL = 'apt-get update && apt-get install -y --no-install-recommends'
 
 
@@ -56,6 +57,8 @@ platform_preflight() {
     [[ $FIXTURE_PLATFORM == supported ]] || die 'Unsupported fixture platform'
 }
 take_lock() { printf 'lock\\n' >>"$FIXTURE_TRACE"; }
+recover_update() { :; }  # Lifecycle is mocked; recovery has separate crash/boot tests.
+pending_update() { :; }
 fixture_action() {
     printf 'action %s %s\\n' "$1" "$BASHPID" >>"$FIXTURE_TRACE"
     printf reached >"$FIXTURE_MANAGED/action"
