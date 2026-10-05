@@ -1,20 +1,24 @@
 {
   "schema": 1,
+  "stylesheet": {
+    "size": 6772,
+    "sha256": "8bf41f327d642d6f5b63e2efa368335c18729e58a389357ff56175c0f860c4d4"
+  },
   "sites": [
     {
       "id": "site-02",
-      "size": 2454,
-      "sha256": "cbc8bf570ee6cecf5ad2089b87d31ee5502f4b19abe65de8af6767cccf0f67eb"
+      "size": 778,
+      "sha256": "545f968667de782c2321ee29cd9eca2339c6848103593a5e0a47411dc28b6935"
     },
     {
       "id": "site-03",
-      "size": 2287,
-      "sha256": "86e41f5b9be51dde377fc38efcf9268293d867f9cc5043831391fbcb9d074d41"
+      "size": 838,
+      "sha256": "29f941452f86844c67f8a49e33f9eb7bac5862bffe2e97da3090e92f8e9577d4"
     },
     {
       "id": "site-04",
-      "size": 3285,
-      "sha256": "9ea160b849f434efb815b238d776d4f0fcdea821540d779d6b0c522971aa81bd"
+      "size": 878,
+      "sha256": "d789d647bad8e04bca91047692ac9d77306e261150f395715781cead92d63dd8"
     }
   ]
 }

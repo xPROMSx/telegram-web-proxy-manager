@@ -24,10 +24,14 @@ class CoverTests(unittest.TestCase):
     def test_embedded_exact_asset_manifest_and_local_html(self):
         assets = s.cover_assets()
         manifest = json.loads((ROOT/'assets/fake-sites/manifest.json').read_text())
-        self.assertEqual(manifest,dict(schema=1,sites=[{k:v for k,v in item.items() if k != 'html'}
+        self.assertEqual(manifest,dict(schema=1,stylesheet={k:v for k,v in s.COVER_STYLESHEET.items() if k != 'css'},sites=[{k:v for k,v in item.items() if k != 'html'}
                                                       for item in s.COVER_BUNDLE['sites']]))
         for site, raw in assets.items():
             self.assertEqual(raw,(ROOT/'assets/fake-sites'/f'{site}.html').read_bytes())
+        self.assertEqual(s.cover_stylesheet(),(ROOT/'assets/fake-sites/cover.css').read_bytes())
+        for raw in [s.SERVICE_STATUS,*assets.values()]:
+            self.assertNotIn(b'<style',raw.lower())
+            self.assertEqual(raw.count(b'<link rel="stylesheet" href="/cover.css">'),1)
         self.assertIn(b'All systems operational',s.SERVICE_STATUS)
         self.assertNotIn(b'Telemt',s.SERVICE_STATUS)
         parser = s.CoverHTML(); parser.feed(s.SERVICE_STATUS.decode()); parser.close()
@@ -44,6 +48,9 @@ class CoverTests(unittest.TestCase):
             else: bundle['schema'] = True
             with self.subTest(defect=defect),self.assertRaises(ValueError): s.cover_assets(bundle)
         for html in ('<script>alert(1)</script>','<iframe></iframe>','<form></form>',
+                     '<link rel="stylesheet" href="https://foreign/x.css">',
+                     '<link rel="stylesheet" href="/other.css">',
+                     '<a href="/cover.css">x</a>', '<style>body{color:red}</style>',
                      '<img src="https://remote.example/x">','<style>@import "x";</style>',
                      '<style>a{background:url(x)}</style>',
                      '<meta http-equiv="refresh" content="0;url=x">','<div onclick="x"></div>'):
@@ -59,10 +66,34 @@ class CoverTests(unittest.TestCase):
         final = self.root/'final'; final.mkdir(0o750)
         s.cover_initial(final,str(self.path))
         self.assertEqual((final/'index.html').read_bytes(),self.path.read_bytes())
-        self.path.unlink()
+        self.path.unlink(); (self.public/'cover.css').unlink()
         with patch.object(s,'COVER_BUNDLE',dict(schema=99,sites=[])): s.cover_initial(self.public)
         self.assertEqual(self.path.read_bytes(),s.SERVICE_STATUS)
-        self.assertEqual(list(self.public.iterdir()),[self.path])
+        self.assertEqual(set(self.public.iterdir()),{self.path,self.public/'cover.css'})
+
+    def test_stylesheet_integrity_and_resource_safety(self):
+        for defect in ('size','hash','url','import','external','script'):
+            item = copy.deepcopy(s.COVER_STYLESHEET)
+            if defect == 'size': item['size'] += 1
+            elif defect == 'hash': item['sha256'] = '0'*64
+            else:
+                item['css'] += dict(url='a{background:url(x)}',import_='@import "x";',
+                                    external='https://example.com',script='<script>x</script>')[
+                                        'import_' if defect == 'import' else defect]
+                raw = item['css'].encode(); item.update(size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+            with self.subTest(defect=defect),patch.object(s,'COVER_STYLESHEET',item),self.assertRaises(ValueError):
+                s.cover_stylesheet()
+
+    def test_initial_compatibility_staging_has_both_files(self):
+        script = 'source "$1"; TMP=$2; prepare_compatibility_data "$TMP/compat-data"'
+        subprocess.run(['bash','-c',script,'fixture',str(ROOT/'telemt-web-manager.sh'),str(self.root)],check=True)
+        public = self.root/'compat-data/public'
+        s.cover_stylesheet_check(public)
+        self.assertIn((public/'index.html').read_bytes(),s.cover_assets().values())
+        for filename in ('index.html','cover.css'):
+            info = (public/filename).stat()
+            self.assertEqual(info.st_uid,0); self.assertEqual(info.st_gid,public.stat().st_gid)
+            self.assertEqual(info.st_mode & 0o777,0o440)
 
     def test_random_never_current_and_atomic_post_write_failure_restores(self):
         # Root metadata contract is also the workflow's existing unit-test contract.
@@ -107,12 +138,30 @@ class CoverTests(unittest.TestCase):
         s.update_write_json(state/'manifest.json',dict(schema=1,domain=host,unit_sha256='a'*64,nginx_sha256='b'*64))
         s.update_write(state/'web-link.txt',f'tg://webproxy?server={host}&secret=dd{secret}\n'.encode())
         os.chown(self.public,0,1234)
+        s.cover_atomic(self.public,s.cover_stylesheet(),initial=True,filename='cover.css')
         s.cover_atomic(self.public,s.SERVICE_STATUS,initial=True)
-        controls = {p:p.read_bytes() for p in (config,*state.iterdir())}
+        controls = {p:p.read_bytes() for p in (config,self.public/'cover.css',*state.iterdir())}
         previous = self.root/'previous'
         with patch.object(s,'fresh_identity',return_value=dict(group=['telemt','x','1234',''])):
             s.cover_change(str(state),str(config),str(self.root),'random',str(previous))
             new = self.path.read_bytes(); self.assertIn(new,s.cover_assets().values())
+            css = self.public/'cover.css'; expected = css.read_bytes(); index = self.path.read_bytes()
+            for defect in ('missing','modified','symlink','mode','owner','group','hardlink'):
+                previous.unlink()
+                if defect == 'missing': css.unlink()
+                elif defect == 'modified': css.write_bytes(b'changed')
+                elif defect == 'symlink': css.unlink(); css.symlink_to(self.path)
+                elif defect == 'mode': css.chmod(0o644)
+                elif defect == 'owner': os.chown(css,65534,1234)
+                elif defect == 'group': os.chown(css,0,0)
+                else: os.link(css,self.root/'css-alias')
+                with self.subTest(defect=defect),self.assertRaises(ValueError):
+                    s.cover_change(str(state),str(config),str(self.root),'default',str(previous))
+                self.assertEqual(self.path.read_bytes(),index); self.assertFalse(previous.exists())
+                if (self.root/'css-alias').exists(): (self.root/'css-alias').unlink()
+                css.unlink(missing_ok=True)
+                s.cover_atomic(self.public,expected,initial=True,filename='cover.css')
+                s.update_write(previous,s.SERVICE_STATUS)
             s.cover_change(str(state),str(config),str(self.root),'restore',str(previous))
             self.assertEqual(self.path.read_bytes(),s.SERVICE_STATUS)
             previous.unlink()
@@ -153,9 +202,12 @@ recent_logs() { :; }
             f = fixture.Fixture()
             try:
                 path = f.layout.data/'public/index.html'; path.write_bytes(raw)
+                css = f.layout.data/'public/cover.css'; css.write_bytes(s.cover_stylesheet()); css.chmod(0o440)
                 before = hashlib.sha256(raw).digest()
                 f.engine.update()
                 self.assertEqual(hashlib.sha256(path.read_bytes()).digest(),before)
+                self.assertEqual(css.read_bytes(),s.cover_stylesheet())
+                self.assertEqual(css.stat().st_mode & 0o777,0o440)
                 self.assertEqual(path.stat().st_mode & 0o777,0o440)
             finally: f.close()
 

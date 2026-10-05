@@ -456,7 +456,9 @@ EOF
 write_managed_decoy() {
     local directory=$1
     helper safe-path "$directory/index.html" || return 1
+    helper safe-path "$directory/cover.css" || return 1
     [[ -d $directory && ! -L $directory && ! -e $directory/index.html && ! -L $directory/index.html ]] || return 1
+    [[ ! -e $directory/cover.css && ! -L $directory/cover.css ]] || return 1
     helper cover-initial "$directory" "${2:-}"
 }
 
@@ -905,9 +907,10 @@ install_manager() {
     done
     if [[ ! -e $STATE ]]; then helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700; fi
     track_file "$DATA/public/index.html"
+    track_file "$DATA/public/cover.css"
     write_managed_decoy "$DATA/public" "$TMP/compat-data/public/index.html" || die 'Unable to create managed decoy'
-    chown root:telemt "$DATA/public/index.html"
-    chmod 0440 "$DATA/public/index.html"
+    chown root:telemt "$DATA/public/index.html" "$DATA/public/cover.css"
+    chmod 0440 "$DATA/public/index.html" "$DATA/public/cover.css"
     track_file "$CONFIG"
     generate_config "$secret" "$DATA" >"$CONFIG" || die 'Unable to create final managed config'
     track_file "$STATE/web-link.txt"

@@ -1609,100 +1609,21 @@ def display_web_link(state, config):
 
 
 COVER_BUNDLE = {
-    "schema": 1,
-    "sites": [
+    'schema': 1,
+    'sites': [
         {
-            "id": 'site-02',
-            "size": 2454,
-            "sha256": 'cbc8bf570ee6cecf5ad2089b87d31ee5502f4b19abe65de8af6767cccf0f67eb',
-            "html": """<!DOCTYPE html>
+            'id': 'site-02',
+            'size': 778,
+            'sha256': '545f968667de782c2321ee29cd9eca2339c6848103593a5e0a47411dc28b6935',
+            'html': '''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BuildRight Co. — Under Construction</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: #f4f5f7;
-    font-family: Georgia, 'Times New Roman', serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-  }
-  .card {
-    background: #ffffff;
-    border-radius: 4px;
-    box-shadow: 0 2px 24px rgba(0,0,0,0.08);
-    padding: 3.5rem 3rem;
-    max-width: 540px;
-    width: 100%;
-    text-align: center;
-    border-top: 5px solid #f4a100;
-  }
-  .icon {
-    font-size: 4rem;
-    margin-bottom: 1.5rem;
-    line-height: 1;
-  }
-  h1 {
-    font-size: 2rem;
-    color: #1a1a2e;
-    font-weight: 700;
-    margin-bottom: 0.75rem;
-    letter-spacing: -0.5px;
-  }
-  .subtitle {
-    font-size: 1rem;
-    color: #555;
-    line-height: 1.7;
-    margin-bottom: 2rem;
-  }
-  .tape {
-    background: #f4a100;
-    color: #1a1a2e;
-    font-family: 'Courier New', monospace;
-    font-weight: 700;
-    font-size: 0.75rem;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    padding: 0.5rem 1.5rem;
-    display: inline-block;
-    transform: rotate(-1deg);
-    margin-bottom: 2rem;
-  }
-  .progress-bar {
-    background: #e9ecef;
-    border-radius: 999px;
-    height: 8px;
-    overflow: hidden;
-    margin-bottom: 0.5rem;
-  }
-  .progress-fill {
-    background: linear-gradient(90deg, #f4a100, #ffca28);
-    height: 100%;
-    width: 68%;
-    border-radius: 999px;
-  }
-  .progress-label {
-    font-family: 'Courier New', monospace;
-    font-size: 0.75rem;
-    color: #999;
-    text-align: right;
-  }
-  .brand {
-    margin-top: 2rem;
-    font-size: 0.8rem;
-    color: #aaa;
-    letter-spacing: 0.1em;
-    font-family: Arial, sans-serif;
-  }
-</style>
+<link rel="stylesheet" href="/cover.css">
 </head>
-<body>
+<body class="cover-site-02">
   <div class="card">
     <div class="icon">&#128679;</div>
     <h1>Under Construction</h1>
@@ -1717,85 +1638,21 @@ COVER_BUNDLE = {
   </div>
 </body>
 </html>
-""",
+''',
         },
         {
-            "id": 'site-03',
-            "size": 2287,
-            "sha256": '86e41f5b9be51dde377fc38efcf9268293d867f9cc5043831391fbcb9d074d41',
-            "html": """<!DOCTYPE html>
+            'id': 'site-03',
+            'size': 838,
+            'sha256': '29f941452f86844c67f8a49e33f9eb7bac5862bffe2e97da3090e92f8e9577d4',
+            'html': '''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GreenLeaf Tech — Launching Soon</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: linear-gradient(135deg, #0f3d1e 0%, #1a5c2a 40%, #0d4d1f 100%);
-    color: #d4edda;
-    font-family: 'Trebuchet MS', Arial, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    text-align: center;
-  }
-  .leaf {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    filter: drop-shadow(0 0 12px rgba(72,199,100,0.5));
-  }
-  .brand {
-    font-size: 0.85rem;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: #6fcf7c;
-    margin-bottom: 3rem;
-  }
-  h1 {
-    font-size: clamp(2.2rem, 7vw, 5rem);
-    font-weight: 700;
-    color: #ffffff;
-    line-height: 1.1;
-    margin-bottom: 1.5rem;
-    text-shadow: 0 2px 20px rgba(0,0,0,0.4);
-  }
-  h1 span { color: #48c764; }
-  .body-text {
-    font-size: 1.1rem;
-    color: #a8d5b0;
-    max-width: 480px;
-    line-height: 1.8;
-    margin-bottom: 3rem;
-  }
-  .badge-row {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    justify-content: center;
-    margin-bottom: 3rem;
-  }
-  .badge {
-    background: rgba(72, 199, 100, 0.15);
-    border: 1px solid rgba(72, 199, 100, 0.4);
-    color: #6fcf7c;
-    padding: 0.4rem 1.1rem;
-    border-radius: 999px;
-    font-size: 0.8rem;
-    letter-spacing: 0.05em;
-  }
-  .footer-line {
-    font-size: 0.75rem;
-    color: #5a8c65;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-  }
-</style>
+<link rel="stylesheet" href="/cover.css">
 </head>
-<body>
+<body class="cover-site-03">
   <div class="leaf">&#127807;</div>
   <p class="brand">GreenLeaf Tech</p>
   <h1>We're Launching<br><span>Soon</span></h1>
@@ -1811,129 +1668,21 @@ COVER_BUNDLE = {
   <p class="footer-line">GreenLeaf Tech &copy; 2025 &mdash; Growing Tomorrow, Today</p>
 </body>
 </html>
-""",
+''',
         },
         {
-            "id": 'site-04',
-            "size": 3285,
-            "sha256": '9ea160b849f434efb815b238d776d4f0fcdea821540d779d6b0c522971aa81bd',
-            "html": """<!DOCTYPE html>
+            'id': 'site-04',
+            'size': 878,
+            'sha256': 'd789d647bad8e04bca91047692ac9d77306e261150f395715781cead92d63dd8',
+            'html': '''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alex Chen — Portfolio Coming Soon</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: linear-gradient(160deg, #1a0533 0%, #2d1055 50%, #1e0840 100%);
-    font-family: 'Palatino Linotype', Palatino, Georgia, serif;
-    min-height: 100vh;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-items: center;
-  }
-  @media (max-width: 700px) {
-    body { grid-template-columns: 1fr; padding: 3rem 2rem; }
-    .right { display: none; }
-  }
-  .left {
-    padding: 4rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-  .eyebrow {
-    font-size: 0.75rem;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: #b07eff;
-    margin-bottom: 1.5rem;
-  }
-  h1 {
-    font-size: clamp(2rem, 4vw, 3.5rem);
-    color: #ffffff;
-    line-height: 1.15;
-    font-weight: 400;
-    margin-bottom: 0.5rem;
-  }
-  h1 em {
-    font-style: italic;
-    color: #c89fff;
-  }
-  .role {
-    font-size: 0.9rem;
-    color: #9b6fcc;
-    letter-spacing: 0.1em;
-    margin-bottom: 2rem;
-  }
-  p {
-    font-size: 1rem;
-    color: #c4a8e8;
-    line-height: 1.9;
-    max-width: 380px;
-    margin-bottom: 2.5rem;
-  }
-  .divider {
-    width: 40px;
-    height: 1px;
-    background: #7c3aed;
-    margin-bottom: 2.5rem;
-  }
-  .status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
-    background: rgba(124, 58, 237, 0.2);
-    border: 1px solid rgba(124, 58, 237, 0.5);
-    padding: 0.5rem 1.2rem;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    color: #b07eff;
-    letter-spacing: 0.08em;
-  }
-  .dot {
-    width: 7px; height: 7px;
-    background: #7c3aed;
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
-  .right {
-    padding: 4rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .art {
-    width: 260px; height: 320px;
-    border: 1px solid rgba(124,58,237,0.4);
-    border-radius: 8px;
-    background: rgba(124,58,237,0.08);
-    position: relative;
-    overflow: hidden;
-  }
-  .art::before {
-    content: '';
-    position: absolute;
-    top: -40%; left: -40%;
-    width: 180%; height: 180%;
-    background: radial-gradient(circle, rgba(124,58,237,0.3) 0%, transparent 65%);
-  }
-  .art-label {
-    position: absolute;
-    bottom: 1.2rem; left: 1.2rem;
-    font-size: 0.7rem;
-    color: rgba(176,126,255,0.5);
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-  }
-</style>
+<link rel="stylesheet" href="/cover.css">
 </head>
-<body>
+<body class="cover-site-04">
   <div class="left">
     <p class="eyebrow">Portfolio</p>
     <h1>Alex Chen &mdash;<br><em>Designer</em></h1>
@@ -1952,22 +1701,289 @@ COVER_BUNDLE = {
   </div>
 </body>
 </html>
-""",
+''',
         },
     ],
+}
+
+COVER_STYLESHEET = {
+    'size': 6772,
+    'sha256': '8bf41f327d642d6f5b63e2efa368335c18729e58a389357ff56175c0f860c4d4',
+    'css': '''body.cover-site-02, .cover-site-02 *, .cover-site-02 *::before, .cover-site-02 *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body.cover-site-02 {
+    background: #f4f5f7;
+    font-family: Georgia, 'Times New Roman', serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+.cover-site-02 .card {
+    background: #ffffff;
+    border-radius: 4px;
+    box-shadow: 0 2px 24px rgba(0,0,0,0.08);
+    padding: 3.5rem 3rem;
+    max-width: 540px;
+    width: 100%;
+    text-align: center;
+    border-top: 5px solid #f4a100;
+  }
+.cover-site-02 .icon {
+    font-size: 4rem;
+    margin-bottom: 1.5rem;
+    line-height: 1;
+  }
+.cover-site-02 h1 {
+    font-size: 2rem;
+    color: #1a1a2e;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    letter-spacing: -0.5px;
+  }
+.cover-site-02 .subtitle {
+    font-size: 1rem;
+    color: #555;
+    line-height: 1.7;
+    margin-bottom: 2rem;
+  }
+.cover-site-02 .tape {
+    background: #f4a100;
+    color: #1a1a2e;
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    padding: 0.5rem 1.5rem;
+    display: inline-block;
+    transform: rotate(-1deg);
+    margin-bottom: 2rem;
+  }
+.cover-site-02 .progress-bar {
+    background: #e9ecef;
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+  }
+.cover-site-02 .progress-fill {
+    background: linear-gradient(90deg, #f4a100, #ffca28);
+    height: 100%;
+    width: 68%;
+    border-radius: 999px;
+  }
+.cover-site-02 .progress-label {
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: #999;
+    text-align: right;
+  }
+.cover-site-02 .brand {
+    margin-top: 2rem;
+    font-size: 0.8rem;
+    color: #aaa;
+    letter-spacing: 0.1em;
+    font-family: Arial, sans-serif;
+  }
+body.cover-site-03, .cover-site-03 *, .cover-site-03 *::before, .cover-site-03 *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body.cover-site-03 {
+    background: linear-gradient(135deg, #0f3d1e 0%, #1a5c2a 40%, #0d4d1f 100%);
+    color: #d4edda;
+    font-family: 'Trebuchet MS', Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    text-align: center;
+  }
+.cover-site-03 .leaf {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 0 12px rgba(72,199,100,0.5));
+  }
+.cover-site-03 .brand {
+    font-size: 0.85rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #6fcf7c;
+    margin-bottom: 3rem;
+  }
+.cover-site-03 h1 {
+    font-size: clamp(2.2rem, 7vw, 5rem);
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.1;
+    margin-bottom: 1.5rem;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.4);
+  }
+.cover-site-03 h1 span { color: #48c764; }
+.cover-site-03 .body-text {
+    font-size: 1.1rem;
+    color: #a8d5b0;
+    max-width: 480px;
+    line-height: 1.8;
+    margin-bottom: 3rem;
+  }
+.cover-site-03 .badge-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 3rem;
+  }
+.cover-site-03 .badge {
+    background: rgba(72, 199, 100, 0.15);
+    border: 1px solid rgba(72, 199, 100, 0.4);
+    color: #6fcf7c;
+    padding: 0.4rem 1.1rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+  }
+.cover-site-03 .footer-line {
+    font-size: 0.75rem;
+    color: #5a8c65;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+body.cover-site-04, .cover-site-04 *, .cover-site-04 *::before, .cover-site-04 *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body.cover-site-04 {
+    background: linear-gradient(160deg, #1a0533 0%, #2d1055 50%, #1e0840 100%);
+    font-family: 'Palatino Linotype', Palatino, Georgia, serif;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+  }
+@media (max-width: 700px) {body.cover-site-04 { grid-template-columns: 1fr; padding: 3rem 2rem; }
+.cover-site-04 .right { display: none; }
+}
+.cover-site-04 .left {
+    padding: 4rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+.cover-site-04 .eyebrow {
+    font-size: 0.75rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #b07eff;
+    margin-bottom: 1.5rem;
+  }
+.cover-site-04 h1 {
+    font-size: clamp(2rem, 4vw, 3.5rem);
+    color: #ffffff;
+    line-height: 1.15;
+    font-weight: 400;
+    margin-bottom: 0.5rem;
+  }
+.cover-site-04 h1 em {
+    font-style: italic;
+    color: #c89fff;
+  }
+.cover-site-04 .role {
+    font-size: 0.9rem;
+    color: #9b6fcc;
+    letter-spacing: 0.1em;
+    margin-bottom: 2rem;
+  }
+.cover-site-04 p {
+    font-size: 1rem;
+    color: #c4a8e8;
+    line-height: 1.9;
+    max-width: 380px;
+    margin-bottom: 2.5rem;
+  }
+.cover-site-04 .divider {
+    width: 40px;
+    height: 1px;
+    background: #7c3aed;
+    margin-bottom: 2.5rem;
+  }
+.cover-site-04 .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(124, 58, 237, 0.2);
+    border: 1px solid rgba(124, 58, 237, 0.5);
+    padding: 0.5rem 1.2rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #b07eff;
+    letter-spacing: 0.08em;
+  }
+.cover-site-04 .dot {
+    width: 7px; height: 7px;
+    background: #7c3aed;
+    border-radius: 50%;
+    animation: cover-site-04-pulse 2s infinite;
+  }
+@keyframes cover-site-04-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+.cover-site-04 .right {
+    padding: 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+.cover-site-04 .art {
+    width: 260px; height: 320px;
+    border: 1px solid rgba(124,58,237,0.4);
+    border-radius: 8px;
+    background: rgba(124,58,237,0.08);
+    position: relative;
+    overflow: hidden;
+  }
+.cover-site-04 .art::before {
+    content: '';
+    position: absolute;
+    top: -40%; left: -40%;
+    width: 180%; height: 180%;
+    background: radial-gradient(circle, rgba(124,58,237,0.3) 0%, transparent 65%);
+  }
+.cover-site-04 .art-label {
+    position: absolute;
+    bottom: 1.2rem; left: 1.2rem;
+    font-size: 0.7rem;
+    color: rgba(176,126,255,0.5);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+body.cover-status {margin:0;min-height:100vh;display:grid;place-items:center;background:#101827;color:#e8eef7;font:16px system-ui,sans-serif}
+.cover-status main {padding:3rem;border:1px solid #29364b;border-radius:20px;background:#172235;text-align:center}
+.cover-status i {display:inline-block;width:12px;height:12px;border-radius:50%;background:#50d890;margin-right:10px}
+.cover-status h1 {font-size:1.5rem}
+.cover-status p {color:#b4c2d6}
+''',
 }
 
 from html.parser import HTMLParser
 import secrets
 
 COVER_LIMIT = 32768
-SERVICE_STATUS = b'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Service Status</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101827;color:#e8eef7;font:16px system-ui,sans-serif}main{padding:3rem;border:1px solid #29364b;border-radius:20px;background:#172235;text-align:center}i{display:inline-block;width:12px;height:12px;border-radius:50%;background:#50d890;margin-right:10px}h1{font-size:1.5rem}p{color:#b4c2d6}</style></head><body><main><h1>Service Status</h1><p><i></i>All systems operational</p></main></body></html>\n'''
+SERVICE_STATUS = b'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Service Status</title><link rel="stylesheet" href="/cover.css"></head><body class="cover-status"><main><h1>Service Status</h1><p><i></i>All systems operational</p></main></body></html>\n'
 
 
 class CoverHTML(HTMLParser):
     """Small local HTML/CSS only; no executable or externally loaded content."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.stylesheets = 0
+
     def handle_starttag(self, tag, attrs):
-        require(tag in {'html','head','meta','title','style','body','main','div','span','p',
+        if tag == 'link':
+            require(len(attrs) == 2 and dict(attrs) == {'rel':'stylesheet','href':'/cover.css'},
+                    'unsafe cover resource')
+            self.stylesheets += 1
+            return
+        require(tag in {'html','head','meta','title','body','main','div','span','p',
                         'h1','h2','h3','br','i','em','strong','section','footer'}, 'unsafe cover HTML')
         allowed = {'lang','charset','name','content','class','id'}
         require(all(key in allowed and value is not None for key,value in attrs), 'unsafe cover attribute')
@@ -1995,8 +2011,33 @@ def cover_assets(bundle=None):
         require(not re.search(r'url\s*\(|@import|expression\s*\(|\\|https?\s*:',item['html'],re.I),
                 'external or active cover content')
         parser = CoverHTML(convert_charrefs=True); parser.feed(item['html']); parser.close()
+        require(parser.stylesheets == 1, 'missing or duplicate cover stylesheet')
         result[item['id']] = raw
     return result
+
+
+def cover_stylesheet():
+    item = COVER_STYLESHEET
+    require(type(item) is dict and set(item) == {'size','sha256','css'}
+            and type(item['size']) is int and 0 < item['size'] <= COVER_LIMIT
+            and type(item['css']) is str and len(item['css']) <= COVER_LIMIT
+            and type(item['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}',item['sha256']))
+    raw = item['css'].encode('utf-8')
+    require(len(raw) == item['size'] and hashlib.sha256(raw).hexdigest() == item['sha256'],
+            'cover stylesheet integrity check failed')
+    require(not re.search(r'url\s*\(|@import|expression\s*\(|\\|https?\s*:|data\s*:|javascript|behavior\s*:|<|>',
+                          item['css'],re.I), 'unsafe cover stylesheet')
+    return raw
+
+
+def cover_stylesheet_check(directory, owner=0):
+    directory = Path(directory)
+    try:
+        raw = web_link_read(directory/'cover.css',{0o440},COVER_LIMIT,owner=owner)
+    except OSError:
+        raise ValueError('Missing or unsafe managed cover stylesheet; manual review required') from None
+    require((directory/'cover.css').lstat().st_gid == directory.lstat().st_gid
+            and raw == cover_stylesheet(), 'invalid managed cover stylesheet; manual review required')
 
 
 def cover_choose(current=None):
@@ -2005,9 +2046,10 @@ def cover_choose(current=None):
     return secrets.choice(choices)
 
 
-def cover_atomic(directory, raw, initial=False):
+def cover_atomic(directory, raw, initial=False, filename='index.html'):
     """Anchored, bounded single-file publication with verified rollback bytes."""
-    directory = Path(directory); path = directory/'index.html'; safe_path(path)
+    require(filename == 'index.html' or (initial and filename == 'cover.css'))
+    directory = Path(directory); path = directory/filename; safe_path(path)
     require(0 < len(raw) <= COVER_LIMIT and not os.path.ismount(directory))
     parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     temporary = '.twm-cover-' + uuid.uuid4().hex
@@ -2029,7 +2071,7 @@ def cover_atomic(directory, raw, initial=False):
                 output.write(content); output.flush(); os.fsync(output.fileno())
             require(os.fstat(parent).st_ino == directory.lstat().st_ino
                     and os.fstat(parent).st_dev == directory.lstat().st_dev)
-            os.replace(temporary,'index.html',src_dir_fd=parent,dst_dir_fd=parent)
+            os.replace(temporary,filename,src_dir_fd=parent,dst_dir_fd=parent)
             os.fsync(parent)
         try:
             if old is not None: require(path.lstat() == original, 'cover changed concurrently')
@@ -2037,7 +2079,7 @@ def cover_atomic(directory, raw, initial=False):
             with fresh_signal_window():
                 published = True
                 publish(raw)
-                fd = os.open('index.html',os.O_RDONLY | os.O_NOFOLLOW,dir_fd=parent)
+                fd = os.open(filename,os.O_RDONLY | os.O_NOFOLLOW,dir_fd=parent)
                 try:
                     info = os.fstat(fd)
                     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
@@ -2050,7 +2092,7 @@ def cover_atomic(directory, raw, initial=False):
             if published:
                 if old is not None: publish(old)
                 else:
-                    try: os.unlink('index.html',dir_fd=parent); os.fsync(parent)
+                    try: os.unlink(filename,dir_fd=parent); os.fsync(parent)
                     except FileNotFoundError: pass
             raise
     finally:
@@ -2060,6 +2102,8 @@ def cover_atomic(directory, raw, initial=False):
 
 
 def cover_initial(directory, source=None):
+    stylesheet = cover_stylesheet()
+    if source: cover_stylesheet_check(Path(source).parent,owner=os.geteuid())
     try:
         if source:
             raw = web_link_read(source,{0o440},COVER_LIMIT,owner=os.geteuid())
@@ -2068,6 +2112,7 @@ def cover_initial(directory, source=None):
     except (ValueError,UnicodeError):
         print('Cover assets unavailable; using Service Status.',file=sys.stderr)
         raw = SERVICE_STATUS
+    cover_atomic(directory,stylesheet,initial=True,filename='cover.css')
     cover_atomic(directory,raw,initial=True)
 
 
@@ -2079,6 +2124,7 @@ def cover_change(state, config, data, mode, previous):
     safe_path(directory)
     require(directory.lstat().st_uid == 0 and directory.lstat().st_gid == int(account['group'][2])
             and stat.S_IMODE(directory.lstat().st_mode) == 0o750)
+    cover_stylesheet_check(directory)
     current = web_link_read(directory/'index.html',{0o440},COVER_LIMIT)
     known = [SERVICE_STATUS,*cover_assets().values()]
     require(current in known, 'Unknown current cover; manual review required')
