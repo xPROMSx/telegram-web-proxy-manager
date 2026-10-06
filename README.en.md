@@ -108,7 +108,7 @@ There is no automatic downgrade.
 - An existing supported Nginx configuration with `stream`, `ssl_preread` and PROXY protocol.
 - One correct DNS A record pointing to the server's public IPv4, with no CNAME or AAAA.
 - Free local Telemt ports: `127.0.0.1:18080` and `127.0.0.1:7444`.
-- Supported architecture: x86_64. ARM is not part of the project's supported platform set.
+- x86_64 has been validated on a real server. ARM64/aarch64 has not been live-tested.
 
 A fresh installation uses Telemt **3.5.12**. For updates, the manager selects the newest
 stable official release and checks compatibility while preserving your configuration.
