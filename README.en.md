@@ -32,7 +32,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/m
 
 This installs the published manager release and opens its menu.
 Choose **1. Install**. The manager asks for your domain, public IPv4 and whether to use SOCKS5.
-For a new certificate, supply an email and accept Let's Encrypt's terms; see the commands below.
+If the domain does not have a certificate yet, the manager also asks for an email address and confirmation of the Let's Encrypt terms.
 
 After installation, the manager gives you a ready `tg://webproxy?...` link that
 can be added directly to Telegram. Your domain also serves an automatically
@@ -66,7 +66,7 @@ A full 3x-ui reinstall requires Telemt integration again; see the documentation 
 ```
 
 **The connection link contains a secret key for accessing your proxy.** Do not
-publish it or share it with strangers. Item 5 displays the validated saved link
+publish it or share it with anyone who should not have access. Item 5 displays the validated saved link
 without generating a new one or changing settings. Storage:
 `/var/lib/telemt-web-manager/web-link.txt` (root, mode `0600`). Menu-based Install
 shows it after successful completion; unattended commands and redirected output do not print it.
@@ -108,10 +108,10 @@ There is no automatic downgrade.
 - An existing supported Nginx configuration with `stream`, `ssl_preread` and PROXY protocol.
 - One correct DNS A record pointing to the server's public IPv4, with no CNAME or AAAA.
 - Free local Telemt ports: `127.0.0.1:18080` and `127.0.0.1:7444`.
-- GNU builds for x86_64 and aarch64; native ARM servers under systemd have not been live-tested.
+- Supported architecture: x86_64. ARM is not part of the project's supported platform set.
 
-Supported Telemt: **3.5.12** — the version used for a fresh installation. Update selects
-the newest stable official release and checks compatibility while preserving your configuration.
+A fresh installation uses Telemt **3.5.12**. For updates, the manager selects the newest
+stable official release and checks compatibility while preserving your configuration.
 The manager does not install Nginx/Xray/3x-ui, configure the firewall automatically
 or manage manually installed Telemt. See the documentation for detailed requirements.
 
