@@ -1,7 +1,8 @@
 # ✈️ Telemt WEB Manager
 
-**Telegram WEB proxy on your VPS — installation, HTTPS, safe updates
-with rollback and Automatic Fake Site.**
+**An easy way to install and maintain a Telegram WEB Proxy on your Ubuntu VPS.**
+The manager sets up Telemt, HTTPS and a Fake Site for your domain, gives you a
+Telegram connection link, and restores the working version if an update fails its checks.
 
 [![checks](https://github.com/xPROMSx/telemt-web-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telemt-web-manager/actions/workflows/checks.yml)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
@@ -9,42 +10,47 @@ with rollback and Automatic Fake Site.**
 
 [Русский](README.md) · [Releases](https://github.com/xPROMSx/telemt-web-manager/releases) · [3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Issues](https://github.com/xPROMSx/telemt-web-manager/issues)
 
+## ✨ What it does
+
+- ✈️ Installs and configures [Telemt WEB Proxy](https://github.com/telemt/telemt).
+- 🔐 Sets up HTTPS with Let's Encrypt, including reuse of certificates saved by the manager.
+- 🥸 Automatically serves a Fake Site on the public domain instead of a technical proxy response.
+- 🎨 Lets you switch Fake Sites from the menu or restore the neutral Service Status page.
+- 🔄 Finds new stable Telemt releases and checks compatibility before installing them.
+- 🛟 Restores the working version and its data if an update fails validation.
+- 🔧 Checks Telemt, Nginx, HTTPS and connectivity with one command.
+- 🌐 Connects directly or through SOCKS5 when the VPS cannot reach Telegram directly.
+
 ## ⚡ Quick start
 
-Prepare an Ubuntu VPS with an existing supported Nginx topology — for example,
-using **3x-ui Auto Nginx** Fresh Install. Then run in a root terminal:
+Start with an Ubuntu VPS running a supported Nginx configuration.
+**3x-ui Auto Nginx**, described below, can prepare it for you. Run as root:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh)
 ```
 
-Choose **1. Install**, enter your domain and public IPv4, and receive the WEB link.
-A cover page is selected automatically. Bootstrap installs the published manager
-release; Telemt is installed through the separate Install action.
+This installs the published manager release and opens its menu.
+Choose **1. Install**. The manager asks for your domain, public IPv4 and whether to use SOCKS5.
+For a new certificate, supply an email and accept Let's Encrypt's terms; see the commands below.
 
-## Features
+After installation, the manager gives you a ready `tg://webproxy?...` link that
+can be added directly to Telegram. Your domain also serves an automatically
+selected Fake Site, which you can change from the menu.
 
-- ⚡ One-command manager installation; missing Ubuntu tools only after Y/y confirmation.
-- ✈️ [Telemt WEB Proxy](https://github.com/telemt/telemt): direct or SOCKS5 upstream.
-- 🔄 Universal Update: verified stable official candidate, preserving managed TOML.
-- 🛟 Automatic rollback/recovery restores the binary and complete DATA.
-- 🥸 Automatic Fake Site and menu-based cover changes, with no external resources.
-- 🔐 HTTPS / Let's Encrypt, including certificate preservation and reuse.
-- 🌐 Integration with an existing Nginx SNI router on shared port 443.
-- 🔧 Check / Repair / managed Uninstall and private current WEB-link display.
+## 🖥️ Need a ready-to-use 3x-ui and Xray server?
 
-## 🚀 Want a complete proxy stack?
+Our other project, [**3x-ui Auto Nginx**](https://github.com/xPROMSx/3x-ui-auto-nginx),
+sets up **3x-ui, Xray, Nginx and HTTPS**. Telemt WEB Manager then adds
+a Telegram WEB Proxy to the same server through a separate installation.
 
-### [3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx)
+**Recommended order:**
 
-The companion project deploys **3x-ui / Xray / Nginx / TLS / Fake Site**.
-Telemt WEB Manager adds a managed Telegram WEB proxy while preserving recognized
-routes and settings in the existing stack.
+1. 3x-ui Auto Nginx.
+2. Telemt WEB Manager.
 
-**Recommended order: 3x-ui Fresh Install → Telemt Install.**
-Neither installer invokes the other; there is no runtime dependency between repositories.
-A repeated destructive `x-ui-latest.sh` rebuilds Nginx: after an intentional full rebuild,
-Telemt must be installed/integrated again.
+The projects work independently: neither installer runs the other.
+A full 3x-ui reinstall requires Telemt integration again; see the documentation below.
 
 ## Manager 1.0.0 menu
 
@@ -59,28 +65,23 @@ Telemt must be installed/integrated again.
 8. Exit
 ```
 
-**The WEB link is a bearer secret.** Successful interactive Install displays it
-only after commit. Item 5 reads the existing manager-owned link, validates its
-TOML identity, and never regenerates or repairs it.
-Private storage: `/var/lib/telemt-web-manager/web-link.txt` (root, 0600).
-CLI Install and redirected/unattended output never print the secret. `NO_COLOR`
-disables colors; `TERM=dumb` selects plain output.
+**The connection link contains a secret key for accessing your proxy.** Do not
+publish it or share it with strangers. Item 5 displays the validated saved link
+without generating a new one or changing settings. Storage:
+`/var/lib/telemt-web-manager/web-link.txt` (root, mode `0600`). Menu-based Install
+shows it after successful completion; unattended commands and redirected output do not print it.
 
-**Change cover site** offers Random new cover, Restore Service Status or Cancel.
-Random selects a different current site when alternatives exist. HTML is replaced
-atomically; a verified restart is required because Telemt caches static assets.
-Unknown/manually changed HTML requires manual review and is not overwritten.
-Covers are ordinary decoy pages, with no promises of invisible traffic or DPI bypass.
-Your selected cover survives Telemt Update.
+**Change cover site** chooses a different random Fake Site or restores Service Status.
+Pages are local, without external CDNs or resources, and survive Telemt updates.
+Manually edited HTML is not overwritten.
 
-**Update** shows stages and stability/restart progress in a TTY.
-Acceptance remains 150 + 45 seconds. CI/redirected output retains line-oriented
-diagnostics; failures and rollback information remain visible.
+**Update** checks the new stable release and shows installation progress.
+If checks fail, it restores the working version.
+`NO_COLOR` disables colors; `TERM=dumb` keeps the output plain.
 
-**Uninstall** requires typing `UNINSTALL` and removes only proven manager-owned Telemt.
-The manager and backups remain. Certificates are preserved by default; same-domain
-Install reuses valid manager-owned certificate state without a new ACME order.
-Certificate deletion requires separate explicit confirmation.
+**Uninstall Telemt** requires typing `UNINSTALL` and only removes Telemt installed
+by this manager. The manager and backups stay. By default, the certificate is
+kept for the same domain; deletion requires separate confirmation.
 
 ## Unattended commands
 
@@ -96,35 +97,33 @@ telemt-web-manager --uninstall --confirm-uninstall
 telemt-web-manager --uninstall --confirm-uninstall --delete-certificate
 ```
 
-CLI actions never install packages automatically. To update the **manager**,
-repeat bootstrap: it atomically installs the manager/helper from one release commit,
-preserving Telemt. Automatic downgrade is refused.
+Unattended commands never install packages. Menu actions install missing Ubuntu
+tools only after you answer `Y/y`. Update the **manager itself** by running
+the quick-start command again; Telemt stays installed.
+There is no automatic downgrade.
 
-## Requirements and boundaries
+## Requirements
 
-Supported Telemt: **3.5.12** — Fresh Install baseline. Update selects the newest
-stable official release and verifies compatibility, without TOML migration or downgrade.
+- Ubuntu **24.04 / 26.04**, root access, Bash 5+ and a running systemd environment.
+- An existing supported Nginx configuration with `stream`, `ssl_preread` and PROXY protocol.
+- One correct DNS A record pointing to the server's public IPv4, with no CNAME or AAAA.
+- Free local Telemt ports: `127.0.0.1:18080` and `127.0.0.1:7444`.
+- GNU builds for x86_64 and aarch64; native ARM servers under systemd have not been live-tested.
 
-Ubuntu **24.04 / 26.04**, root, Bash 5+, active systemd and an existing supported
-Nginx `stream` / `ssl_preread` / PROXY protocol topology are required. The domain needs
-one correct A record, no CNAME/AAAA; local Telemt ports must be free.
-GNU x86_64/aarch64 binaries are supported; native ARM systemd live acceptance is not claimed.
-Conntrack requires `CAP_NET_ADMIN`. This is not server provisioning: the manager does
-not install Nginx/Xray/3x-ui, configure the firewall or adopt foreign Telemt deployments.
-Unknown topologies/unsafe paths fail closed. Keep configs, journals and backups private.
+Supported Telemt: **3.5.12** — the version used for a fresh installation. Update selects
+the newest stable official release and checks compatibility while preserving your configuration.
+The manager does not install Nginx/Xray/3x-ui, configure the firewall automatically
+or manage manually installed Telemt. See the documentation for detailed requirements.
 
-Owner acceptance history: v0.1.1 — Install/recovery; v0.1.2 — Uninstall/certificates;
-v0.1.3 — Update 3.5.11 → 3.5.12; v0.1.4 — WEB-link/dependency UX. Universal Update
-architecture also passed owner live acceptance, including 3.5.12 → 3.5.14,
-Telegram and final Check OK. Owner acceptance of 1.0.0 completed on Ubuntu 26.04 x86_64
-after companion 3x-ui Auto Nginx Fresh Install: Fake Sites with local `/cover.css`
-and strict CSP, Service Status, cover changes and TTY progress — PASS. Update 3.5.12 → 3.5.14
-preserved TOML, HTML/CSS and the WEB link byte-for-byte; Telegram works and final Check OK
-(errors=0, warnings=0). CI does not establish support for every server/configuration.
+## Tested on a real server
+
+Version 1.0.0 was tested on an Ubuntu 26.04 x86_64 VPS after 3x-ui Auto Nginx setup:
+fresh installation, HTTPS, SOCKS5, Telegram, Fake Sites, page switching and the
+Telemt **3.5.12 → 3.5.14** update all passed. Final check: **OK**.
 
 ## Documentation
 
-[Operations / requirements / recovery](docs/OPERATIONS.md) ·
-[Update, rollback and security model](docs/OPERATIONS.md#universal-update-020) ·
-[CI coverage and limitations](docs/CI-COVERAGE.md) ·
-[Upstream provenance](docs/UPSTREAM.md) · [MIT License](LICENSE)
+[Operations, requirements and recovery](docs/OPERATIONS.md) ·
+[Safe updates and restoring the working version](docs/OPERATIONS.md#universal-update-020) ·
+[Test coverage and limitations](docs/CI-COVERAGE.md) ·
+[Telemt sources and release verification](docs/UPSTREAM.md) · [MIT License](LICENSE)
