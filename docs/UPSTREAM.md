@@ -304,10 +304,27 @@ No production VPS or secrets were used. See both READMEs for intentional boundar
 
 ## Current 3x-ui topology and quota compatibility review
 
-The mandatory topology fixture uses `xPROMSx/3x-ui-auto-nginx` `x-ui-latest.sh`,
-commit `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd`, Git blob
-`c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81`. Only inert Nginx heredocs are rendered;
-the installer is not executed. Supported order is 3x-ui Fresh Install followed
+The mandatory topology fixture renders both immutable `x-ui-latest.sh` profiles
+from `xPROMSx/3x-ui-auto-nginx`:
+
+| Profile | Exact commit | Git blob of x-ui-latest.sh |
+| --- | --- | --- |
+| legacy | `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd` | `c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81` |
+| webroot | `eba91cfe80144f91ce2ce771859ba1787421d0fa` | `c98dcfb9cc8456b8fe72fe34b1238311c59ae1ed` |
+
+The webroot source is the owner-provided final frozen [PR #12 release candidate](https://github.com/xPROMSx/3x-ui-auto-nginx/pull/12).
+Only inert Nginx heredocs are rendered, with exact source-blob verification;
+the installer is not executed and neither profile uses a mutable branch URL.
+Both run the existing fresh/rollback/ACME/real-Nginx integration chain.
+
+HTTP :80 recognition retains the legacy redirect-only form and adds only the
+exact webroot+redirect form: `listen 80` and `listen [::]:80`, exact non-conflicting
+names, an ACME `^~` location rooted at `/var/www/acme` with `default_type text/plain`
+and `try_files $uri =404`, plus a root location returning
+`301 https://$host$request_uri`. Extra routing, includes, directives or listener
+options are refused. Telemt continues using its own ACME webroot, ownership
+records, renewal hook and existing Certbot scheduler detection; stream/HTTPS
+integration is unchanged. Supported order is 3x-ui Fresh Install followed
 by manager Install. A deliberate 3x-ui full rebuild removes existing routes and
 requires Telemt installation/integration again. `x-ui-patch.sh` is not mandatory.
 Historical reviews above remain records of their original revisions.

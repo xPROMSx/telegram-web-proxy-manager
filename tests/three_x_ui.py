@@ -12,6 +12,9 @@ import urllib.request
 REPOSITORY = "xPROMSx/3x-ui-auto-nginx"
 COMMIT = "59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd"
 BLOB = "c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81"
+NEW_COMMIT = "eba91cfe80144f91ce2ce771859ba1787421d0fa"
+NEW_BLOB = "c98dcfb9cc8456b8fe72fe34b1238311c59ae1ed"
+PROFILES = {"legacy": (COMMIT, BLOB), "webroot": (NEW_COMMIT, NEW_BLOB)}
 VALUES = {
     "domain": "panel.example.com", "reality_domain": "reality.example.com",
     "sub_path": "subscription", "json_path": "json", "xhttp_path": "xhttp",
@@ -49,18 +52,20 @@ def render(text):
     return "".join(result)
 
 
-def build(root, script, source=None):
+def build(root, script, source=None, profile="legacy"):
     if script != "x-ui-latest.sh":
         raise ValueError("only the reviewed Fresh Install topology is supported")
+    commit, blob = PROFILES[profile]
     if source:
         data = (Path(source) / script).read_bytes()
     else:
-        url = f"https://raw.githubusercontent.com/{REPOSITORY}/{COMMIT}/{script}"
+        url = f"https://raw.githubusercontent.com/{REPOSITORY}/{commit}/{script}"
         with urllib.request.urlopen(url, timeout=30) as response:
             data = response.read()
     actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
-    if actual != BLOB:
+    if actual != blob:
         raise ValueError("upstream fixture source differs from reviewed blob")
+    print(f"ok - {profile} immutable source: commit {commit}; x-ui-latest.sh blob {actual}")
     text = data.decode("utf-8").replace("\r\n", "\n")
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -96,5 +101,6 @@ if __name__ == "__main__":
     parser.add_argument("root")
     parser.add_argument("--script", choices=("x-ui-latest.sh",), required=True)
     parser.add_argument("--source")
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="legacy")
     options = parser.parse_args()
-    build(options.root, options.script, options.source)
+    build(options.root, options.script, options.source, options.profile)
