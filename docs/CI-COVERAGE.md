@@ -1,6 +1,6 @@
 # CI coverage truth table
 
-Supported Telemt: **3.5.12** (fresh Install baseline). Manager 0.2.0 Update selects
+Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.0.0 Update selects
 the newest verified official stable release by compatibility, without a major/minor
 restriction. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means
@@ -208,7 +208,7 @@ systemd tools absent. The original strict private-file/TTY/color tests remain.
 The owner clean Ubuntu finding is recorded in OPERATIONS. Live acceptance of
 published v0.1.4 completed dependency installation, fresh Install, menu link
 display, real Telegram connection and Check. Mocked apt fixtures themselves do
-not claim real-server package installation. Owner acceptance of v0.2.0 remains pending.
+not claim real-server package installation. Owner acceptance of v0.2.0 is complete (3.5.12 → 3.5.14, real Telegram, final Check OK).
 
 ## Universal generation Update (0.2.0)
 
@@ -295,5 +295,26 @@ native ARM systemd/runtime acceptance is not claimed.
 Every existing safety step remains enabled. Namespace, cgroup, boot, real-binary
 or helper absence fails the job; there is no skip/fallback/continue-on-error.
 CI proves these bounded contracts, not real Telegram transport, Internet SOCKS
-egress, production Let's Encrypt renewal or owner-host coexistence. The owner must
-live-test exact v0.2.0 bytes and a deliberate rollback before release.
+egress, production Let's Encrypt renewal or owner-host coexistence. The owner completed live acceptance of the existing updater architecture.
+Separate owner acceptance of 1.0.0 completed on Ubuntu 26.04 x86_64 after companion
+3x-ui Auto Nginx Fresh Install. Existing Let's Encrypt certificate reuse, real
+Telegram, CSP-compatible Fake Sites/Service Status, random cover changes and TTY
+progress passed. Normal Update 3.5.12 → 3.5.14 completed 150s + 45s acceptance and
+preserved TOML, index.html, cover.css and WEB-link bytes. COMMITTED journal and
+matching receipt/manager/DATA generations were verified; final Check OK reported
+errors=0, warnings=0. These are owner live results, not additional CI claims.
+
+
+## Cover / progress targeted coverage (1.0.0)
+
+`test_cover.py` checks embedded/source manifest parity, sizes/digests, bounded IDs,
+external/active HTML refusal, random initial cover, fallback, different random cover,
+restore, unknown-current refusal, no-follow/hardlink/mode checks, root:group 0440,
+post-write failure restoration and unchanged controls. All three covers and Service
+Status survive the existing mocked full-DATA transaction. `test_update_progress.py`
+checks TTY progress, NO_COLOR, TERM=dumb/non-TTY diagnostic output, deadline-only
+rendering and visible failure. Existing menu tests enforce all eight entries and
+Uninstall item 7. Existing baseline namespace runtime smoke additionally proves
+atomic replacement remains cached before restart and new Service Status is served
+after graceful restart, with the PID-owned HTTP listener. No new QEMU/ARM matrix
+or CI architecture was added; existing mandatory steps remain enabled.

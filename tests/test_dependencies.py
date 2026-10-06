@@ -239,7 +239,7 @@ dependency_commands show-web-link
         self.assertNotIn('Dependencies installed successfully',text)
 
     def test_uninstall_extra_tools_are_collected_before_mutation(self):
-        result,text,trace=self.run_action(missing=('groupadd','find','iptables-save','ip6tables-save'),answer=b'6\ny\n')
+        result,text,trace=self.run_action(missing=('groupadd','find','iptables-save','ip6tables-save'),answer=b'7\ny\n')
         self.assertEqual(result,0)
         self.assertIn('apt install -y --no-install-recommends passwd findutils iptables frontend=noninteractive',trace)
         self.assertIn('action uninstall ',trace)

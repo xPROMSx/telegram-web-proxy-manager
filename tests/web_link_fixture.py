@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'lib/safety.py'
-MENU = b'1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Uninstall Telemt\n7. Exit\n'
+MENU = b'1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telemt\n8. Exit\n'
 COUNT = 0
 
 
@@ -152,7 +152,7 @@ main
         for name, extra, colored in [('color', {}, True), ('NO_COLOR', {'NO_COLOR':'1'}, False),
                                      ('TERM=dumb', {'TERM':'dumb'}, False)]:
             result, output = terminal(command, b'5\n', dict(env, **extra))
-            require(result == 0 and MENU in output, 'exact seven-entry menu')
+            require(result == 0 and MENU in output, 'exact eight-entry menu')
             require(expected in output and output.count(expected) == 1, 'exact current TOML/domain link display')
             require((b'\x1b[' in output) == colored, 'terminal color policy')
             require(b'WARNING: This link contains a bearer secret.' in output, 'bearer warning')
