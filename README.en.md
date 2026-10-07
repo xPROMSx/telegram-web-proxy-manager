@@ -1,9 +1,11 @@
-# ✈️ Telegram Web Proxy Manager
+# Telegram Web Proxy Manager
 
-**Your own Telegram WEB Proxy on an Ubuntu VPS with one command.**
-Get HTTPS, a ready `tg://webproxy?...` link for Telegram and an automatically selected
-Fake Site on your domain. The manager checks updates and restores the working version
-and its data if validation fails. Use SOCKS5 when your VPS cannot reach Telegram directly.
+**Your own Telegram proxy on an Ubuntu VPS, without manual proxy configuration.**
+
+The manager installs and configures your proxy, sets up HTTPS and adds a cover
+site to your domain. It checks updates before installation and restores the
+working version and its data if an update fails.
+Use SOCKS5 when your VPS cannot reach Telegram directly.
 
 [![checks](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
@@ -11,133 +13,64 @@ and its data if validation fails. Use SOCKS5 when your VPS cannot reach Telegram
 
 [Русский](README.md) · [Releases](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
 
-## ✨ What it does
+## ✨ Features
 
-- ✈️ Installs and configures your own Telegram WEB Proxy.
-- 🔐 Sets up HTTPS with Let's Encrypt, including reuse of certificates saved by the manager.
-- 🥸 Automatically serves a Fake Site on the public domain instead of a technical proxy response.
-- 🎨 Lets you switch Fake Sites from the menu or restore the neutral Service Status page.
-- 🔄 Finds new stable proxy engine releases and checks compatibility before installing them.
-- 🛟 Restores the working version and its data if an update fails validation.
-- 🔧 Checks the proxy, Nginx, HTTPS and connectivity with one command.
-- 🌐 Connects directly or through SOCKS5 when the VPS cannot reach Telegram directly.
+- One-command proxy setup.
+- HTTPS with Let's Encrypt.
+- A cover site on your domain.
+- Safe updates that restore the working version if checks fail.
+- Direct or SOCKS5 connectivity to Telegram.
+- Proxy health and connectivity checks.
 
-## ⚡ Quick start
+## Quick start
 
-Start with an Ubuntu VPS running a supported Nginx configuration.
-**3x-ui Auto Nginx**, described below, can prepare it for you. Run as root:
+You need an Ubuntu VPS, a domain with a DNS A record pointing to the server,
+root access and Nginx already running a compatible configuration.
+If your server is not ready yet, 3x-ui Auto Nginx can help — see below.
+
+Run as root:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/main/install.sh)
 ```
 
-Before the manual GitHub repository rename, use the same command with
-`https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh`.
-Bootstrap validates the official repository and works before and after the rename.
+The installer opens a menu. Choose **Install** and follow the prompts.
+Once setup is complete, you receive a ready `tg://webproxy?...` link
+for adding the proxy to Telegram. Your domain also serves a cover site.
 
-This installs the published manager release and opens its menu.
-Use `telegram-web-proxy-manager` to open it again;
-the previous `telemt-web-manager` command remains available.
-Choose **1. Install**. The manager asks for your domain, public IPv4 and whether to use SOCKS5.
-If the domain does not have a certificate yet, the manager also asks for an email address and confirmation of the Let's Encrypt terms.
+**The connection link contains the key to your proxy. Do not publish it.**
 
-After installation, the manager gives you a ready `tg://webproxy?...` link that
-can be added directly to Telegram. Your domain also serves an automatically
-selected Fake Site, which you can change from the menu.
+## Using it with 3x-ui Auto Nginx
 
-## 🖥️ Need a ready-to-use 3x-ui and Xray server?
+If you also want 3x-ui and Xray on your VPS, use our other project,
+[3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx).
+It prepares the server and sets up Nginx and HTTPS.
 
-Our other project, [**3x-ui Auto Nginx**](https://github.com/xPROMSx/3x-ui-auto-nginx),
-sets up **3x-ui, Xray, Nginx and HTTPS**. Telegram Web Proxy Manager then adds
-a Telegram WEB Proxy to the same server through a separate installation.
+Install **3x-ui Auto Nginx** first, then **Telegram Web Proxy Manager**.
+The projects can run together on the same VPS and are managed independently.
 
-**Recommended order:**
+## Under the hood
 
-1. 3x-ui Auto Nginx.
-2. Telegram Web Proxy Manager.
-
-The projects work independently: neither installer runs the other.
-A full 3x-ui reinstall requires Telegram proxy integration again; see the documentation below.
-
-## Manager 1.1.0 menu
-
-```text
-1. Install
-2. Update
-3. Check
-4. Repair
-5. Show current WEB link
-6. Change cover site
-7. Uninstall Telegram proxy
-8. Exit
-```
-
-**The connection link contains a secret key for accessing your proxy.** Do not
-publish it or share it with anyone who should not have access. Item 5 displays the validated saved link
-without generating a new one or changing settings. Storage:
-`/var/lib/telemt-web-manager/web-link.txt` (root, mode `0600`). Menu-based Install
-shows it after successful completion; unattended commands and redirected output do not print it.
-
-**Change cover site** chooses a different random Fake Site or restores Service Status.
-Pages are local, without external CDNs or resources, and survive Telemt updates.
-Manually edited HTML is not overwritten.
-
-**Update** checks the new stable release and shows installation progress.
-If checks fail, it restores the working version.
-`NO_COLOR` disables colors; `TERM=dumb` keeps the output plain.
-
-**Uninstall Telegram proxy** requires typing `UNINSTALL` and only removes the proxy installed
-by this manager. The manager and backups stay. By default, the certificate is
-kept for the same domain; deletion requires separate confirmation.
-
-## Unattended commands
-
-```bash
-telegram-web-proxy-manager --install --domain proxy.example.com --public-ip 203.0.113.10
-# If needed: --socks 127.0.0.1:1080
-# For a new certificate: --email operator@example.com --agree-tos
-telegram-web-proxy-manager --update
-telegram-web-proxy-manager --check
-telegram-web-proxy-manager --repair
-telegram-web-proxy-manager --uninstall --confirm-uninstall
-# Explicitly delete the managed certificate too:
-telegram-web-proxy-manager --uninstall --confirm-uninstall --delete-certificate
-```
-
-Unattended commands never install packages. Menu actions install missing Ubuntu
-tools only after you answer `Y/y`. Update the **manager itself** by running
-the quick-start command again; Telemt stays installed.
-There is no automatic downgrade.
-
-## Proxy engine
-
-Telegram Web Proxy Manager uses [Telemt](https://github.com/telemt/telemt) as its proxy engine.
-No separate Telemt installation or manual Telemt configuration is required.
-Internal paths containing `telemt-web-manager` stay unchanged for compatibility
-with existing installations.
+The proxy runs on [Telemt](https://github.com/telemt/telemt).
+The manager installs, configures and updates it for you;
+no separate Telemt setup or knowledge is required.
 
 ## Requirements
 
-- Ubuntu **24.04 / 26.04**, root access, Bash 5+ and a running systemd environment.
-- An existing supported Nginx configuration with `stream`, `ssl_preread` and PROXY protocol.
-- One correct DNS A record pointing to the server's public IPv4, with no CNAME or AAAA.
-- Free local Telemt ports: `127.0.0.1:18080` and `127.0.0.1:7444`.
-- x86_64 has been validated on a real server. ARM64/aarch64 has not been live-tested.
+- Ubuntu **24.04 or 26.04**.
+- Root access.
+- A domain with a DNS A record pointing to the VPS's public IPv4 address.
+- An existing Nginx installation with a compatible configuration.
 
-A fresh installation uses Telemt **3.5.12**. For updates, the manager selects the newest
-stable official release and checks compatibility while preserving your configuration.
-The manager does not install Nginx/Xray/3x-ui, configure the firewall automatically
-or manage manually installed Telemt. See the documentation for detailed requirements.
+See the [operations guide](docs/OPERATIONS.md) for the full requirements
+and supported configurations.
 
-## Tested on a real server
-
-Version 1.0.0 was tested on an Ubuntu 26.04 x86_64 VPS after 3x-ui Auto Nginx setup:
-fresh installation, HTTPS, SOCKS5, Telegram, Fake Sites, page switching and the
-Telemt **3.5.12 → 3.5.14** update all passed. Final check: **OK**.
+The project is tested automatically and on a real Ubuntu VPS.
+See the [test coverage documentation](docs/CI-COVERAGE.md) for details and limitations.
 
 ## Documentation
 
-[Operations, requirements and recovery](docs/OPERATIONS.md) ·
-[Safe updates and restoring the working version](docs/OPERATIONS.md#universal-update-020) ·
-[Test coverage and limitations](docs/CI-COVERAGE.md) ·
-[Telemt sources and release verification](docs/UPSTREAM.md) · [MIT License](LICENSE)
+- [Operations and recovery](docs/OPERATIONS.md)
+- [Test coverage and limitations](docs/CI-COVERAGE.md)
+- [Telemt sources and release verification](docs/UPSTREAM.md)
+- [MIT License](LICENSE)

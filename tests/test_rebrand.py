@@ -255,10 +255,10 @@ class PublicBrand(unittest.TestCase):
         self.assertEqual(helper.count("'User-Agent': 'telegram-web-proxy-manager/1.1.0'"), 2)
         for filename in ('README.md', 'README.en.md'):
             text = (ROOT / filename).read_text()
-            self.assertTrue(text.startswith('# ✈️ Telegram Web Proxy Manager\n'))
-            self.assertIn('telegram-web-proxy-manager --check', text)
+            self.assertTrue(text.startswith('# Telegram Web Proxy Manager\n'))
+            self.assertNotIn('xPROMSx/telemt-web-manager', text)
             self.assertIn('xPROMSx/telegram-web-proxy-manager/main/install.sh', text)
-            self.assertIn('7. Uninstall Telegram proxy', text)
+            self.assertIn('](docs/UPSTREAM.md)', text)
         # Recognition of old program headers is the explicit legacy ABI allowlist.
         self.assertEqual(helper.count('# Telemt WEB Manager.'), 1)
         self.assertEqual((ROOT / 'install.sh').read_text().count('# Telemt WEB Manager.'), 2)

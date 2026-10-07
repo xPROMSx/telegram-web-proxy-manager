@@ -10,8 +10,8 @@ from pathlib import Path
 import sys
 version = sys.argv[1]
 for name, wording in (
-    ('README.md', 'Для первой установки используется Telemt **' + version + '**'),
-    ('README.en.md', 'A fresh installation uses Telemt **' + version + '**'),
+    ('README.md', '[Источники Telemt и проверка выпусков](docs/UPSTREAM.md)'),
+    ('README.en.md', '[Telemt sources and release verification](docs/UPSTREAM.md)'),
 ):
     assert wording in Path(name).read_text(), name
 for name in ('README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-COVERAGE.md'):
