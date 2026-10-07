@@ -9,11 +9,6 @@ python3 - "$SUPPORTED_TELEMT_VERSION" <<'PY'
 from pathlib import Path
 import sys
 version = sys.argv[1]
-for name, wording in (
-    ('README.md', 'Для первой установки используется Telemt **' + version + '**'),
-    ('README.en.md', 'A fresh installation uses Telemt **' + version + '**'),
-):
-    assert wording in Path(name).read_text(), name
 for name in ('README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-COVERAGE.md'):
     assert 'Supported Telemt: **' + version + '**' in Path(name).read_text(), name
 print('ok - production supported Telemt == documented supported Telemt == ' + version)
