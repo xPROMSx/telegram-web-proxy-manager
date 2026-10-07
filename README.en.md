@@ -3,8 +3,8 @@
 **Your own Telegram proxy on an Ubuntu VPS, without manual proxy configuration.**
 
 The manager installs and configures your proxy, sets up HTTPS and adds a cover
-site to your domain. It checks updates before installation and restores the
-working version and its data if an update fails.
+site to your domain. If an update fails its checks, the previous working version
+is restored automatically.
 Use SOCKS5 when your VPS cannot reach Telegram directly.
 
 [![checks](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml)
@@ -37,6 +37,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-m
 The installer opens a menu. Choose **Install** and follow the prompts.
 Once setup is complete, you receive a ready `tg://webproxy?...` link
 for adding the proxy to Telegram. Your domain also serves a cover site.
+You can open the manager again at any time with `telegram-web-proxy-manager`.
 
 **The connection link contains the key to your proxy. Do not publish it.**
 
