@@ -1,6 +1,6 @@
 # CI coverage truth table
 
-Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.0.0 Update selects
+Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.0.1 Update selects
 the newest verified official stable release by compatibility, without a major/minor
 restriction. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means

@@ -52,7 +52,7 @@ a Telegram WEB Proxy to the same server through a separate installation.
 The projects work independently: neither installer runs the other.
 A full 3x-ui reinstall requires Telemt integration again; see the documentation below.
 
-## Manager 1.0.0 menu
+## Manager 1.0.1 menu
 
 ```text
 1. Install

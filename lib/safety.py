@@ -2217,7 +2217,7 @@ class UpdateProgress:
 # helper with the older parser APIs; bootstrap continues to install one pair.
 UPDATE_SCHEMA = 1
 UPSTREAM_REPOSITORY = dict(id=1125007401, full_name='telemt/telemt')
-UPDATE_MANAGER_VERSION = '1.0.0'
+UPDATE_MANAGER_VERSION = '1.0.1'
 BASELINE_VERSION = '3.5.12'
 BASELINE_COMMIT = 'c4555e25f39dd5be200ccf6353f7d82bfcf89131'
 BASELINE_HASHES = {
@@ -2374,7 +2374,7 @@ class UpdateHTTP:
     def request(self, url, maximum):
         self.official_url(url)
         request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'telemt-web-manager/1.0.0'})
+            'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'telemt-web-manager/1.0.1'})
         with self.open(request) as response:
             final = urllib.parse.urlsplit(response.url)
             require(final.scheme == 'https' and final.hostname in
@@ -2397,7 +2397,7 @@ class UpdateHTTP:
         # streams through the same TLS client directly to an exclusive file.
         require(0 < size <= 128 * UPDATE_CHUNK)
         require(url.startswith('https://github.com/telemt/telemt/releases/download/'))
-        request = urllib.request.Request(url, headers={'User-Agent': 'telemt-web-manager/1.0.0'})
+        request = urllib.request.Request(url, headers={'User-Agent': 'telemt-web-manager/1.0.1'})
         deadline = time.monotonic() + 180
         with self.open(request) as response:
             final = urllib.parse.urlsplit(response.url)
