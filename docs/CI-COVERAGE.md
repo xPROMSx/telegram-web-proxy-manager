@@ -1,5 +1,36 @@
 # CI coverage truth table
 
+## CI jobs and scope (Phase 1)
+
+The workflow always starts `Plan / Scope`, then `CI / Static`. Only changes to
+`README.md`, `README.en.md`, `README.ru.md` and `docs/**` select `DOCS_ONLY`.
+An unknown/empty diff, invalid revision or any other path selects `FULL`.
+There is no workflow-level path exclusion.
+
+| Job | DOCS_ONLY | FULL |
+| --- | --- | --- |
+| Plan / Scope; CI / Static | Required | Required |
+| CI / Regression | Policy skip | Root discovery, transactions, bootstrap barrier, offline shell contracts |
+| Integration / Telemt | Policy skip | Official provenance, baseline/download/staging/runtime and evidence parity |
+| Integration / Lifecycle | Policy skip | Fresh/rollback/account, bootstrap/signals, WEB-link PTY and Uninstall |
+| Integration / Nginx | Policy skip | ACME/renewal contracts, real Nginx and both pinned 3x-ui profiles |
+| System / Ubuntu 26.04 | Policy skip | Existing primary real QEMU suite |
+| System / Ubuntu 24.04 | Policy skip | Existing compatibility real QEMU suite |
+| Architecture / ARM64 | Policy skip | Existing qemu-user checks in a minimal Ubuntu 24.04 image |
+| CI / Required | Plan/Static success; all heavy jobs skipped | Every job successful; missing/skipped/failed/cancelled jobs refuse |
+
+All FULL suites start independently after Plan. Both QEMU suites run in parallel;
+Uninstall does not block them. Jobs needing official artifacts independently run
+the existing provenance verifier. ARM no longer depends on a completed QEMU job:
+its image keeps the same userspace/loader/qemu-user contract without a boot kernel.
+The GitHub runner remains Ubuntu 24.04; primary Ubuntu 26.04 is a real guest.
+
+Static runs Bash syntax, ShellCheck, Python syntax, SHA256-pinned actionlint,
+offline documentation/pin consistency and CI meta-tests. `tests/suites.json` and
+`tests/ci_manifest.py` check complete inventory, unittest discovery, explicit
+workflow calls and helper reachability. They do not replace runtime assertions.
+No Live VPS, real ACME, nightly or release workflow is introduced in Phase 1.
+
 Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.1.0 Update selects
 the newest verified official stable release by compatibility, without a major/minor
 restriction. This inventory describes `.github/workflows/checks.yml`.
@@ -102,9 +133,11 @@ run actual Nginx/TLS/HTTP with a Python origin, not a running Telemt; ACME conte
 serving there is real, issuance is not performed. SOCKS configuration syntax is
 checked by real Telemt healthcheck; actual SOCKS egress is not exercised by CI.
 
+## Owner live acceptance history
+
 CI does not prove complete end-to-end VPS behavior. Successful 0.1.2 live acceptance
 on Ubuntu 26.04.1 LTS x86_64 is recorded in the
-[primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation).
+[technical live acceptance history](CI-COVERAGE.md#owner-live-acceptance-history).
 That acceptance used Telemt 3.5.11. Separate owner-run live acceptance of manager
 0.1.3 on Ubuntu 26.04.1 LTS x86_64 completed normal managed Update 3.5.11 → 3.5.12:
 byte-identical TOML/WEB link and unchanged unit, manifest, managed Nginx, certificate
@@ -179,7 +212,7 @@ are filesystem/orchestration regressions, not a claim of VPS live acceptance.
 `test_web_link.py` checks canonical URL bytes, supported manifest schema and exact
 TOML domain/secret identity without printing random fixture credentials.
 `sudo python3 tests/web_link_fixture.py` uses real root ownership, safe private
-paths, real PTYs and shared/exclusive locks. It covers the exact seven-entry menu,
+paths, real PTYs and shared/exclusive locks. It covers the exact eight-entry menu,
 read-only file hashes/modes, default ANSI colors, NO_COLOR/TERM=dumb and both TTY
 gates. Missing files, symlinks/hardlinks/FIFO, wrong owner/mode, unsafe ancestors,
 malformed URL/manifest and domain/secret mismatch refuse without secret output.
@@ -292,7 +325,7 @@ network, a read-only image and dropped candidate capabilities. ARM metadata,
 downloads, extraction, receipts and synthetic update/rollback policy are covered;
 native ARM systemd/runtime acceptance is not claimed.
 
-Every existing safety step remains enabled. Namespace, cgroup, boot, real-binary
+Every existing safety step remains enabled in FULL. Namespace, cgroup, boot, real-binary
 or helper absence fails the job; there is no skip/fallback/continue-on-error.
 CI proves these bounded contracts, not real Telegram transport, Internet SOCKS
 egress, production Let's Encrypt renewal or owner-host coexistence. The owner completed live acceptance of the existing updater architecture.

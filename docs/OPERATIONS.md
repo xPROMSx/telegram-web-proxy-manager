@@ -455,7 +455,7 @@ Fixtures use TEST-NET/example.com, no production credentials. Secrets are genera
 only in temporary environments and never printed. Ubuntu 24.04 CI uses real Nginx
 stream/PROXY/TLS and canonical X-Forwarded-For. Fixtures do not replace live acceptance.
 Successful 0.1.2 acceptance on Ubuntu 26.04.1 LTS x86_64 is recorded in the
-[primary README](../README.md#проверено-на-vps) and [English README](../README.en.md#vps-validation);
+[technical live acceptance history](CI-COVERAGE.md#owner-live-acceptance-history);
 it does not establish arm64 or all Telegram client/topology combinations.
 That history covers Telemt 3.5.11. Separate owner-run live acceptance of the exact
 PR #6 manager 0.1.3 files completed on Ubuntu 26.04.1 LTS x86_64: normal
