@@ -25,6 +25,11 @@ python3() {
         command python3 "$@" < <(cat | sed '/^def interrupted/i\real_swap = swap\nswap_count = 0\ndef swap(a, b):\n    global swap_count\n    swap_count += 1\n    if swap_count == 2: raise OSError("fixture reverse exchange failure")\n    real_swap(a, b)\ndef fail_replace(*args): raise OSError("fixture launcher commit failure")\nos.replace = fail_replace\n')
     else command python3 "$@"; fi
 }
+bootstrap_repository_metadata() {
+    if [[ $1 == "$PRIMARY_MANAGER_REPO" ]]; then printf 404; return; fi
+    printf '{"id":1398514078,"full_name":"xPROMSx/telemt-web-manager","name":"telemt-web-manager","html_url":"https://github.com/xPROMSx/telemt-web-manager","owner":{"id":102687702,"login":"xPROMSx"},"private":false,"fork":false,"archived":false,"disabled":false}' >"$2"
+    printf 200
+}
 bootstrap_download() {
     local url=$1 target=$2 downloaded_version=${MANAGER_TAG:-$fixture_version}
     printf '%s\n' "$url" >>"$SANDBOX/requests"
@@ -104,6 +109,7 @@ code = ('source "$1"; INSTALL_DIR="$2/opt/signal-fixture"; LAUNCHER="$2/bin/sign
         'BOOTSTRAP_LOCK="$2/lock/signal-fixture"; '
         'bootstrap_download() { printf "%s" "$BOOTSTRAP_TMP" >"$2"; '
         'command python3 -c "$SIGNAL_CHILD" "$SIGNAL_MARKER" "$BOOTSTRAP_TMP"; }; '
+        'bootstrap_repository_metadata() { bootstrap_download "$1" "$2"; }; '
         'SIGNAL_MARKER="$2/download-started"; SIGNAL_CHILD="$3"; '
         'bootstrap_main --no-start')
 install = root / 'opt/signal-fixture'
@@ -342,7 +348,7 @@ printf 'ok - unrelated paths, unsafe modes, symlink/dangling paths and active ma
 [[ -z $(find "$SANDBOX/opt" "$SANDBOX/bin" -name '.telemt-web-manager.*' -print) ]]
 printf 'ok - bootstrap preserves Telemt/Nginx/Certbot/Xray fixtures and cleans transaction stages\n'
 # Exercise a real pseudo-terminal; never start the actual manager/menu in CI.
-python3 - "$ROOT/install.sh" "$LAUNCHER" <<'PY'
+python3 - "$ROOT/install.sh" "${LAUNCHER%/*}/telegram-web-proxy-manager" <<'PY'
 import os, pty, select, subprocess, sys
 script, launcher = sys.argv[1:]
 code = 'source "$1"; LAUNCHER=$2; NO_START=$3; launch_manager_menu'

@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'lib/safety.py'
-MENU = b'1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telemt\n8. Exit\n'
+MENU = b'1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telegram proxy\n8. Exit\n'
 COUNT = 0
 
 

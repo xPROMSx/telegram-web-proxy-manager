@@ -29,10 +29,10 @@ class BootstrapBarrier(unittest.TestCase):
         f.before=self.files(f)
         return f
     def files(self,f):
-        paths=[f.launcher,*f.destination.rglob('*')]
+        paths=[f.launcher,f.launcher.with_name('telegram-web-proxy-manager'),*f.destination.rglob('*')]
         return {str(p):(p.stat().st_uid,p.stat().st_gid,p.stat().st_mode,
                        p.read_bytes() if p.is_file() else None) for p in paths if p.exists()}
-    def invoke(self,f,success=False,tag='v1.0.1',explicit=''):
+    def invoke(self,f,success=False,tag='v1.1.0',explicit=''):
         code=('source "$1"; BOOTSTRAP_TMP=$2; INSTALL_DIR=$3; LAUNCHER=$4; BOOTSTRAP_LOCK=$5; '
               'MANAGER_TAG=$6; VERSION=$7; MANAGER_STATE=$8; MANAGER_SYSTEMD_ROOT=$9; commit_manager_pair')
         result=subprocess.run(['bash','-c',code,'fixture',str(ROOT/'install.sh'),str(f.source),
@@ -66,7 +66,7 @@ class BootstrapBarrier(unittest.TestCase):
                 self.invoke(f)
     def test_explicit_legacy_downgrade_cannot_remove_recovery_interpreter(self):
         f=self.fixture(); path=f.source/'telemt-web-manager.sh'
-        text=path.read_text().replace('SCRIPT_VERSION=1.0.1','SCRIPT_VERSION=0.1.4')
+        text=path.read_text().replace('SCRIPT_VERSION=1.1.0','SCRIPT_VERSION=0.1.4')
         path.write_text('\n'.join(line for line in text.splitlines() if 'UPDATE_' not in line)+'\n')
         self.invoke(f,tag='v0.1.4',explicit='v0.1.4')
     def test_semantically_corrupt_receipt_journal_binary_and_marker_refuse(self):

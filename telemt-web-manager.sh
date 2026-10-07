@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Telemt WEB Manager. MIT. Requires Bash 5 and Python 3.11+.
+# Telegram Web Proxy Manager. MIT. Requires Bash 5 and Python 3.11+.
 set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=1.0.1
+readonly SCRIPT_VERSION=1.1.0
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1
@@ -19,6 +19,7 @@ HELPER="$BASE_DIR/lib/safety.py"
 BIN=/usr/local/bin/telemt
 CONFIG=/etc/telemt/telemt.toml
 UNIT=/etc/systemd/system/telemt.service
+# Legacy internal paths/markers remain compatibility ABI; no state migration.
 STATE=/var/lib/telemt-web-manager
 DATA=/var/lib/telemt
 ACME_ROOT=/var/lib/telemt-web-manager-acme
@@ -284,7 +285,7 @@ check_dependencies() {
         if [[ $answer != y && $answer != Y ]]; then
             say 'Dependency installation declined.' >&2
             manual_dependency_command "${packages[@]}"
-            die 'Run Telemt WEB Manager again after installing the dependencies'
+            die 'Run Telegram Web Proxy Manager again after installing the dependencies'
         fi
         command -v apt-get >/dev/null || {
             manual_dependency_command "${packages[@]}"
@@ -1196,8 +1197,8 @@ uninstall_manager() {
 
 usage() {
     cat <<EOF
-Telemt WEB Manager $SCRIPT_VERSION
-Usage: $0 --install|--update|--check|--repair|--uninstall|--help
+Telegram Web Proxy Manager $SCRIPT_VERSION
+Usage: telegram-web-proxy-manager --install|--update|--check|--repair|--uninstall|--help
 Install options: --domain proxy.example.com --public-ip 203.0.113.10
                  [--socks 127.0.0.1:1080] [--email ADDRESS --agree-tos]
 Uninstall: --uninstall --confirm-uninstall [--delete-certificate]
@@ -1227,7 +1228,7 @@ main() {
     done
     if [[ -z $action ]]; then
         [[ -t 0 ]] || die 'No interactive terminal; specify an action'
-        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telemt\n8. Exit\n'
+        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telegram proxy\n8. Exit\n'
         read -r -p '> ' choice
         MENU_ACTION=1
         case $choice in 1) action=--install; INTERACTIVE_INSTALL=1;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=show-web-link;; 6) action=change-cover;; 7) action=--uninstall;; 8) return;; *) die 'Invalid selection';; esac

@@ -4,7 +4,7 @@ Supported Telemt: **3.5.12** (fresh Install baseline).
 
 The current release and source were verified through official GitHub metadata and
 actual downloads on 3 October 2026 (UTC). Manager SCRIPT_VERSION is
-1.0.1. Fresh Install stays deliberately fixed. Universal Update enumerates the
+1.1.0. Fresh Install stays deliberately fixed. Universal Update enumerates the
 complete official release history, choosing the highest stable SemVer across all
 series and verifying its compatibility; it does not select an unchecked latest URL.
 
