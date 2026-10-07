@@ -113,6 +113,16 @@ class ManifestTests(unittest.TestCase):
         path.write_text(path.read_text().replace('bash tests/fresh.sh', 'echo omitted fresh'))
         with self.assertRaises(AssertionError): ci_manifest.check(self.root)
 
+    def test_commented_or_echoed_suite_is_not_execution(self):
+        path = self.root/'.github/workflows/checks.yml'; original = yaml.safe_load(path.read_text())
+        for command in ('# bash tests/fresh.sh', 'echo "bash tests/fresh.sh"'):
+            value = copy.deepcopy(original)
+            step = next(step for step in value['jobs']['lifecycle']['steps']
+                        if step.get('run') == 'bash tests/fresh.sh')
+            step['run'] = command
+            path.write_text(yaml.safe_dump(value))
+            with self.subTest(command=command), self.assertRaises(AssertionError): ci_manifest.check(self.root)
+
     def test_missing_helper_edge_refused(self):
         path = self.root/'tests/three-x-ui.sh'
         path.write_text(path.read_text().replace('bash tests/nginx-rollback.sh', 'echo omitted rollback'))

@@ -42,10 +42,14 @@ def check(root=ROOT):
     def commands(job):
         return '\n'.join(' '.join(step['run'].split()) for step in jobs[job]['steps'] if 'run' in step)
 
+    def command_lines(job):
+        return {' '.join(line.split()) for step in jobs[job]['steps'] if 'run' in step
+                for line in step['run'].splitlines() if not line.lstrip().startswith('#')}
+
     entries = manifest['entrypoints']
     reachable = set(jobs)
     for entry in entries:
-        assert ' '.join(entry['command'].split()) in commands(entry['job']), 'entrypoint not executed: ' + entry['path']
+        assert ' '.join(entry['command'].split()) in command_lines(entry['job']), 'entrypoint not executed: ' + entry['path']
         reachable.add(entry['path'])
     assert 'python3 tests/ci_plan.py gate' in commands('required')
     discovery = manifest['discovery']
