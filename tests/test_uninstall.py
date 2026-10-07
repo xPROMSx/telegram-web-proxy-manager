@@ -256,7 +256,7 @@ class UninstallTests(unittest.TestCase):
                 try: output+=os.read(master,4096)
                 except OSError: break
             self.assertEqual(p.returncode,0,output)
-            self.assertIn(b'7. Uninstall Telemt',output)
+            self.assertIn(b'7. Uninstall Telegram proxy',output)
             self.assertIn(b'8. Exit',output)
             self.assertIn(b'Type UNINSTALL',output)
             self.assertIn(b'Uninstall cancelled.',output)

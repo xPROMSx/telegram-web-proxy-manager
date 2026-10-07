@@ -567,8 +567,16 @@ systemd or perform ACME issuance. See the coverage inventory for every CI step.
 
 ## Manager bootstrap
 
-`install.sh` installs only the manager program pair and a fixed-path launcher.
-It resolves releases from `xPROMSx/telemt-web-manager`, ignores drafts, prefers
+`install.sh` installs only the Telegram Web Proxy Manager program pair and two
+validated launchers: `telegram-web-proxy-manager` (canonical) and
+`telemt-web-manager` (compatibility). Both execute the same fixed pair.
+It first queries `xPROMSx/telegram-web-proxy-manager`. Only an actual HTTP 404
+allows fallback to `xPROMSx/telemt-web-manager`. Canonical repository metadata must
+identify the fixed repository ID 1398514078 and owner ID 102687702, one of those two
+exact names and matching GitHub URL, and a public, non-fork, active repository.
+Network errors, rate limits and malformed/foreign metadata refuse; releases must
+match the selected canonical identity. After rename, discovery uses the new name
+directly. It ignores drafts, prefers
 the highest published stable SemVer, and uses the highest prerelease only while
 no stable exists. SemVer prerelease tags are never classified as stable even if
 GitHub's prerelease flag is false; a plain core tag flagged prerelease is supported.
@@ -600,8 +608,9 @@ Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
 Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then
 take the same exclusive lock used by the manager. Root-owned safe ancestors,
 non-symlink regular files, a recognized two-file existing installation, no extra
-files, and an absent or exact canonical launcher are required. An unrelated
-`/opt/telemt-web-manager` or `/usr/local/bin/telemt-web-manager` causes refusal.
+files, and absent or exact fixed wrappers for both launcher paths are required. An unrelated
+`/opt/telemt-web-manager`, `/usr/local/bin/telemt-web-manager` or
+`/usr/local/bin/telegram-web-proxy-manager` causes refusal.
 Manual two-file installations from previous manager versions can be updated;
 modified layouts require manual review. Under the exclusive lock, the canonical
 installed manager is read as UTF-8 text; only one exact unquoted
@@ -627,7 +636,12 @@ Interrupted metadata/download operations also clean their private temporary file
 unsafe lock, active manager or write failure causes refusal. Power loss/SIGKILL
 and concurrent root edits remain manual recovery boundaries. Both installed
 files and directories are root:root, script/launcher 0755 and helper 0644.
-The launcher executes the fixed manager path and forwards arguments.
+Both launchers execute the fixed manager path and forward arguments. Existing
+wrappers are preserved; missing wrappers are staged before the pair exchange.
+If publication of either wrapper fails, newly published wrappers are removed and
+the previous pair is restored. Internal install/state/lock paths, Nginx files,
+ACME markers, deploy hook and recovery identities deliberately retain their legacy
+names; no persistent-state migration is performed.
 
 Rerun the quick command to update manager files without changing the managed
 Telemt deployment. `--update` inside the manager instead updates Telemt. Close existing idle menus before updating; the lock excludes manager actions,
@@ -643,8 +657,8 @@ Review a trusted checkout (use the reviewed PR commit for an unpublished PR) and
 files. This path does not install the convenient launcher:
 
 ```bash
-git clone https://github.com/xPROMSx/telemt-web-manager.git
-cd telemt-web-manager
+git clone https://github.com/xPROMSx/telegram-web-proxy-manager.git
+cd telegram-web-proxy-manager
 bash -n telemt-web-manager.sh
 shellcheck telemt-web-manager.sh
 install -d -m 0755 /opt/telemt-web-manager/lib
@@ -729,7 +743,7 @@ complete; the exact candidate and results are recorded below.
 3x-ui Backup v3 snapshots shared `/etc/nginx` and `/etc/letsencrypt`; on a co-located
 server that can include Telemt's Nginx files, certificate lineage, renewal config
 and deploy hook. It is not a complete Telemt backup and does not carry its full
-deployment/DATA. After restoring such a server, run `telemt-web-manager --check`.
+deployment/DATA. After restoring such a server, run `telegram-web-proxy-manager --check`.
 If Telemt's own state was not restored and checks fail, recover its deployment
 separately from its own recovery source. Foreign-restored certificates are not
 automatically adopted. Do not run Telemt certificate issuance concurrently with
@@ -745,7 +759,7 @@ The common supported platforms remain Ubuntu 24.04 / 26.04, not Debian 13.
 4. Repair
 5. Show current WEB link
 6. Change cover site
-7. Uninstall Telemt
+7. Uninstall Telegram proxy
 8. Exit
 ```
 

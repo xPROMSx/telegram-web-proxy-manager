@@ -1,6 +1,6 @@
 # CI coverage truth table
 
-Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.0.1 Update selects
+Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.1.0 Update selects
 the newest verified official stable release by compatibility, without a major/minor
 restriction. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means
@@ -318,3 +318,13 @@ Uninstall item 7. Existing baseline namespace runtime smoke additionally proves
 atomic replacement remains cached before restart and new Service Status is served
 after graceful restart, with the PID-owned HTTP listener. No new QEMU/ARM matrix
 or CI architecture was added; existing mandatory steps remain enabled.
+
+## Public rebrand and bootstrap transition (1.1.0)
+
+`test_rebrand.py` uses offline repository metadata and real root-owned temporary
+launcher fixtures. It covers primary-before-legacy resolution, canonical repository
+and release identity refusal, the v1.0.1 launcher upgrade, both public commands,
+unsafe/conflicting launcher paths, failed second-wrapper publication and signal
+interruption. Current-brand/version assertions run alongside the existing SemVer,
+no-candidate-execution and recovery-barrier bootstrap tests. Persistent legacy
+paths and markers remain compatibility ABI; the GitHub repository is renamed manually.

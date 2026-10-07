@@ -1,4 +1,4 @@
-# Telemt WEB Manager
+# Telegram Web Proxy Manager
 
 Русская документация перенесена в [README.md](README.md).
 English: [README.en.md](README.en.md).

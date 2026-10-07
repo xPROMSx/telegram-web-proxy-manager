@@ -35,7 +35,7 @@ prefix = '\n'.join(Path('telemt-web-manager.sh').read_text().split('\n')[:6]) + 
 script.write_text(prefix+'readonly SCRIPT_VERSION=0.1.1\ntouch '+str(marker)+'\n')
 assert manager_version(script) == '0.1.1' and not marker.exists()
 # Real manager declarations and variable references remain supported.
-assert manager_version('telemt-web-manager.sh') == '1.0.1'
+assert manager_version('telemt-web-manager.sh') == '1.1.0'
 for bad in ('', '# readonly SCRIPT_VERSION=0.1.1', 'readonly SCRIPT_VERSION=01.1.1',
             'readonly SCRIPT_VERSION="0.1.1"', ' readonly SCRIPT_VERSION=0.1.1',
             'readonly SCRIPT_VERSION=0.1.1 # comment', 'SCRIPT_VERSION=0.1.1',
@@ -58,7 +58,7 @@ PY
 } | python3 - "$SANDBOX"
 
 # Validate the actual downloaded-pair path without root or executing either file.
-BOOTSTRAP_TMP=$SANDBOX MANAGER_TAG=v1.0.1
+BOOTSTRAP_TMP=$SANDBOX MANAGER_TAG=v1.1.0
 cp telemt-web-manager.sh "$SANDBOX/telemt-web-manager.sh"
 cp lib/safety.py "$SANDBOX/safety.py"
 validate_manager_pair
@@ -106,7 +106,7 @@ value = {
  'flags': [dict(release('v1.2.3'), draft=0)],
  'oversized-page': [release('v0.0.'+str(i)) for i in range(101)],
  'explicit-draft': [release('v1.2.3', draft=True)],
-}.get(mode, [release('v1.0.1')])
+}.get(mode, [release('v1.1.0')])
 if mode.startswith('pagination'):
     page = int(url.rsplit('=', 1)[1])
     if page == 1 or mode == 'pagination-limit':
@@ -119,12 +119,12 @@ if '/tags/' in url:
     value = next((r for r in value if isinstance(r,dict) and r['tag_name'] == tag), None)
 Path = __import__('pathlib').Path
 if mode == 'duplicate-fields':
-    Path(path).write_text('[{"draft":true,"draft":false,"prerelease":false,"tag_name":"v1.0.1","published_at":"2026-01-01T00:00:00Z","html_url":"https://github.com/xPROMSx/telemt-web-manager/releases/tag/v1.0.1"}]')
+    Path(path).write_text('[{"draft":true,"draft":false,"prerelease":false,"tag_name":"v1.1.0","published_at":"2026-01-01T00:00:00Z","html_url":"https://github.com/xPROMSx/telemt-web-manager/releases/tag/v1.1.0"}]')
 else: Path(path).write_text(json.dumps(value))
 PY
             ;;
         *'/git/ref/tags/'*)
-            [[ $fixture_mode != bad-ref ]] || { printf '{"ref":"refs/tags/v1.0.1","object":{"sha":"oops","type":"commit"}}' >"$target"; return; }
+            [[ $fixture_mode != bad-ref ]] || { printf '{"ref":"refs/tags/v1.1.0","object":{"sha":"oops","type":"commit"}}' >"$target"; return; }
             if [[ $fixture_mode == annotated || $fixture_mode == annotated-mismatch ]]; then
                 printf '{"ref":"refs/tags/%s","object":{"type":"tag","sha":"%040d"}}' "${url##*/}" 2 >"$target"
             else printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%040d"}}' "${url##*/}" 1 >"$target"; fi;;
@@ -144,7 +144,7 @@ select_release() {
     fi
     printf 'ok - release selection %s (%s)\n' "$fixture_mode" "${expected:-refused}"
 }
-select_release annotated v1.0.1
+select_release annotated v1.1.0
 select_release timestamp v0.3.0
 select_release stable v1.10.0
 select_release stable-first v1.9.0

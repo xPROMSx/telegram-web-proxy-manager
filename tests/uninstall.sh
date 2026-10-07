@@ -319,7 +319,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     if [[ $scenario == runtime-refusals ]]; then
         CONFIRM_UNINSTALL=1 DELETE_CERTIFICATE=0
         runtime_refusals
-        [[ $("$case_dir/bin/telemt-web-manager" --help) == *"Telemt WEB Manager $SCRIPT_VERSION"* ]]
+        [[ $("$case_dir/bin/telemt-web-manager" --help) == *"Telegram Web Proxy Manager $SCRIPT_VERSION"* ]]
         cmp "$ROOT/telemt-web-manager.sh" "$BASE_DIR/telemt-web-manager.sh"
         cmp "$ROOT/lib/safety.py" "$HELPER"
         rm -rf "$case_dir"
@@ -445,7 +445,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     if [[ -n $blocker ]]; then kill -0 "$blocker"; kill "$blocker"; wait "$blocker" || true; blocker=''; fi
     unset FIXTURE_GROUPDEL_FAIL
     if [[ $scenario == mount ]]; then umount "$DATA"; fi
-    [[ $("$case_dir/bin/telemt-web-manager" --help) == *"Telemt WEB Manager $SCRIPT_VERSION"* ]]
+    [[ $("$case_dir/bin/telemt-web-manager" --help) == *"Telegram Web Proxy Manager $SCRIPT_VERSION"* ]]
     cmp "$ROOT/telemt-web-manager.sh" "$BASE_DIR/telemt-web-manager.sh"
     cmp "$ROOT/lib/safety.py" "$HELPER"
     # This fixture uses inert NSS, so discard its remaining files between cases.

@@ -5,18 +5,61 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C
 INSTALL_DIR=/opt/telemt-web-manager
+# Legacy paths are compatibility ABI; both public commands execute this pair.
 LAUNCHER=/usr/local/bin/telemt-web-manager
+CANONICAL_LAUNCHER=''
 BOOTSTRAP_LOCK=/run/lock/telemt-web-manager.lock
 MANAGER_STATE=/var/lib/telemt-web-manager
 MANAGER_SYSTEMD_ROOT=/etc/systemd/system
 BOOTSTRAP_TMP='' MANAGER_TAG='' MANAGER_COMMIT='' VERSION='' NO_START=0
-readonly MANAGER_REPO=xPROMSx/telemt-web-manager
+readonly PRIMARY_MANAGER_REPO=xPROMSx/telegram-web-proxy-manager
+readonly LEGACY_MANAGER_REPO=xPROMSx/telemt-web-manager
+MANAGER_REPO=$LEGACY_MANAGER_REPO
 
 bootstrap_die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 bootstrap_download() {
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS \
         --connect-timeout 10 --max-time 60 --max-filesize 8388608 --retry 2 "$1" -o "$2" || return 1
     [[ -s $2 ]]
+}
+
+# Return the actual HTTP status, not curl's generic failure code. Only a real
+# GitHub 404 permits legacy fallback; network/rate-limit/metadata errors refuse.
+bootstrap_repository_metadata() {
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsS \
+        --connect-timeout 10 --max-time 60 --max-filesize 1048576 \
+        -w '%{http_code}' "https://api.github.com/repos/$1" -o "$2"
+}
+
+resolve_manager_repository() {
+    local requested status
+    for requested in "$PRIMARY_MANAGER_REPO" "$LEGACY_MANAGER_REPO"; do
+        status=$(bootstrap_repository_metadata "$requested" "$BOOTSTRAP_TMP/repository.json") || bootstrap_die 'Manager repository metadata unavailable'
+        if [[ $status == 404 && $requested == "$PRIMARY_MANAGER_REPO" ]]; then continue; fi
+        [[ $status == 200 ]] || bootstrap_die 'Manager repository metadata unavailable'
+        MANAGER_REPO=$({ bootstrap_version_code; cat <<'PYREPO'
+import sys
+repo = load_metadata(sys.argv[1])
+requested, primary, legacy = sys.argv[2:]
+if not isinstance(repo, dict): sys.exit(1)
+name = repo.get('full_name')
+# The immutable repository/owner IDs survive rename; neither an unrelated repo
+# under a trusted name nor an unexpected redirect can become our release source.
+if (name not in (primary, legacy) or (requested == primary and name != primary)
+        or type(repo.get('id')) is not int or repo['id'] != 1398514078
+        or repo.get('name') != name.split('/')[1]
+        or repo.get('html_url') != 'https://github.com/' + name
+        or not isinstance(repo.get('owner'), dict)
+        or repo['owner'].get('login') != 'xPROMSx'
+        or type(repo['owner'].get('id')) is not int or repo['owner']['id'] != 102687702
+        or any(repo.get(key) is not False for key in ('private','fork','archived','disabled'))):
+    sys.exit(1)
+print(name)
+PYREPO
+        } | python3 - "$BOOTSTRAP_TMP/repository.json" "$requested" "$PRIMARY_MANAGER_REPO" "$LEGACY_MANAGER_REPO") || bootstrap_die 'Untrusted or malformed manager repository metadata'
+        return
+    done
+    bootstrap_die 'Manager repository unavailable'
 }
 
 # Shared by release selection, downloaded-pair validation and the locked guard.
@@ -104,7 +147,8 @@ PY
     MANAGER_TAG=$({ bootstrap_version_code; cat <<'PY'
 import datetime, sys
 releases = []
-for filename in sys.argv[2:]:
+repository = sys.argv[2]
+for filename in sys.argv[3:]:
     value = load_metadata(filename)
     if sys.argv[1]:
         if not isinstance(value, dict): sys.exit(1)
@@ -122,7 +166,7 @@ for release in releases:
     key = version_key(tag[1:])
     if tag in seen: sys.exit(1)
     seen.add(tag)
-    if release.get('html_url') != 'https://github.com/xPROMSx/telemt-web-manager/releases/tag/' + tag: sys.exit(1)
+    if release.get('html_url') != 'https://github.com/' + repository + '/releases/tag/' + tag: sys.exit(1)
     published = release.get('published_at')
     if not isinstance(published, str): sys.exit(1)
     if datetime.datetime.fromisoformat(published.replace('Z', '+00:00')).tzinfo is None: sys.exit(1)
@@ -141,7 +185,7 @@ selected = [r for r in valid if r[0] == latest]
 if len(selected) != 1: sys.exit(1)
 print(selected[0][1])
 PY
-    } | python3 - "$VERSION" "${metadata[@]}"
+    } | python3 - "$VERSION" "$MANAGER_REPO" "${metadata[@]}"
     ) || bootstrap_die 'Ambiguous or invalid published manager release; select --version explicitly after review'
     bootstrap_download "https://api.github.com/repos/$MANAGER_REPO/git/ref/tags/$MANAGER_TAG" "$BOOTSTRAP_TMP/ref.json" || bootstrap_die 'Published manager tag unavailable'
     for ((depth=0; depth<5; depth++)); do
@@ -172,7 +216,7 @@ validate_manager_pair() {
     { bootstrap_version_code; cat <<'PY'
 import sys
 script, helper, tag = sys.argv[1:]
-if not Path(script).read_bytes().startswith(b'#!/usr/bin/env bash\n# Telemt WEB Manager.'):
+if not Path(script).read_bytes().startswith((b'#!/usr/bin/env bash\n# Telegram Web Proxy Manager.', b'#!/usr/bin/env bash\n# Telemt WEB Manager.')):
     raise ValueError('Downloaded program is not recognized as this manager')
 if not Path(helper).read_bytes().startswith(b'#!/usr/bin/env python3\n"""Strict, read-only parsers and staged Nginx plans.'):
     raise ValueError('Downloaded helper is not recognized')
@@ -190,7 +234,10 @@ commit_manager_pair() {
 import ast, ctypes, datetime, fcntl, hashlib, json, os, re, shutil, signal, stat, sys, tempfile
 from pathlib import Path
 source, dest, launcher, lock = map(Path, sys.argv[1:5])
-tag, explicit, state_path, systemd_path = sys.argv[5:]
+tag, explicit, state_path, systemd_path, canonical_path = sys.argv[5:]
+canonical = Path(canonical_path)
+launchers = (launcher, canonical)
+if launcher == canonical: raise ValueError('Launcher paths must be distinct')
 state = Path(state_path)
 systemd_root = Path(systemd_path)
 
@@ -216,7 +263,7 @@ def existing_pair():
     if {p.name for p in (dest / 'lib').iterdir()} != {'safety.py'}:
         raise ValueError('Unrelated manager helper directory; manual review required')
     for p in (dest / 'telemt-web-manager.sh', dest / 'lib/safety.py'): safe(p, regular=True)
-    if not (dest / 'telemt-web-manager.sh').read_bytes().startswith(b'#!/usr/bin/env bash\n# Telemt WEB Manager.'):
+    if not (dest / 'telemt-web-manager.sh').read_bytes().startswith((b'#!/usr/bin/env bash\n# Telegram Web Proxy Manager.', b'#!/usr/bin/env bash\n# Telemt WEB Manager.')):
         raise ValueError('Existing program is not recognized as this manager')
     if not (dest / 'lib/safety.py').read_bytes().startswith(b'#!/usr/bin/env python3\n\"\"\"Strict, read-only parsers and staged Nginx plans.'):
         raise ValueError('Existing helper requires manual review')
@@ -430,8 +477,10 @@ def bootstrap_recovery_barrier():
                 raise ValueError('Candidate cannot interpret deployed recovery schema; explicit downgrade also refused')
 
 wrapper = ('#!/bin/sh\nexec ' + str(dest / 'telemt-web-manager.sh') + ' "$@"\n').encode()
-stage = staged_launcher = None
-swapped = created = launcher_created = committed = False
+stage = None
+staged_launchers = {}
+created_launchers = []
+swapped = created = committed = False
 libc = ctypes.CDLL(None, use_errno=True)
 exchange = getattr(libc, 'renameat2', None)
 if exchange is None: raise SystemExit('ERROR: Atomic directory exchange unavailable')
@@ -446,7 +495,8 @@ def interrupted(signum, frame):
     if not committed: raise InterruptedError('Bootstrap interrupted')
 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP): signal.signal(sig, interrupted)
 try:
-    safe(dest.parent); safe(launcher.parent); safe(lock.parent)
+    safe(dest.parent); safe(lock.parent)
+    for target in launchers: safe(target.parent)
     with os.fdopen(os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600), 'r+') as held:
         info = os.fstat(held.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600:
@@ -454,12 +504,15 @@ try:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         had_pair = existing_pair()
         bootstrap_recovery_barrier()
-        safe(launcher, regular=True)
-        if launcher.exists() and launcher.read_bytes() != wrapper:
-            raise ValueError('Unrelated launcher; manual review required')
-        had_launcher = launcher.exists()
-        if had_launcher and (stat.S_IMODE(launcher.stat().st_mode) != 0o755 or launcher.stat().st_gid != 0):
-            raise ValueError('Existing launcher mode requires manual review')
+        missing_launchers = []
+        for target in launchers:
+            safe(target, regular=True)
+            if target.exists():
+                if target.read_bytes() != wrapper:
+                    raise ValueError('Unrelated launcher; manual review required')
+                if stat.S_IMODE(target.stat().st_mode) != 0o755 or target.stat().st_gid != 0:
+                    raise ValueError('Existing launcher mode requires manual review')
+            else: missing_launchers.append(target)
         if had_pair:
             installed = manager_version(dest / 'telemt-web-manager.sh')
             if not explicit and version_key(tag[1:]) < version_key(installed):
@@ -474,22 +527,27 @@ try:
             os.chown(target, 0, 0); target.chmod(mode)
         os.chown(stage, 0, 0); os.chown(stage / 'lib', 0, 0)
         stage.chmod(0o755); (stage / 'lib').chmod(0o755)
-        fd, filename = tempfile.mkstemp(prefix='.telemt-web-manager.', dir=launcher.parent)
-        staged_launcher = Path(filename)
-        with os.fdopen(fd, 'wb') as output: output.write(wrapper)
-        os.chown(staged_launcher, 0, 0); staged_launcher.chmod(0o755)
+        for target in missing_launchers:
+            fd, filename = tempfile.mkstemp(prefix='.telemt-web-manager.', dir=target.parent)
+            staged = Path(filename)
+            staged_launchers[target] = staged
+            with os.fdopen(fd, 'wb') as output:
+                output.write(wrapper)
+                output.flush(); os.fsync(output.fileno())
+            os.chown(staged, 0, 0); staged.chmod(0o755)
         # Block catchable signals only across the tiny commit/rollback window.
         blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
         try:
             if had_pair: swap(stage, dest); swapped = True
             else: os.rename(stage, dest); created = True
-            if not had_launcher:
-                os.replace(staged_launcher, launcher); launcher_created = True
+            for target, staged in staged_launchers.items():
+                os.replace(staged, target); created_launchers.append(target)
             committed = True
         except BaseException:
             if swapped: swap(stage, dest); swapped = False
             elif created: os.rename(dest, stage); created = False
-            if launcher_created: launcher.unlink(); launcher_created = False
+            for target in reversed(created_launchers): target.unlink()
+            created_launchers.clear()
             raise
         finally:
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
@@ -500,13 +558,14 @@ finally:
         if swapped and not committed:
             print(f'ERROR: Rollback exchange failed; previous manager pair retained at {stage}; manual recovery required', file=sys.stderr)
         else: shutil.rmtree(stage)
-    if staged_launcher is not None and staged_launcher.exists(): staged_launcher.unlink()
+    for staged in staged_launchers.values():
+        if staged.exists(): staged.unlink()
 PY
-    } | python3 - "$BOOTSTRAP_TMP" "$INSTALL_DIR" "$LAUNCHER" "$BOOTSTRAP_LOCK" "$MANAGER_TAG" "$VERSION" "$MANAGER_STATE" "$MANAGER_SYSTEMD_ROOT"
+    } | python3 - "$BOOTSTRAP_TMP" "$INSTALL_DIR" "$LAUNCHER" "$BOOTSTRAP_LOCK" "$MANAGER_TAG" "$VERSION" "$MANAGER_STATE" "$MANAGER_SYSTEMD_ROOT" "${CANONICAL_LAUNCHER:-${LAUNCHER%/*}/telegram-web-proxy-manager}"
 }
 
 launch_manager_menu() {
-    if (( ! NO_START )) && [[ -t 0 && -t 1 ]]; then "$LAUNCHER"; fi
+    if (( ! NO_START )) && [[ -t 0 && -t 1 ]]; then "${CANONICAL_LAUNCHER:-${LAUNCHER%/*}/telegram-web-proxy-manager}"; fi
 }
 
 bootstrap_main() {
@@ -530,13 +589,14 @@ bootstrap_main() {
     trap 'rm -rf -- "$BOOTSTRAP_TMP"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
+    resolve_manager_repository
     resolve_manager_release
     local base="https://raw.githubusercontent.com/$MANAGER_REPO/$MANAGER_COMMIT"
     bootstrap_download "$base/telemt-web-manager.sh" "$BOOTSTRAP_TMP/telemt-web-manager.sh" || bootstrap_die 'Manager shell download failed/empty'
     bootstrap_download "$base/lib/safety.py" "$BOOTSTRAP_TMP/safety.py" || bootstrap_die 'Manager helper download failed/empty'
     validate_manager_pair || bootstrap_die 'Invalid manager Python/Bash syntax'
     commit_manager_pair || bootstrap_die 'Manager installation transaction failed; review the error above'
-    printf 'Installed manager %s (%s). Run: telemt-web-manager\n' "$MANAGER_TAG" "$MANAGER_COMMIT"
+    printf 'Installed manager %s (%s). Run: telegram-web-proxy-manager\n' "$MANAGER_TAG" "$MANAGER_COMMIT"
     rm -rf -- "$BOOTSTRAP_TMP"; BOOTSTRAP_TMP=''
     launch_manager_menu
 }

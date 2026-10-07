@@ -1,24 +1,25 @@
-# ✈️ Telemt WEB Manager
+# ✈️ Telegram Web Proxy Manager
 
-**Простой способ установить и обслуживать Telegram WEB Proxy на своём Ubuntu VPS.**
-Менеджер настраивает Telemt, HTTPS и Fake-Site страницу для домена, выдаёт ссылку
-для Telegram и безопасно обновляет прокси с возвратом к рабочей версии при ошибке.
+**Свой Telegram WEB Proxy на Ubuntu VPS за одну команду.**
+HTTPS, готовая ссылка `tg://webproxy?...` для Telegram и автоматически выбранная
+Fake-Site страница на домене. Менеджер проверяет обновления и при ошибке возвращает
+рабочую версию с её данными. Если с VPS нет прямого доступа к Telegram, используй SOCKS5.
 
-[![checks](https://github.com/xPROMSx/telemt-web-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telemt-web-manager/actions/workflows/checks.yml)
+[![checks](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
-[![Release](https://img.shields.io/github/v/release/xPROMSx/telemt-web-manager)](https://github.com/xPROMSx/telemt-web-manager/releases/latest)
+[![Release](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[English](README.en.md) · [Releases](https://github.com/xPROMSx/telemt-web-manager/releases) · [3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Issues](https://github.com/xPROMSx/telemt-web-manager/issues)
+[English](README.en.md) · [Releases](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
 
 ## ✨ Что умеет
 
-- ✈️ Устанавливает и настраивает [Telemt WEB Proxy](https://github.com/telemt/telemt).
+- ✈️ Устанавливает и настраивает свой Telegram WEB Proxy.
 - 🔐 Подключает HTTPS с Let's Encrypt; сохранённый сертификат менеджера можно использовать повторно.
 - 🥸 Автоматически показывает на домене Fake-Site страницу вместо технического ответа прокси.
 - 🎨 Меняет Fake-Site из меню или возвращает нейтральную страницу Service Status.
-- 🔄 Находит новые стабильные версии Telemt и проверяет их совместимость перед установкой.
+- 🔄 Находит новые стабильные версии движка прокси и проверяет их совместимость перед установкой.
 - 🛟 Если обновление не проходит проверку, автоматически возвращает рабочую версию и её данные.
-- 🔧 Одной командой проверяет Telemt, Nginx, HTTPS и подключение.
+- 🔧 Одной командой проверяет прокси, Nginx, HTTPS и подключение.
 - 🌐 Работает напрямую или через SOCKS5, если с VPS нет прямого доступа к Telegram.
 
 ## ⚡ Быстрый старт
@@ -27,10 +28,16 @@
 **3x-ui Auto Nginx** — о нём ниже. В консоли root выполни:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/main/install.sh)
 ```
 
+До ручного переименования GitHub repository используй ту же команду с адресом
+`https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/main/install.sh`.
+Bootstrap проверяет официальный repository и работает до и после переименования.
+
 Команда устанавливает опубликованную версию менеджера и открывает меню.
+Позже открыть меню можно командой `telegram-web-proxy-manager`;
+прежняя `telemt-web-manager` продолжает работать.
 Выбери **1. Install**: менеджер спросит домен, публичный IPv4 и нужен ли SOCKS5.
 Если сертификата ещё нет, менеджер также попросит e-mail и подтверждение условий Let's Encrypt.
 
@@ -42,18 +49,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/m
 
 Для подготовки VPS можно использовать наш второй проект —
 [**3x-ui Auto Nginx**](https://github.com/xPROMSx/3x-ui-auto-nginx).
-Он настраивает **3x-ui, Xray, Nginx и HTTPS**. Telemt WEB Manager отдельной
+Он настраивает **3x-ui, Xray, Nginx и HTTPS**. Telegram Web Proxy Manager отдельной
 установкой добавляет Telegram WEB Proxy на тот же сервер.
 
 **Рекомендуемый порядок:**
 
 1. 3x-ui Auto Nginx.
-2. Telemt WEB Manager.
+2. Telegram Web Proxy Manager.
 
 Оба проекта работают независимо: один установщик не запускает другой.
-После полной переустановки 3x-ui Telemt нужно подключить заново — см. документацию ниже.
+После полной переустановки 3x-ui Telegram-прокси нужно подключить заново — см. документацию ниже.
 
-## Меню менеджера 1.0.1
+## Меню менеджера 1.1.0
 
 ```text
 1. Install
@@ -62,7 +69,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/m
 4. Repair
 5. Show current WEB link
 6. Change cover site
-7. Uninstall Telemt
+7. Uninstall Telegram proxy
 8. Exit
 ```
 
@@ -80,28 +87,35 @@ Service Status. Все страницы локальные, без внешни�
 При проблеме возвращает рабочую версию.
 `NO_COLOR` отключает цвета; `TERM=dumb` оставляет простой текстовый вывод.
 
-**Uninstall Telemt** требует ввода `UNINSTALL` и удаляет только Telemt, установленный
+**Uninstall Telegram proxy** требует ввода `UNINSTALL` и удаляет только прокси, установленный
 этим менеджером. Менеджер и резервные копии остаются. Сертификат по умолчанию
 сохраняется для того же домена; удаление требует отдельного подтверждения.
 
 ## Команды без диалога
 
 ```bash
-telemt-web-manager --install --domain proxy.example.com --public-ip 203.0.113.10
+telegram-web-proxy-manager --install --domain proxy.example.com --public-ip 203.0.113.10
 # При необходимости: --socks 127.0.0.1:1080
 # Для нового сертификата: --email operator@example.com --agree-tos
-telemt-web-manager --update
-telemt-web-manager --check
-telemt-web-manager --repair
-telemt-web-manager --uninstall --confirm-uninstall
+telegram-web-proxy-manager --update
+telegram-web-proxy-manager --check
+telegram-web-proxy-manager --repair
+telegram-web-proxy-manager --uninstall --confirm-uninstall
 # Явно удалить и управляемый сертификат:
-telemt-web-manager --uninstall --confirm-uninstall --delete-certificate
+telegram-web-proxy-manager --uninstall --confirm-uninstall --delete-certificate
 ```
 
 Команды без диалога не устанавливают пакеты. В меню недостающие инструменты Ubuntu
 устанавливаются только после ответа `Y/y`. Сам **менеджер** обновляется повторным
 запуском команды быстрого старта; Telemt остаётся установленным.
 Автоматического понижения версии нет.
+
+## Движок прокси
+
+Telegram Web Proxy Manager использует [Telemt](https://github.com/telemt/telemt)
+как движок прокси. Отдельно устанавливать Telemt или вручную настраивать его не нужно.
+Внутренние пути с прежним именем `telemt-web-manager` сохраняются для совместимости
+с существующими установками.
 
 ## Требования
 
