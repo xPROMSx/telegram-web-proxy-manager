@@ -50,6 +50,7 @@ for p in (t/'nginx').rglob('*'):
     text = re.sub(r'listen\s+443;', 'listen 127.0.0.1:14443;', p.read_text())
     text = re.sub(r'listen\s+\[::\]:443;', 'listen [::1]:14443;', text)
     text = re.sub(r'listen\s+80;', 'listen 127.0.0.1:18082;', text)
+    text = re.sub(r'listen\s+\[::\]:80;', 'listen [::1]:18082;', text)
     text = text.replace(':7444', ':17444').replace(':18080', ':18081')
     text = re.sub(r'(ssl_certificate\s+)[^;]+;', lambda m: m[1] + str(t/'cert.pem') + ';', text)
     text = re.sub(r'(ssl_certificate_key\s+)[^;]+;', lambda m: m[1] + str(t/'key.pem') + ';', text)

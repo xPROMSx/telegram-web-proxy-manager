@@ -238,6 +238,94 @@ class ThreeXTopologyTests(unittest.TestCase):
                     s.acme_plan(self.root, 'proxy.example.com', self.plan, '/var/lib/twm-acme')
                 self.assertEqual(before, self.snapshot())
 
+    @staticmethod
+    def webroot_http():
+        return """server {
+    listen 80;
+    listen [::]:80;
+    server_name panel.example.com reality.example.com;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+"""
+
+    def test_acme_plan_preserves_webroot_redirect_and_is_idempotent(self):
+        path = self.root / 'sites-enabled/80.conf'
+        path.write_text(self.webroot_http())
+        before = self.snapshot()
+        acme = self.root / 'conf.d/telemt-web-manager-acme.conf'
+        own_root = '/var/lib/telemt-web-manager-acme'
+        s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+        plan = json.loads(self.plan.read_text())
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(plan['edits'], [dict(path=str(acme), content=s.render_acme('proxy.example.com', own_root), old=None)])
+        for edit in plan['edits']: Path(edit['path']).write_text(edit['content'])
+        s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+        self.assertEqual(json.loads(self.plan.read_text())['edits'], [])
+        for name, raw in before.items(): self.assertEqual(Path(name).read_bytes(), raw)
+
+    def test_acme_webroot_unknown_routing_refused_without_mutation(self):
+        original = self.webroot_http()
+        path = self.root / 'sites-enabled/80.conf'
+        cases = (
+            ('root /var/www/acme;', 'root /wrong;'),
+            ('root /var/www/acme;', 'root $document_root;'),
+            ('root /var/www/acme;', 'alias /var/www/acme;'),
+            ('default_type text/plain;', ''),
+            ('default_type text/plain;', 'default_type text/html;'),
+            ('try_files $uri =404;', ''),
+            ('try_files $uri =404;', 'try_files $uri =200;'),
+            ('try_files $uri =404;', 'try_files $uri /index.html =404;'),
+            ('try_files $uri =404;', 'proxy_pass http://127.0.0.1;'),
+            ('try_files $uri =404;', 'fastcgi_pass 127.0.0.1:9000;'),
+            ('try_files $uri =404;', 'grpc_pass grpc://127.0.0.1;'),
+            ('try_files $uri =404;', 'return 404;'),
+            ('root /var/www/acme;', 'root /var/www/acme; add_header X-Test yes;'),
+            ('root /var/www/acme;', 'root /var/www/acme; rewrite ^ /other;'),
+            ('root /var/www/acme;', 'root /var/www/acme; if ($uri) { return 404; }'),
+            ('root /var/www/acme;', 'root /var/www/acme; location /nested { return 404; }'),
+            ('/.well-known/acme-challenge/', '/.well-known/other/'),
+            ('location ^~', 'location'),
+            ('return 301', 'return 302'),
+            ('return 301', 'return 200'),
+            ('https://$host$request_uri', 'https://panel.example.com$request_uri'),
+            ('panel.example.com', 'proxy.example.com'),
+            ('panel.example.com', '*.example.com'),
+            ('panel.example.com', '~^panel'),
+            ('listen 80;', 'listen 80 proxy_protocol;'),
+            ('listen 80;', 'listen 80 ssl;'),
+            ('listen 80;', 'listen 80 default_server;'),
+            ('listen 80;', 'listen 80 reuseport;'),
+            ('listen 80;', 'listen 80; listen 127.0.0.1:80;'),
+            ('listen [::]:80;', ''),
+            ('location / {', 'location /extra { return 404; } location / {'),
+            ('listen 80;', 'listen 80; resolver 127.0.0.1;'),
+            ('listen 80;', 'listen 80; include snippets/webroot-empty.conf;'),
+            ('root /var/www/acme;', 'root /var/www/acme; include snippets/webroot-empty.conf;'),
+            ('panel.example.com reality.example.com', 'panel.example.com panel.example.com'),
+        )
+        snippet = self.root / 'snippets/webroot-empty.conf'
+        snippet.write_text('# No directives, but includes are not trusted in this profile.\n')
+        variants = [original.replace(old, new) for old, new in cases]
+        variants.append(original + original)
+        for text in variants:
+            with self.subTest(text=text):
+                path.write_text(text); self.plan.unlink(missing_ok=True)
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    s.acme_plan(self.root, 'proxy.example.com', self.plan, '/var/lib/telemt-web-manager-acme')
+                self.assertEqual(before, self.snapshot())
+                self.assertFalse((self.root / 'conf.d/telemt-web-manager-acme.conf').exists())
+                if self.plan.exists():
+                    self.assertTrue(all(not edit['path'].endswith('/telemt-web-manager-acme.conf')
+                                        for edit in json.loads(self.plan.read_text())['edits']))
+
     def test_acme_modified_managed_vhost_refused(self):
         path = self.root / 'conf.d/telemt-web-manager-acme.conf'
         path.write_text(s.render_acme('proxy.example.com', '/var/lib/twm-acme').replace('return 404', 'return 200'))

@@ -5,10 +5,15 @@ cd -- "$(dirname -- "$0")/.."
 fixture_dir=$(mktemp -d)
 trap 'rm -rf -- "$fixture_dir"' EXIT
 script=x-ui-latest.sh
-root="$fixture_dir/$script"
-python3 tests/three_x_ui.py "$root" --script "$script"
-bash tests/fresh.sh "$root"
-bash tests/nginx-rollback.sh "$root"
-bash tests/acme.sh "$root"
-bash tests/nginx.sh "$root"
-printf 'ok - full %s emitted topology: install/idempotence/real Nginx IPv4+IPv6\n' "$script"
+[[ $# -le 1 ]]
+for profile in legacy webroot; do
+    root="$fixture_dir/$profile"
+    source_args=()
+    if [[ $# == 1 ]]; then source_args=(--source "$1/$profile"); fi
+    python3 tests/three_x_ui.py "$root" --script "$script" --profile "$profile" "${source_args[@]}"
+    bash tests/fresh.sh "$root"
+    bash tests/nginx-rollback.sh "$root"
+    bash tests/acme.sh "$root"
+    bash tests/nginx.sh "$root"
+    printf 'ok - full %s %s topology: install/idempotence/ACME/rollback/real Nginx IPv4+IPv6\n' "$profile" "$script"
+done

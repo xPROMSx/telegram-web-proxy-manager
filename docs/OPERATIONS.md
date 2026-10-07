@@ -78,10 +78,16 @@ Certbot symlinks within archive/DOMAIN and matching public keys. HTTP probes che
 TLS trust. For new issuance, explicitly accept ACME terms with `--email` and `--agree-tos`.
 
 Free port 80 uses standalone HTTP-01 without stopping Nginx. If the port belongs
-to the same verified Nginx master/workers, webroot supports recognized HTTP
-redirect vhosts: `listen 80`, exact `server_name` values and
-`return 301 https://$host$request_uri`. Wildcard/regex names, custom HTTP routing,
-conflicting domains and unrelated processes cause refusal.
+to the same verified Nginx master/workers, webroot accepts two exact HTTP :80
+profiles: legacy redirect-only vhosts, or the recognized 3x-ui webroot+redirect
+form. The latter has IPv4/IPv6 listeners, exact domain names, only an ACME
+`location ^~ /.well-known/acme-challenge/` with `root /var/www/acme`,
+`default_type text/plain`, `try_files $uri =404`, and `location /` returning
+`301 https://$host$request_uri`. Legacy direct 301 redirects remain supported.
+Wildcard/regex names, extra directives/locations, conflicting domains and unrelated
+processes cause refusal. Telemt keeps its own `/var/lib/telemt-web-manager-acme`
+webroot, marker and `telemt-web-manager-acme.conf`; it neither writes nor takes
+ownership of the external `/var/www/acme` tree.
 Port-80 runtime/config disagreement also causes refusal, preventing pending
 Nginx configuration from invalidating a standalone renewal strategy.
 
@@ -717,6 +723,18 @@ Universal Update 0.2.0. Its separate owner acceptance is now complete: baseline 
 real automatic Update to 3.5.14, Telegram WEB, 150s + 45s acceptance, controlled restart,
 COMMITTED metadata and final Check OK. Separate 1.0.0 cover/UI acceptance is also
 complete; the exact candidate and results are recorded below.
+
+## Co-located 3x-ui Backup/Restore
+
+3x-ui Backup v3 snapshots shared `/etc/nginx` and `/etc/letsencrypt`; on a co-located
+server that can include Telemt's Nginx files, certificate lineage, renewal config
+and deploy hook. It is not a complete Telemt backup and does not carry its full
+deployment/DATA. After restoring such a server, run `telemt-web-manager --check`.
+If Telemt's own state was not restored and checks fail, recover its deployment
+separately from its own recovery source. Foreign-restored certificates are not
+automatically adopted. Do not run Telemt certificate issuance concurrently with
+3x-ui Backup/Restore; no shared lock or cross-project disaster recovery is promised.
+The common supported platforms remain Ubuntu 24.04 / 26.04, not Debian 13.
 
 ## Current WEB link (manager 0.1.4)
 
