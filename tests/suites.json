@@ -1,0 +1,290 @@
+{
+  "schema": 1,
+  "discovery": {
+    "pattern": "tests/test_*.py",
+    "entrypoint": "tests/run.sh",
+    "command": "python3 -m unittest discover -s tests -p 'test_*.py' -v"
+  },
+  "entrypoints": [
+    {
+      "path": "tests/ci_plan.py",
+      "job": "scope",
+      "command": "python3 tests/ci_plan.py classify --base \"$CI_BASE\" --head \"$CI_HEAD\" --event \"$CI_EVENT\""
+    },
+    {
+      "path": "tests/ci_manifest.py",
+      "job": "static",
+      "command": "python3 tests/ci_manifest.py"
+    },
+    {
+      "path": "tests/pinned.sh",
+      "job": "static",
+      "command": "bash tests/pinned.sh --docs"
+    },
+    {
+      "path": "tests/ci_docs.py",
+      "job": "static",
+      "command": "python3 tests/ci_docs.py"
+    },
+    {
+      "path": "tests/run.sh",
+      "job": "regression",
+      "command": "sudo env PYTHONDONTWRITEBYTECODE=1 bash tests/run.sh"
+    },
+    {
+      "path": "tests/bootstrap_versions.sh",
+      "job": "regression",
+      "command": "bash tests/bootstrap_versions.sh"
+    },
+    {
+      "path": "tests/preflight.sh",
+      "job": "regression",
+      "command": "bash tests/preflight.sh"
+    },
+    {
+      "path": "tests/versions.sh",
+      "job": "regression",
+      "command": "bash tests/versions.sh"
+    },
+    {
+      "path": "tests/contracts.sh",
+      "job": "regression",
+      "command": "bash tests/contracts.sh"
+    },
+    {
+      "path": "tests/locks.sh",
+      "job": "regression",
+      "command": "bash tests/locks.sh"
+    },
+    {
+      "path": "tests/update_transactions.py",
+      "job": "regression",
+      "command": "sudo env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_transactions.py"
+    },
+    {
+      "path": "tests/update_bootstrap.py",
+      "job": "regression",
+      "command": "sudo env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_bootstrap.py"
+    },
+    {
+      "path": "tests/update_provenance.py",
+      "job": "telemt",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
+      "path": "tests/download.sh",
+      "job": "telemt",
+      "command": "bash tests/download.sh"
+    },
+    {
+      "path": "tests/pinned.sh",
+      "job": "telemt",
+      "command": "bash tests/pinned.sh"
+    },
+    {
+      "path": "tests/upstream.sh",
+      "job": "telemt",
+      "command": "bash tests/upstream.sh"
+    },
+    {
+      "path": "tests/staging.sh",
+      "job": "telemt",
+      "command": "bash tests/staging.sh"
+    },
+    {
+      "path": "tests/runtime.sh",
+      "job": "telemt",
+      "command": "sudo env TELEMT_TEST_EVIDENCE_DIR=\"$TELEMT_TEST_EVIDENCE_DIR\" bash tests/runtime.sh"
+    },
+    {
+      "path": "tests/pinned.sh",
+      "job": "telemt",
+      "command": "bash tests/pinned.sh --versions"
+    },
+    {
+      "path": "tests/conntrack.sh",
+      "job": "telemt",
+      "command": "bash tests/conntrack.sh"
+    },
+    {
+      "path": "tests/update_provenance.py",
+      "job": "lifecycle",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
+      "path": "tests/fresh.sh",
+      "job": "lifecycle",
+      "command": "bash tests/fresh.sh"
+    },
+    {
+      "path": "tests/fresh-rollback.sh",
+      "job": "lifecycle",
+      "command": "bash tests/fresh-rollback.sh"
+    },
+    {
+      "path": "tests/fresh-account.sh",
+      "job": "lifecycle",
+      "command": "sudo bash tests/fresh-account.sh"
+    },
+    {
+      "path": "tests/bootstrap.sh",
+      "job": "lifecycle",
+      "command": "sudo bash tests/bootstrap.sh"
+    },
+    {
+      "path": "tests/web_link_fixture.py",
+      "job": "lifecycle",
+      "command": "sudo python3 tests/web_link_fixture.py"
+    },
+    {
+      "path": "tests/uninstall.sh",
+      "job": "lifecycle",
+      "command": "sudo env TELEMT_UPDATE_ARTIFACTS=\"$TELEMT_UPDATE_ARTIFACTS\" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh"
+    },
+    {
+      "path": "tests/acme.sh",
+      "job": "nginx",
+      "command": "bash tests/acme.sh"
+    },
+    {
+      "path": "tests/renewal.sh",
+      "job": "nginx",
+      "command": "sudo bash tests/renewal.sh"
+    },
+    {
+      "path": "tests/nginx.sh",
+      "job": "nginx",
+      "command": "bash tests/nginx.sh"
+    },
+    {
+      "path": "tests/three-x-ui.sh",
+      "job": "nginx",
+      "command": "bash tests/three-x-ui.sh"
+    },
+    {
+      "path": "tests/update_provenance.py",
+      "job": "system26",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
+      "path": "tests/update_boot.sh",
+      "job": "system26",
+      "command": "bash tests/update_boot.sh 26.04"
+    },
+    {
+      "path": "tests/update_provenance.py",
+      "job": "system24",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
+      "path": "tests/update_boot.sh",
+      "job": "system24",
+      "command": "bash tests/update_boot.sh 24.04"
+    },
+    {
+      "path": "tests/update_provenance.py",
+      "job": "arm",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
+      "path": "tests/update_arm.sh",
+      "job": "arm",
+      "command": "bash tests/update_arm.sh 24.04"
+    },
+    {
+      "path": "tests/ci_plan.py",
+      "job": "required",
+      "command": "python3 tests/ci_plan.py gate"
+    }
+  ],
+  "helpers": [
+    {
+      "path": "tests/account_fixture.py",
+      "called_by": "tests/fresh.sh",
+      "reference": "tests/account_fixture.py"
+    },
+    {
+      "path": "tests/origin.py",
+      "called_by": "tests/nginx.sh",
+      "reference": "tests/origin.py"
+    },
+    {
+      "path": "tests/three_x_ui.py",
+      "called_by": "tests/three-x-ui.sh",
+      "reference": "python3 tests/three_x_ui.py"
+    },
+    {
+      "path": "tests/uninstall_runtime_fixture.py",
+      "called_by": "tests/uninstall.sh",
+      "reference": "tests/uninstall_runtime_fixture.py"
+    },
+    {
+      "path": "tests/update_state_fixture.py",
+      "called_by": "tests/uninstall.sh",
+      "reference": "tests/update_state_fixture.py"
+    },
+    {
+      "path": "tests/update_boot_prepare.sh",
+      "called_by": "tests/update_boot.sh",
+      "reference": "bash /src/tests/update_boot_prepare.sh"
+    },
+    {
+      "path": "tests/update_boot_host.py",
+      "called_by": "tests/update_boot.sh",
+      "reference": "python3 tests/update_boot_host.py"
+    },
+    {
+      "path": "tests/update_boot_guest.py",
+      "called_by": "tests/update_boot_prepare.sh",
+      "reference": "ExecStart=/usr/bin/python3 /mnt/source/tests/update_boot_guest.py"
+    },
+    {
+      "path": "tests/update_filesystem_guest.py",
+      "called_by": "tests/update_boot_guest.py",
+      "reference": "import update_filesystem_guest"
+    },
+    {
+      "path": "tests/update_isolation_guest.py",
+      "called_by": "tests/update_boot_guest.py",
+      "reference": "import update_isolation_guest"
+    }
+  ],
+  "builds": [
+    {
+      "path": "tests/update_boot.Dockerfile",
+      "called_by": "tests/update_boot.sh",
+      "reference": "-f tests/update_boot.Dockerfile"
+    },
+    {
+      "path": "tests/update_hostile.c",
+      "called_by": "tests/update_isolation_guest.py",
+      "reference": "source/'tests/update_hostile.c'"
+    },
+    {
+      "path": "tests/ci_arm.Dockerfile",
+      "called_by": "arm",
+      "reference": "-f tests/ci_arm.Dockerfile"
+    }
+  ],
+  "fixtures": [
+    "tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl",
+    "tests/fixtures/nginx/nginx.conf",
+    "tests/fixtures/nginx/stream.conf",
+    "tests/fixtures/nginx-3x-ui/nginx.conf",
+    "tests/fixtures/nginx-3x-ui/sites-enabled/80.conf",
+    "tests/fixtures/nginx-3x-ui/sites-enabled/panel.conf",
+    "tests/fixtures/nginx-3x-ui/sites-enabled/reality.conf",
+    "tests/fixtures/nginx-3x-ui/snippets/includes.conf",
+    "tests/fixtures/nginx-3x-ui/stream-enabled/stream.conf"
+  ],
+  "metadata": [
+    "tests/suites.json"
+  ],
+  "indirect_entrypoints": [
+    {
+      "path": "tests/nginx-rollback.sh",
+      "called_by": "tests/three-x-ui.sh",
+      "reference": "bash tests/nginx-rollback.sh"
+    }
+  ]
+}

@@ -198,7 +198,7 @@ The following path/security inventory records the earlier 3.5.9 source review.
 It is historical source evidence, not the current download policy or a promise of
 future release compatibility. Current 3.5.12 healthcheck and runtime smoke add
 release-specific evidence. Successful 0.1.2 VPS acceptance under systemd on Ubuntu
-26.04.1 LTS x86_64 is recorded in the [English README](../README.en.md#vps-validation);
+26.04.1 LTS x86_64 is recorded in the [technical live acceptance history](CI-COVERAGE.md#owner-live-acceptance-history);
 the historical source review and CI do not establish other deployment combinations.
 
 ## Runtime paths and systemd audit, full second review

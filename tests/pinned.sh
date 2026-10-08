@@ -13,6 +13,10 @@ for name in ('README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-
     assert 'Supported Telemt: **' + version + '**' in Path(name).read_text(), name
 print('ok - production supported Telemt == documented supported Telemt == ' + version)
 PY
+if [[ ${1:-} == --docs ]]; then
+    [[ $# == 1 ]]
+    exit 0
+fi
 if [[ ${1:-} == --versions ]]; then
     [[ -n ${TELEMT_TEST_EVIDENCE_DIR:-} ]]
     for layer in upstream staging runtime; do
