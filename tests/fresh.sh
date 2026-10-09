@@ -167,8 +167,10 @@ if [[ -n ${FIXTURE_HTTPS:-} ]]; then
     }
     sleep() { [[ $1 == 1 ]]; SECONDS=$((SECONDS+1)); printf x >>"$SANDBOX/retry-pauses"; }
     path_health() { production_path_health "$@" && printf ok >"$SANDBOX/path-health"; }
-    result=0
-    (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$SANDBOX/https.log" 2>&1 || result=$?
+    set +e
+    (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$SANDBOX/https.log" 2>&1
+    result=$?
+    set -e
     # The parent's SECONDS is not the subprocess clock; assertions below count
     # exactly the requests and pauses from that bounded subprocess.
     [[ $(cat "$SANDBOX/https-issuance") == issued ]]
