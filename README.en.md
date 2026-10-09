@@ -1,33 +1,43 @@
-# Telegram Web Proxy Manager
+<div align="center">
 
-**Your own Telegram proxy on an Ubuntu VPS, without manual proxy configuration.**
+[🇷🇺 Русский](README.md) · **🇬🇧 English** · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-The manager installs and configures your proxy, sets up HTTPS and adds a cover
-site to your domain. If an update fails its checks, the previous working version
-is restored automatically.
-Use SOCKS5 when your VPS cannot reach Telegram directly.
+<h1 align="center">Telegram Web Proxy Manager</h1>
 
-[![checks](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml)
+### Your own Telegram proxy on a VPS, without manual setup
+
+**HTTPS · Cover site · SOCKS5 · Safe updates**
+
+Connect directly to Telegram servers or through SOCKS5.
+
+[![Checks](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml/badge.svg)](https://github.com/xPROMSx/telegram-web-proxy-manager/actions/workflows/checks.yml)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
-[![Release](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
+[![Releases](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[Русский](README.md) · [Releases](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[Releases](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Report an issue](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+
+</div>
+
+**Telegram Web Proxy Manager** installs and configures a modern Telegram WEB proxy, serves it over secure HTTPS, and automatically creates a cover site for your domain. If your VPS cannot reach Telegram directly, you can use an upstream SOCKS5 proxy.
+
+When updating Telemt, the manager verifies the new version and restores the previous working one if a check fails.
+
+**Compatibility:** the full integration test suite includes coexistence checks with [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx). [Test coverage and limitations](docs/CI-COVERAGE.md).
 
 ## ✨ Features
 
-- One-command proxy setup.
-- HTTPS with Let's Encrypt.
-- A cover site on your domain.
-- Safe updates that restore the working version if checks fail.
-- Direct or SOCKS5 connectivity to Telegram.
+- Install and configure a Telegram proxy with one command.
+- Secure HTTPS with a Let's Encrypt certificate.
+- An automatically deployed cover site on your domain.
+- Safe updates with rollback to the working version on failure.
+- Direct access to Telegram or an upstream SOCKS5 proxy.
 - Proxy health and connectivity checks.
 
-## Quick start
+## 🚀 Quick start
 
-You need an Ubuntu VPS, a separate domain or subdomain with a DNS A record pointing
-to the server (not used by 3x-ui, including REALITY, or other Nginx sites),
-root access and Nginx already running a compatible configuration.
-If your server is not ready yet, 3x-ui Auto Nginx can help — see below.
+You need a VPS running **Ubuntu 24.04 or 26.04**, **root** access, an already configured and compatible Nginx instance, and a **separate domain or subdomain** with a DNS A record pointing to your server's public IPv4 address. The hostname **must not already be used by 3X-UI (including REALITY) or another Nginx site**.
+
+If the VPS is not prepared yet, you can first install [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx).
 
 Run as root:
 
@@ -35,45 +45,33 @@ Run as root:
 bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/main/install.sh)
 ```
 
-The installer opens a menu. Choose **Install** and follow the prompts.
-Once setup is complete, you receive a ready `tg://webproxy?...` link
-for adding the proxy to Telegram. Your domain also serves a cover site.
-You can open the manager again at any time with `telegram-web-proxy-manager`.
+The interactive menu opens. Choose **Install** and follow the prompts. When installation finishes, the manager displays a `tg://webproxy?...` connection link to add the proxy to Telegram. Your domain serves a cover site over HTTPS.
 
-**The connection link contains the key to your proxy. Do not publish it.**
+For later management, run `telegram-web-proxy-manager`.
 
-## Using it with 3x-ui Auto Nginx
+> **Important:** the connection link contains the access key for your proxy. Do not publish it.
 
-If you also want 3x-ui and Xray on your VPS, use our other project,
-[3x-ui Auto Nginx](https://github.com/xPROMSx/3x-ui-auto-nginx).
-It prepares the server and sets up Nginx and HTTPS.
+## 🤝 Coexistence with 3X-UI AUTO NGINX
 
-Install **3x-ui Auto Nginx** first, then **Telegram Web Proxy Manager**.
-The projects can run together on the same VPS and are managed independently.
+If you also need **3X-UI** and Xray on the VPS, use [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx). It prepares Nginx, HTTPS, and the 3X-UI configuration.
+
+**Install order:** first 3X-UI AUTO NGINX, then Telegram Web Proxy Manager. Both projects can run on the same VPS while managing their own services and certificates independently. Telegram needs **its own unused domain or subdomain**.
 
 ## Under the hood
 
-The proxy runs on [Telemt](https://github.com/telemt/telemt).
-The manager installs, configures and updates it for you;
-no separate Telemt setup or knowledge is required.
+The proxy is powered by [Telemt](https://github.com/telemt/telemt). The manager installs, configures, and updates Telemt; you do not need to install it separately.
 
-## Requirements
+## Requirements and testing
 
-- Ubuntu **24.04 or 26.04**.
-- Root access.
-- A separate domain or subdomain with a DNS A record pointing to the VPS's public
-  IPv4 address, not used by 3x-ui (including REALITY) or other Nginx sites.
-- An existing Nginx installation with a compatible configuration.
+- **Ubuntu 24.04 or 26.04**, **root** access.
+- A separate domain or subdomain with a DNS A record pointing to the VPS's public IPv4 address, not used by 3X-UI / REALITY or another Nginx site.
+- A running Nginx instance with a [supported configuration](docs/OPERATIONS.md).
 
-See the [operations guide](docs/OPERATIONS.md) for the full requirements
-and supported configurations.
-
-The project is tested automatically and on a real Ubuntu VPS.
-See the [test coverage documentation](docs/CI-COVERAGE.md) for details and limitations.
+The project undergoes automated testing, including Nginx integration and compatibility with 3X-UI AUTO NGINX. See [test coverage and limitations](docs/CI-COVERAGE.md).
 
 ## Documentation
 
 - [Operations and recovery](docs/OPERATIONS.md)
 - [Test coverage and limitations](docs/CI-COVERAGE.md)
 - [Telemt sources and release verification](docs/UPSTREAM.md)
-- [MIT License](LICENSE)
+- [GPL-3.0 License](LICENSE)
