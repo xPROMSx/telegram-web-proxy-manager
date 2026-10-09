@@ -2,7 +2,7 @@
 
 [🇷🇺 Русский](README.md) · [🇬🇧 English](README.en.md) · [🇪🇬 العربية](README_AR.md) · 🇮🇷 **فارسی** · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center">Telegram Web Proxy Manager</h1>
+<h1 align="center"><img src="assets/branding/logo.png" alt="Telegram Web Proxy Manager" width="560"></h1>
 
 ### پروکسی اختصاصی تلگرام روی VPS، بدون پیکربندی دستی
 
