@@ -4,6 +4,8 @@ import io
 import gzip
 import json
 import os
+import pty
+import subprocess
 import tarfile
 from pathlib import Path
 import shutil
@@ -123,6 +125,79 @@ class ThreeXTopologyTests(unittest.TestCase):
     def plan_nginx(self):
         s.nginx_plan(self.root, "proxy.example.com", self.plan)
         return json.loads(self.plan.read_text())
+
+    def run_shell_plan(self, host, *, terminal=False, term='xterm-256color', no_color=False):
+        script = '''source "$1/telemt-web-manager.sh"
+NGINX_ROOT=$2 DOMAIN=$3 TMP=$4
+nginx_plan
+printf 'INSTALL_CONTINUED\\n'
+'''
+        env = dict(os.environ, TERM=term)
+        env.pop('NO_COLOR', None)
+        if no_color:
+            env['NO_COLOR'] = ''
+        args = ['bash', '-c', script, 'fixture', str(ROOT), str(self.root), host, self.temp.name]
+        if not terminal:
+            result = subprocess.run(args, env=env, capture_output=True, timeout=15)
+            return result.returncode, result.stdout + result.stderr
+        master, slave = pty.openpty()
+        try:
+            with os.fdopen(slave, 'wb') as output:
+                result = subprocess.run(args, env=env, stdout=subprocess.PIPE, stderr=output, timeout=15)
+            captured = result.stdout
+            while True:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError as error:
+                    if error.errno != 5:  # Linux PTY EOF.
+                        raise
+                    break
+                if not chunk:
+                    break
+                captured += chunk
+            return result.returncode, captured.replace(b'\r\n', b'\n')
+        finally:
+            os.close(master)
+
+    def test_occupied_domain_diagnostic_is_fixed_private_and_color_aware(self):
+        reality = self.root/'sites-enabled/reality.conf'
+        reality.write_text(reality.read_text() + '\n# PRIVATE_PASSWORD tg://webproxy?secret=PRIVATE_SECRET\n')
+        before = self.snapshot()
+        expected = ('ERROR: This domain is already used in Nginx (possibly by 3x-ui / REALITY).\n'
+                    'Use a separate, unused domain or subdomain for Telegram WEB.\n'
+                    'No Nginx configuration was changed.\n').encode()
+        for terminal, term, no_color, color in (
+                (False, 'xterm-256color', False, False), (True, 'xterm-256color', False, True),
+                (True, 'xterm-256color', True, False), (True, 'dumb', False, False),
+                (True, '', False, False), (True, 'unknown', False, False)):
+            with self.subTest(terminal=terminal, term=term, no_color=no_color):
+                code, output = self.run_shell_plan('reality.example.com', terminal=terminal,
+                                                   term=term, no_color=no_color)
+                self.assertEqual(code, 1)
+                self.assertEqual(output, b'\x1b[1;31m' + expected[:-1] + b'\x1b[0m\n' if color else expected)
+                self.assertNotIn(b'INSTALL_CONTINUED', output)
+                self.assertNotIn(b'PRIVATE_', output)
+                self.assertNotIn(b'automatic nginx integration not possible', output)
+                self.assertEqual(before, self.snapshot())
+                self.assertFalse((Path(self.temp.name)/'nginx-plan.json').exists())
+
+    def test_free_domain_shell_plan_still_succeeds_read_only(self):
+        before = self.snapshot()
+        code, output = self.run_shell_plan('proxy.example.com')
+        self.assertEqual((code, output), (0, b'INSTALL_CONTINUED\n'))
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(len(json.loads((Path(self.temp.name)/'nginx-plan.json').read_text())['edits']), 2)
+
+    def test_other_unsafe_plan_keeps_generic_secret_safe_refusal(self):
+        self.stream.write_text(self.stream.read_text().replace('$ssl_preread_server_name', '$remote_addr')
+                               + '\n# PRIVATE_PASSWORD tg://webproxy?secret=PRIVATE_SECRET\n')
+        before = self.snapshot()
+        code, output = self.run_shell_plan('proxy.example.com')
+        self.assertEqual(code, 1)
+        self.assertEqual(output, b'Safety validation failed; manual review required (no credentials displayed).\n'
+                                b'ERROR: automatic nginx integration not possible\n')
+        self.assertEqual(before, self.snapshot())
+        self.assertFalse((Path(self.temp.name)/'nginx-plan.json').exists())
 
     def test_production_layout_preserves_routes_and_shared_http_files(self):
         before = self.snapshot()

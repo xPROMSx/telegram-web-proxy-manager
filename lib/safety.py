@@ -34,6 +34,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+class NginxDomainInUse(ValueError):
+    """Exact foreign server_name collision; no configuration text is diagnostic."""
+
+
 def require(ok, message="automatic nginx integration not possible"):
     if not ok:
         raise ValueError(message)
@@ -743,7 +747,8 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         if n.path in (vhost, acme):
             continue
         if n.args[0] == "server_name":
-            require(host not in n.args[1:])
+            if host in n.args[1:]:
+                raise NginxDomainInUse()
         if n.args[0] == "listen" and n not in exact(router.children, "listen"):
             require(len(n.args) >= 2)
             address = n.args[1]
@@ -4429,6 +4434,9 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except NginxDomainInUse:
+        # Fixed protocol with the shell planner; never transmit exception text.
+        sys.exit(20)
     except (ValueError, OSError, KeyError, TypeError, AttributeError, IndexError, tarfile.TarError, subprocess.SubprocessError):
         # Config parse errors may contain credentials. Never echo exception text.
         print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
