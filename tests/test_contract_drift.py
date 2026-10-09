@@ -262,5 +262,84 @@ class RenewalContractTests(unittest.TestCase):
                 self.assertEqual(before, path.read_bytes())
 
 
+class FreshHTTPSBudgetTests(unittest.TestCase):
+    def run_budget(self, mode):
+        # Actual http_ok()/wait_https_ready(); only curl transport and clock fake.
+        script = r'''source "$1/telemt-web-manager.sh"
+DOMAIN=proxy.example.com
+# File descriptor avoids subprocess variable state disappearing in http_ok().
+exec 3>"$2"
+curl() {
+    local previous='' limit=0 arg
+    for arg in "$@"; do
+        [[ $arg != -k && $arg != --insecure ]] || return 99
+        if [[ $previous == --max-time ]]; then limit=$arg; fi
+        previous=$arg
+    done
+    [[ $limit -gt 0 && $limit -le 5 ]] || return 98
+    printf '%s\n' "$limit" >&3
+    if [[ $mode == immediate ]]; then printf 200; return 0; fi
+    return 28
+}
+# SECONDS is changed by the parent http_ok wrapper, not the curl subshell.
+eval "$(declare -f http_ok | sed '1s/http_ok/production_http_ok/')"
+mode=$3
+http_ok() {
+    local previous='' limit=0 arg
+    for arg in "$@"; do
+        if [[ $previous == --max-time ]]; then limit=$arg; fi
+        previous=$arg
+    done
+    if [[ $mode == immediate ]]; then production_http_ok "$@"; return "$?"; fi
+    SECONDS=$((SECONDS+limit))
+    if [[ $mode == public-fail && $* == *--resolve* ]]; then printf '%s\n' "$limit" >&3; return 0; fi
+    production_http_ok "$@"
+}
+sleep() { [[ $1 == 1 ]]; SECONDS=$((SECONDS+1)); }
+SECONDS=0
+result=0
+wait_https_ready || result=$?
+printf '%s %s\n' "$result" "$SECONDS"
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            calls = Path(directory)/'calls'
+            result = subprocess.run(['bash', '-c', script, 'fixture', str(ROOT), str(calls), mode],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return tuple(map(int, result.stdout.split())), list(map(int, calls.read_text().split()))
+
+    def test_immediate_readiness_needs_two_requests_and_no_pause(self):
+        state, limits = self.run_budget('immediate')
+        self.assertEqual(state, (0, 0))
+        self.assertEqual(limits, [5, 5])
+
+    def test_timeouts_do_not_extend_the_overall_deadline(self):
+        state, limits = self.run_budget('timeout')
+        self.assertEqual(state, (1, 29))
+        self.assertEqual(limits, [5, 5, 5, 5, 5])
+
+    def test_public_failure_recomputes_remaining_request_budget(self):
+        state, limits = self.run_budget('public-fail')
+        self.assertEqual(state, (1, 29))
+        self.assertEqual(limits, [5, 5, 5, 5, 5, 2])
+
+
+    def test_existing_path_check_keeps_fail_fast_https_contract(self):
+        script = r'''source "$1/telemt-web-manager.sh"
+DOMAIN=proxy.example.com
+nginx_test() { return 0; }
+service_active() { return 0; }
+listener_ready() { return 0; }
+process_identity() { return 0; }
+http_ok() { [[ $* != *https://* ]]; }
+wait_https_ready() { printf UNEXPECTED_RETRY; return 0; }
+socks_probe() { printf UNEXPECTED_SOCKS; return 0; }
+if path_health; then exit 99; fi
+'''
+        result = subprocess.run(['bash', '-c', script, 'fixture', str(ROOT)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+
 if __name__ == "__main__":
     unittest.main()

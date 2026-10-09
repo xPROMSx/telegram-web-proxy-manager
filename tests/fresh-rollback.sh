@@ -7,3 +7,6 @@ python3 tests/three_x_ui.py "$fixture/nginx" --script x-ui-latest.sh
 for failure in late after-user directories cleanup userdel groupdel identity partial-useradd stop preexisting-user preexisting-path; do
     FIXTURE_FAILURE=$failure bash tests/fresh.sh "$fixture/nginx"
 done
+for mode in delayed ready inactive wrong-cert public-fail; do
+    FIXTURE_HTTPS=$mode bash tests/fresh.sh "$fixture/nginx"
+done

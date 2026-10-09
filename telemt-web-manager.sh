@@ -545,12 +545,37 @@ http_ok() {
     [[ $code == 200 ]]
 }
 
+wait_https_ready() {
+    # Reserve a second for Bash clock granularity within the 30-second budget.
+    local deadline=$((SECONDS+29)) remaining limit
+    while (( SECONDS < deadline )); do
+        remaining=$((deadline-SECONDS)); limit=$((remaining < 5 ? remaining : 5))
+        if http_ok --connect-timeout "$limit" --max-time "$limit" \
+            --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" 2>/dev/null; then
+            remaining=$((deadline-SECONDS))
+            (( remaining > 0 )) || break
+            limit=$((remaining < 5 ? remaining : 5))
+            if http_ok --connect-timeout "$limit" --max-time "$limit" "https://$DOMAIN/" 2>/dev/null; then
+                (( SECONDS < deadline )) && return 0
+                break
+            fi
+        fi
+        (( SECONDS < deadline )) || break
+        sleep 1
+    done
+    return 1
+}
+
 path_health() {
     nginx_test && service_active && listener_ready && process_identity || return 1
     http_ok -H "Host: $DOMAIN" http://127.0.0.1:18080/ || return 1
     # Traverse stream on :443 too: internal :7444 requires a PROXY preamble.
-    http_ok --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || return 1
-    http_ok "https://$DOMAIN/" || return 1
+    if [[ ${1:-} == fresh ]]; then
+        wait_https_ready || die $'Telegram HTTPS route did not become ready after Nginx reload.\nCheck SNI routing, TLS certificate and public HTTPS reachability.'
+    else
+        http_ok --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || return 1
+        http_ok "https://$DOMAIN/" || return 1
+    fi
     socks_probe
 }
 
@@ -944,7 +969,7 @@ install_manager() {
     systemctl enable --now telemt.service
     wait_ready 90 || die 'Telemt did not become ready'
     apply_nginx
-    if ! path_health || ! recent_logs "$since"; then die 'Post-install health failed'; fi
+    if ! path_health fresh || ! recent_logs "$since"; then die 'Post-install health failed'; fi
     install -d -m 0755 "$(dirname "$RENEW_HOOK")"
     if [[ ! -e $RENEW_HOOK ]]; then
         track_file "$RENEW_HOOK"
