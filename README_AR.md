@@ -1,6 +1,6 @@
 <div align="center">
 
-[🇷🇺 Русский](README.md) · [🇬🇧 English](README.en.md) · **🇪🇬 العربية** · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
+[🇷🇺 Русский](README.md) · [🇬🇧 English](README.en.md) · 🇪🇬 **العربية** · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
 <h1 align="center">Telegram Web Proxy Manager</h1>
 
