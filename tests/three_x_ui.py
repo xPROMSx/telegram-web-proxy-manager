@@ -14,7 +14,10 @@ COMMIT = "59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd"
 BLOB = "c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81"
 NEW_COMMIT = "eba91cfe80144f91ce2ce771859ba1787421d0fa"
 NEW_BLOB = "c98dcfb9cc8456b8fe72fe34b1238311c59ae1ed"
-PROFILES = {"legacy": (COMMIT, BLOB), "webroot": (NEW_COMMIT, NEW_BLOB)}
+V162_COMMIT = "0a3f79ff99d3c544aef1683b1c6eacbd7c605d40"
+V162_BLOB = "07400c3cae40fee713df5bc21eb8c7dde674d4fc"
+PROFILES = {"legacy": (COMMIT, BLOB), "webroot": (NEW_COMMIT, NEW_BLOB),
+            "v1.6.2": (V162_COMMIT, V162_BLOB)}
 VALUES = {
     "domain": "panel.example.com", "reality_domain": "reality.example.com",
     "sub_path": "subscription", "json_path": "json", "xhttp_path": "xhttp",

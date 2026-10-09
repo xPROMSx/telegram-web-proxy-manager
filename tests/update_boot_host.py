@@ -52,7 +52,7 @@ for attempt in range(4):
     if any('TWM_BOOT_ALL_PASS' in line for line in combined): break
 else: raise AssertionError('four actual boots did not complete committed/nonterminal recovery and terminal housekeeping regressions')
 assert all(any(marker in line for line in combined) for marker in
-    ('TWM_EMPTY_QUOTA_BASELINE_OK','TWM_EMPTY_QUOTA_UPDATE_OK','TWM_SYNTHETIC_QUOTA_CANONICALIZED_OK','TWM_PARTITION_IO_CONTRACT_OK','TWM_BASELINE_ISOLATION_OK','TWM_HOSTILE_ISOLATION_ALL_PASS','TWM_FILESYSTEM_REAL_PASS',
+    ('TWM_HTTPS_SNI_RELOAD_OK','TWM_EMPTY_QUOTA_BASELINE_OK','TWM_EMPTY_QUOTA_UPDATE_OK','TWM_SYNTHETIC_QUOTA_CANONICALIZED_OK','TWM_PARTITION_IO_CONTRACT_OK','TWM_BASELINE_ISOLATION_OK','TWM_HOSTILE_ISOLATION_ALL_PASS','TWM_FILESYSTEM_REAL_PASS',
      'TWM_REAL_UPDATE_OK','TWM_REAL_OFFLINE_CHECK_OK','TWM_COMMITTED_BOOT_OK','TWM_HARD_POWERLOSS_READY','TWM_NONTERMINAL_BOOT_OK',
      'TWM_TERMINAL_HOUSEKEEPING_BOOT_OK COMMITTED','TWM_TERMINAL_HOUSEKEEPING_BOOT_OK ROLLBACK_COMPLETE'))
 print(f'REAL Ubuntu {family} boot/systemd/official Update/hard-power-loss recovery: PASS; no skips or fallback',flush=True)

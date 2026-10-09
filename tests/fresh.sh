@@ -113,6 +113,7 @@ candidate_healthcheck() {
     else [[ -f $SANDBOX/certificate-attempt ]]; printf ok >"$SANDBOX/final-validated"; fi
 }
 wait_ready() { [[ -f $SANDBOX/final-validated ]]; printf ok >"$SANDBOX/readiness"; }
+eval "$(declare -f path_health | sed '1s/path_health/production_path_health/')"
 path_health() { printf ok >"$SANDBOX/path-health"; }
 # Historical 3.5.10 journal transport fixture, not pinned runtime expectations.
 journalctl() { cat "$ROOT/tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl"; }
@@ -131,6 +132,66 @@ if [[ ${FIXTURE_LINK_UX:-0} == 1 ]]; then
     (set -Eeuo pipefail; trap cleanup EXIT
      INTERACTIVE_INSTALL=${FIXTURE_MENU_INSTALL:-1}
      install_manager)
+    exit 0
+fi
+# The captured production checker invokes these fixture callbacks indirectly.
+# shellcheck disable=SC2317
+if [[ -n ${FIXTURE_HTTPS:-} ]]; then
+    # Production orchestration + path checks, controlled HTTPS transport/clock.
+    eval "$(declare -f ensure_certificate | sed '1s/ensure_certificate/fixture_ensure_certificate/')"
+    ensure_certificate() {
+        fixture_ensure_certificate
+        printf issued >>"$SANDBOX/https-issuance"
+        find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort >"$SANDBOX/before-https-nginx"
+    }
+    service_active() { printf x >>"$SANDBOX/service-checks"; }
+    listener_ready() { printf x >>"$SANDBOX/listener-checks"; }
+    process_identity() { printf x >>"$SANDBOX/process-checks"; }
+    socks_probe() { printf x >>"$SANDBOX/socks-checks"; }
+    http_ok() {
+        if [[ $* != *https://* ]]; then printf x >>"$SANDBOX/http-checks"; return 0; fi
+        printf x >>"$SANDBOX/https-checks"
+        # Advance a test-only Bash clock: permanent failures finish immediately.
+        local previous='' arg
+        for arg in "$@"; do
+            if [[ $previous == --max-time ]]; then [[ $arg -gt 0 && $arg -le 5 ]] || return 99; fi
+            previous=$arg
+        done
+        if [[ $FIXTURE_HTTPS == delayed && $(wc -c <"$SANDBOX/https-checks") == 1 ]]; then return 60; fi
+        if [[ $FIXTURE_HTTPS == wrong-cert || $FIXTURE_HTTPS == inactive ||
+              ( $FIXTURE_HTTPS == public-fail && $* != *--resolve* ) ]]; then
+            SECONDS=$((SECONDS+5))
+            [[ $FIXTURE_HTTPS != wrong-cert ]] || return 60
+            return 7
+        fi
+    }
+    sleep() { [[ $1 == 1 ]]; SECONDS=$((SECONDS+1)); printf x >>"$SANDBOX/retry-pauses"; }
+    path_health() { production_path_health "$@" && printf ok >"$SANDBOX/path-health"; }
+    result=0
+    (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$SANDBOX/https.log" 2>&1 || result=$?
+    # The parent's SECONDS is not the subprocess clock; assertions below count
+    # exactly the requests and pauses from that bounded subprocess.
+    [[ $(cat "$SANDBOX/https-issuance") == issued ]]
+    [[ $(cat "$SANDBOX/service-checks") == x && $(cat "$SANDBOX/listener-checks") == x &&
+       $(cat "$SANDBOX/process-checks") == x && $(cat "$SANDBOX/http-checks") == x ]]
+    if [[ $FIXTURE_HTTPS == ready || $FIXTURE_HTTPS == delayed ]]; then
+        if [[ $result != 0 ]]; then cat "$SANDBOX/https.log" >&2; exit 1; fi
+        [[ -f $STATE/manifest.json && -f $BIN && -f $UNIT && -f $SANDBOX/path-health ]]
+        [[ $(cat "$SANDBOX/socks-checks") == xx ]]
+        if [[ $FIXTURE_HTTPS == ready ]]; then
+            [[ $(wc -c <"$SANDBOX/https-checks") == 2 && ! -e $SANDBOX/retry-pauses ]]
+        else [[ $(wc -c <"$SANDBOX/https-checks") -ge 3 && -e $SANDBOX/retry-pauses ]]; fi
+    else
+        [[ $result != 0 && ! -e $BIN && ! -e $DATA && ! -e $CONFIG_DIR && ! -e $UNIT &&
+           ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt && ! -e $RENEW_HOOK ]]
+        [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group ]]
+        cmp -s "$SANDBOX/before-https-nginx" <(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
+        grep -q 'Telegram HTTPS route did not become ready after Nginx reload' "$SANDBOX/https.log"
+        grep -q 'Rolling back managed changes' "$SANDBOX/https.log"
+        if grep -q 'Post-install health failed\|CRITICAL\|tg://' "$SANDBOX/https.log"; then exit 1; fi
+        [[ $(wc -c <"$SANDBOX/https-checks") -le 12 ]]
+    fi
+    printf 'ok - fresh HTTPS %s: bounded route checks; independent checks once; no reissuance; commit/rollback verified\n' "$FIXTURE_HTTPS"
     exit 0
 fi
 if [[ -n ${FIXTURE_FAILURE:-} ]]; then
