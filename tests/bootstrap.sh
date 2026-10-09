@@ -31,9 +31,13 @@ bootstrap_repository_metadata() {
     printf 200
 }
 bootstrap_download() {
-    local url=$1 target=$2 downloaded_version=${MANAGER_TAG:-$fixture_version}
+    local url=$1 target=$2 downloaded_version=${VERSION:-$fixture_version}
+    [[ $fixture_mode != stable || -n $VERSION ]] || downloaded_version=v0.0.9
     printf '%s\n' "$url" >>"$SANDBOX/requests"
     case $url in
+        "https://api.github.com/repos/$MANAGER_REPO/git/ref/heads/main")
+            if [[ $fixture_mode == foreign ]]; then printf '{"ref":"refs/heads/foreign"}' >"$target"
+            else printf '{"ref":"refs/heads/main","object":{"type":"commit","sha":"%040d"}}' 1 >"$target"; fi;;
         "https://api.github.com/repos/$MANAGER_REPO/releases"*|"https://api.github.com/repos/$MANAGER_REPO/releases/tags/"*)
             python3 - "$target" "$fixture_version" "$fixture_mode" "$url" <<'PY'
 import json, sys
@@ -70,7 +74,9 @@ PY
             [[ $fixture_mode != helper-failure ]] || return 1
             if [[ $fixture_mode == helper-empty ]]; then : >"$target";
             elif [[ $fixture_mode == python-invalid ]]; then printf 'if :\n' >"$target";
-            else cp "$ROOT/lib/safety.py" "$target"; fi
+            else
+                sed "s/^UPDATE_MANAGER_VERSION = .*/UPDATE_MANAGER_VERSION = '${downloaded_version#v}'/" "$ROOT/lib/safety.py" >"$target"
+            fi
             ;;
         *) return 1;;
     esac
@@ -189,7 +195,7 @@ else:
  print('ok - bootstrap root requirement enforced before downloads')
 PY
 run_bootstrap
-grep -q 'Installed manager v0.1.0' "$SANDBOX/bootstrap.log"
+grep -q 'Installed manager 0.1.0' "$SANDBOX/bootstrap.log"
 [[ $("$LAUNCHER") == fixture-v0.1.0 ]]
 python3 - "$INSTALL_DIR" "$LAUNCHER" <<'PY'
 from pathlib import Path
@@ -198,7 +204,7 @@ root, launcher = map(Path,sys.argv[1:])
 for p, mode in ((root,0o755),(root/'lib',0o755),(root/'telemt-web-manager.sh',0o755),(root/'lib/safety.py',0o644),(launcher,0o755)):
  s=p.lstat(); assert s.st_uid==s.st_gid==0 and s.st_mode & 0o7777==mode and not p.is_symlink()
 PY
-printf 'ok - published prerelease-only manager selected; draft ignored; immutable same-commit pair; root ownership/modes and launcher\n'
+printf 'ok - main manager selected without release enumeration; immutable same-commit pair; root ownership/modes and launcher\n'
 old=$(pair_hash)
 run_bootstrap
 [[ $(pair_hash) == "$old" ]]
@@ -207,11 +213,11 @@ fixture_mode=stable
 rejected
 grep -q 'automatic downgrade refused' "$SANDBOX/bootstrap.log"
 run_bootstrap --version v0.0.9
-grep -q 'Installed manager v0.0.9' "$SANDBOX/bootstrap.log"
+grep -q 'Installed manager 0.0.9' "$SANDBOX/bootstrap.log"
 printf 'ok - automatic stable downgrade refused; explicit published downgrade allowed\n'
 fixture_mode=annotated
 run_bootstrap --version v0.1.0
-grep -q 'Installed manager v0.1.0' "$SANDBOX/bootstrap.log"
+grep -q 'Installed manager 0.1.0' "$SANDBOX/bootstrap.log"
 printf 'ok - explicit published version and annotated tag resolve to immutable commit\n'
 old=$(pair_hash)
 for fixture_mode in shell-failure helper-failure shell-empty helper-empty bash-invalid python-invalid foreign version-mismatch unrecognized; do
@@ -235,7 +241,7 @@ old=$(pair_hash)
 identity=$(stat -c '%d:%i' "$INSTALL_DIR")
 fixture_version=v0.1.0
 rejected
-grep -q 'Installed manager 0.1.1; automatically selected v0.1.0; automatic downgrade refused' "$SANDBOX/bootstrap.log"
+grep -q 'Installed manager 0.1.1; automatically selected 0.1.0; automatic downgrade refused' "$SANDBOX/bootstrap.log"
 [[ $(pair_hash) == "$old" && $(stat -c '%d:%i' "$INSTALL_DIR") == "$identity" && $("$LAUNCHER") == fixture-v0.1.1 ]]
 printf 'ok - automatic downgrade before persistent installation mutation; installed pair and launcher unchanged\n'
 fixture_version=v0.1.1

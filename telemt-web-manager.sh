@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Telegram Web Proxy Manager. MIT. Requires Bash 5 and Python 3.11+.
+# Telegram Web Proxy Manager. GPL-3.0. Requires Bash 5 and Python 3.11+.
 set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=1.1.0
+readonly SCRIPT_VERSION=1.1.2
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1

@@ -28,10 +28,10 @@ class RepositoryTransition(unittest.TestCase):
         for key, name in (('primary', PRIMARY), ('legacy', LEGACY)):
             (self.root / (key + '.json')).write_text(json.dumps(repository(name)))
             (self.root / (key + '.status')).write_text('200')
-            (self.root / (key + '-release.json')).write_text(json.dumps([dict(
+            (self.root / (key + '-release.json')).write_text(json.dumps(dict(
                 draft=False, prerelease=False, tag_name='v1.1.0',
                 published_at='2026-10-07T00:00:00Z',
-                html_url='https://github.com/' + name + '/releases/tag/v1.1.0')]))
+                html_url='https://github.com/' + name + '/releases/tag/v1.1.0')))
 
     def resolve(self, success=True):
         script = r'''source "$1"; BOOTSTRAP_TMP=$2
@@ -45,7 +45,7 @@ bootstrap_repository_metadata() {
 bootstrap_download() {
     printf '%s\n' "$1" >>"$BOOTSTRAP_TMP/requests"
     case $1 in
-        */releases\?*)
+        */releases/tags/v1.1.0)
             local key=legacy
             [[ $MANAGER_REPO != "$PRIMARY_MANAGER_REPO" ]] || key=primary
             cp "$BOOTSTRAP_TMP/$key-release.json" "$2";;
@@ -56,7 +56,7 @@ bootstrap_download() {
         *) return 1;;
     esac
 }
-resolve_manager_repository; resolve_manager_release
+VERSION=v1.1.0; resolve_manager_repository; resolve_manager_release
 printf '%s %s %s\n' "$MANAGER_REPO" "$MANAGER_TAG" "$MANAGER_COMMIT"
 '''
         result = subprocess.run(['bash', '-c', script, 'fixture', str(ROOT / 'install.sh'),
@@ -110,7 +110,7 @@ printf '%s %s %s\n' "$MANAGER_REPO" "$MANAGER_TAG" "$MANAGER_COMMIT"
             with self.subTest(key=key):
                 (self.root / 'primary.status').write_text('200' if key == 'primary' else '404')
                 value = json.loads((self.root / (key + '-release.json')).read_text())
-                value[0]['html_url'] = 'https://github.com/attacker/foreign/releases/tag/v1.1.0'
+                value['html_url'] = 'https://github.com/attacker/foreign/releases/tag/v1.1.0'
                 (self.root / (key + '-release.json')).write_text(json.dumps(value))
                 _, calls = self.resolve(False)
                 self.assertFalse(any('/git/' in url for url in calls))
@@ -139,11 +139,11 @@ class LauncherMigration(unittest.TestCase):
                 for directory in (self.root / 'opt', self.root / 'bin')
                 for p in directory.rglob('*') if p.is_file()}
 
-    def install(self, success=True, injection='', tag='v1.1.0'):
+    def install(self, success=True, injection='', tag='v1.1.2'):
         # No production bypass: inject errors into this fixture's Python interpreter.
         code = '''source "$1"; BOOTSTRAP_TMP=$2/source; INSTALL_DIR=$2/opt/telemt-web-manager
 LAUNCHER=$2/bin/telemt-web-manager; BOOTSTRAP_LOCK=$2/lock/manager.lock
-MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd; MANAGER_TAG=v1.1.0
+MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd; MANAGER_TAG=v1.1.2
 '''
         if injection:
             (self.root / 'inject.py').write_text(injection)
@@ -165,7 +165,7 @@ MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd; MANAGER_TAG=v1.1.0
                              (0, 0, 0o755, 1))
             result = subprocess.run([str(path), '--help'], capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0)
-            self.assertIn(b'Telegram Web Proxy Manager 1.1.0', result.stdout)
+            self.assertIn(b'Telegram Web Proxy Manager 1.1.2', result.stdout)
             self.assertIn(b'Usage: telegram-web-proxy-manager', result.stdout)
         self.assertEqual(self.legacy.read_bytes(), self.canonical.read_bytes())
 
@@ -176,7 +176,9 @@ MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd; MANAGER_TAG=v1.1.0
     def test_pre_rename_published_101_candidate_is_still_accepted(self):
         path = self.source / 'telemt-web-manager.sh'
         path.write_text(path.read_text().replace('# Telegram Web Proxy Manager.',
-            '# Telemt WEB Manager.').replace('SCRIPT_VERSION=1.1.0', 'SCRIPT_VERSION=1.0.1'))
+            '# Telemt WEB Manager.').replace('SCRIPT_VERSION=1.1.2', 'SCRIPT_VERSION=1.0.1'))
+        helper = self.source / 'safety.py'
+        helper.write_text(helper.read_text().replace("UPDATE_MANAGER_VERSION = '1.1.2'", "UPDATE_MANAGER_VERSION = '1.0.1'"))
         self.install(tag='v1.0.1')
         self.assertEqual(self.legacy.read_bytes(), self.canonical.read_bytes())
         self.assertEqual((self.dest / 'telemt-web-manager.sh').read_bytes(), path.read_bytes())
@@ -185,7 +187,7 @@ MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd; MANAGER_TAG=v1.1.0
         self.dest.mkdir(0o755); (self.dest / 'lib').mkdir(0o755)
         script = (ROOT / 'telemt-web-manager.sh').read_text().replace(
             '# Telegram Web Proxy Manager.', '# Telemt WEB Manager.').replace(
-            'SCRIPT_VERSION=1.1.0', 'SCRIPT_VERSION=1.0.1')
+            'SCRIPT_VERSION=1.1.2', 'SCRIPT_VERSION=1.0.1')
         (self.dest / 'telemt-web-manager.sh').write_text(script)
         (self.dest / 'telemt-web-manager.sh').chmod(0o755)
         (self.dest / 'lib/safety.py').write_bytes((ROOT / 'lib/safety.py').read_bytes())
@@ -250,9 +252,9 @@ class PublicBrand(unittest.TestCase):
             self.assertNotIn('Telemt WEB Manager', text, filename)
         shell = (ROOT / 'telemt-web-manager.sh').read_text()
         helper = (ROOT / 'lib/safety.py').read_text()
-        self.assertIn('readonly SCRIPT_VERSION=1.1.0', shell)
-        self.assertIn("UPDATE_MANAGER_VERSION = '1.1.0'", helper)
-        self.assertEqual(helper.count("'User-Agent': 'telegram-web-proxy-manager/1.1.0'"), 2)
+        self.assertIn('readonly SCRIPT_VERSION=1.1.2', shell)
+        self.assertIn("UPDATE_MANAGER_VERSION = '1.1.2'", helper)
+        self.assertEqual(helper.count("'User-Agent': 'telegram-web-proxy-manager/1.1.2'"), 2)
         for filename in ('README.md', 'README.en.md'):
             text = (ROOT / filename).read_text()
             # Language navigation now precedes the centered project heading.
