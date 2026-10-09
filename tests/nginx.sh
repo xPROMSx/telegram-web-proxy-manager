@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Real Nginx integration on private test ports. No production config is read/written.
 set -Eeuo pipefail
+# Public, inert fixtures must be readable by workers even under guest UMask=0077.
+umask 022
 cd -- "$(dirname -- "$0")/.."
 root=$PWD
 test_dir=$(mktemp -d)
@@ -44,6 +46,7 @@ for name in proxy panel reality; do
         -addext "subjectAltName=DNS:$name.example.com" \
         -keyout "$test_dir/$name.key.pem" -out "$test_dir/$name.cert.pem" >/dev/null 2>&1
 done
+chmod 0600 "$test_dir/"*.key.pem
 cat "$test_dir/"*.cert.pem >"$test_dir/ca.pem"
 python3 - "$test_dir" <<'PY'
 from pathlib import Path

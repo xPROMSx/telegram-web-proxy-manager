@@ -213,7 +213,10 @@ def main():
           ' PID1='+Path('/proc/1/comm').read_text().strip(),flush=True)
     if not PHASE.exists():
         # Reuse the private-port fixture on each real distro's stock Nginx.
-        print(s.update_run(['bash',str(ROOT/'tests/nginx.sh')],timeout=120).decode(),flush=True)
+        result=subprocess.run(['bash',str(ROOT/'tests/nginx.sh')],capture_output=True,timeout=120)
+        for line in result.stdout.decode().splitlines():
+            print('TWM_HTTPS_FIXTURE '+line,flush=True)
+        assert result.returncode==0,'private HTTPS/SNI fixture failed'
         print('TWM_HTTPS_SNI_RELOAD_OK '+subprocess.check_output(['nginx','-v'],stderr=subprocess.STDOUT,timeout=5).decode().strip(),flush=True)
         engine=setup()
         old=engine.local_receipt(allow_legacy=True)
