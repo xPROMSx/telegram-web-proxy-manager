@@ -24,7 +24,8 @@ Use SOCKS5 when your VPS cannot reach Telegram directly.
 
 ## Quick start
 
-You need an Ubuntu VPS, a domain with a DNS A record pointing to the server,
+You need an Ubuntu VPS, a separate domain or subdomain with a DNS A record pointing
+to the server (not used by 3x-ui, including REALITY, or other Nginx sites),
 root access and Nginx already running a compatible configuration.
 If your server is not ready yet, 3x-ui Auto Nginx can help — see below.
 
@@ -60,7 +61,8 @@ no separate Telemt setup or knowledge is required.
 
 - Ubuntu **24.04 or 26.04**.
 - Root access.
-- A domain with a DNS A record pointing to the VPS's public IPv4 address.
+- A separate domain or subdomain with a DNS A record pointing to the VPS's public
+  IPv4 address, not used by 3x-ui (including REALITY) or other Nginx sites.
 - An existing Nginx installation with a compatible configuration.
 
 See the [operations guide](docs/OPERATIONS.md) for the full requirements

@@ -565,13 +565,23 @@ nginx_plan() {
 }
 
 build_nginx_plan() {
+    local status=0 red='' reset=''
     if [[ $PLAN_MODE == uninstall ]]; then
-        helper nginx-uninstall-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
+        helper nginx-uninstall-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     elif [[ $PLAN_MODE == acme ]]; then
-        helper acme-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
+        helper acme-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     else
-        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT"
+        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     fi
+    if (( status == 20 )); then
+        # Only the helper's exact foreign server_name conflict uses this code.
+        if [[ -t 2 && -n ${TERM:-} && $TERM != dumb && $TERM != unknown && ! -v NO_COLOR ]]; then
+            red=$'\033[1;31m' reset=$'\033[0m'
+        fi
+        printf '%sERROR: This domain is already used in Nginx (possibly by 3x-ui / REALITY).\nUse a separate, unused domain or subdomain for Telegram WEB.\nNo Nginx configuration was changed.%s\n' "$red" "$reset" >&2
+        exit 1
+    fi
+    return "$status"
 }
 
 apply_nginx() {
