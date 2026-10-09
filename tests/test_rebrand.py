@@ -258,10 +258,17 @@ class PublicBrand(unittest.TestCase):
         for filename in ('README.md', 'README.en.md'):
             text = (ROOT / filename).read_text()
             # Language navigation now precedes the centered project heading.
-            self.assertIn('<h1 align="center">Telegram Web Proxy Manager</h1>', text)
+            self.assertIn('<h1 align="center"><img src="assets/branding/logo.png" alt="Telegram Web Proxy Manager" width="560"></h1>', text)
             self.assertNotIn('xPROMSx/telemt-web-manager', text)
             self.assertIn('xPROMSx/telegram-web-proxy-manager/main/install.sh', text)
             self.assertIn('](docs/UPSTREAM.md)', text)
+        for filename in ('README_AR.md', 'README_FA.md', 'README_ZH_CN.md',
+                         'README_ES.md', 'README_TR.md'):
+            text = (ROOT / filename).read_text()
+            self.assertIn('<h1 align="center"><img src="assets/branding/logo.png" alt="Telegram Web Proxy Manager" width="560"></h1>', text)
+        logo = ROOT / 'assets/branding/logo.png'
+        self.assertTrue(logo.is_file(), 'Upload assets/branding/logo.png before merging')
+        self.assertEqual(logo.read_bytes()[:8], bytes((137, 80, 78, 71, 13, 10, 26, 10)))
         # Recognition of old program headers is the explicit legacy ABI allowlist.
         self.assertEqual(helper.count('# Telemt WEB Manager.'), 1)
         self.assertEqual((ROOT / 'install.sh').read_text().count('# Telemt WEB Manager.'), 2)
