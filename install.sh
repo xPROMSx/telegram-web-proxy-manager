@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install only the manager program pair from an official published release.
+# Install only the manager program pair from one verified official commit.
 set +x
 set -Eeuo pipefail
 umask 077
@@ -11,7 +11,7 @@ CANONICAL_LAUNCHER=''
 BOOTSTRAP_LOCK=/run/lock/telemt-web-manager.lock
 MANAGER_STATE=/var/lib/telemt-web-manager
 MANAGER_SYSTEMD_ROOT=/etc/systemd/system
-BOOTSTRAP_TMP='' MANAGER_TAG='' MANAGER_COMMIT='' VERSION='' NO_START=0
+BOOTSTRAP_TMP='' MANAGER_TAG='' MANAGER_COMMIT='' MANAGER_VERSION='' VERSION='' NO_START=0
 readonly PRIMARY_MANAGER_REPO=xPROMSx/telegram-web-proxy-manager
 readonly LEGACY_MANAGER_REPO=xPROMSx/telemt-web-manager
 MANAGER_REPO=$LEGACY_MANAGER_REPO
@@ -62,7 +62,7 @@ PYREPO
     bootstrap_die 'Manager repository unavailable'
 }
 
-# Shared by release selection, downloaded-pair validation and the locked guard.
+# Shared by source resolution, downloaded-pair validation and the locked guard.
 # This code is part of the installer, never loaded from an installed/downloaded file.
 bootstrap_version_code() {
     cat <<'PY'
@@ -114,79 +114,45 @@ def manager_version(path):
 PY
 }
 
-resolve_manager_release() {
-    local page count sha kind depth
-    local -a metadata=()
-    if [[ -n $VERSION ]]; then
-        # Keep the public explicit-tag surface: one prerelease OR build suffix.
-        [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || bootstrap_die 'Expected a published version tag, e.g. v0.1.0'
-        { bootstrap_version_code; cat <<'PYCODE'
-import sys
-if not sys.argv[1].startswith('v'): sys.exit(1)
-version_key(sys.argv[1][1:])
-PYCODE
-        } | python3 - "$VERSION" || bootstrap_die 'Expected a published SemVer tag, e.g. v0.1.0'
-        bootstrap_download "https://api.github.com/repos/$MANAGER_REPO/releases/tags/$VERSION" "$BOOTSTRAP_TMP/releases.json" || bootstrap_die 'Manager release metadata unavailable'
-        metadata+=("$BOOTSTRAP_TMP/releases.json")
-    else
-        for ((page=1; page<=20; page++)); do
-            bootstrap_download "https://api.github.com/repos/$MANAGER_REPO/releases?per_page=100&page=$page" "$BOOTSTRAP_TMP/releases-$page.json" || bootstrap_die 'Manager release metadata unavailable'
-            metadata+=("$BOOTSTRAP_TMP/releases-$page.json")
-            count=$({ bootstrap_version_code; cat <<'PY'
+resolve_manager_source() {
+    if [[ -n $VERSION ]]; then resolve_manager_release; return; fi
+    bootstrap_download "https://api.github.com/repos/$MANAGER_REPO/git/ref/heads/main" "$BOOTSTRAP_TMP/ref.json" || bootstrap_die 'Manager main metadata unavailable'
+    MANAGER_COMMIT=$({ bootstrap_version_code; cat <<'PYMAIN'
 import sys
 value = load_metadata(sys.argv[1])
-if not isinstance(value, list) or len(value) > 100: sys.exit(1)
-print(len(value))
-PY
-            } | python3 - "${metadata[-1]}"
-            ) || bootstrap_die 'Invalid manager release list'
-            (( count == 100 )) || break
-        done
-        (( count < 100 )) || bootstrap_die 'Release history too large; select --version explicitly'
-    fi
-    MANAGER_TAG=$({ bootstrap_version_code; cat <<'PY'
+if not isinstance(value, dict) or value.get('ref') != 'refs/heads/main': sys.exit(1)
+obj = value.get('object')
+if (not isinstance(obj, dict) or obj.get('type') != 'commit'
+        or not isinstance(obj.get('sha'), str) or not re.fullmatch('[0-9a-f]{40}', obj['sha'])):
+    sys.exit(1)
+print(obj['sha'])
+PYMAIN
+    } | python3 - "$BOOTSTRAP_TMP/ref.json") || bootstrap_die 'Invalid manager main commit'
+}
+
+resolve_manager_release() {
+    local sha kind depth
+    [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || bootstrap_die 'Expected a published version tag, e.g. v1.1.2'
+    { bootstrap_version_code; cat <<'PYTAG'
+import sys
+version_key(sys.argv[1][1:])
+PYTAG
+    } | python3 - "$VERSION" || bootstrap_die 'Expected a published SemVer tag'
+    bootstrap_download "https://api.github.com/repos/$MANAGER_REPO/releases/tags/$VERSION" "$BOOTSTRAP_TMP/release.json" || bootstrap_die 'Manager release metadata unavailable'
+    MANAGER_TAG=$({ bootstrap_version_code; cat <<'PYRELEASE'
 import datetime, sys
-releases = []
-repository = sys.argv[2]
-for filename in sys.argv[3:]:
-    value = load_metadata(filename)
-    if sys.argv[1]:
-        if not isinstance(value, dict): sys.exit(1)
-        releases.append(value)
-    else:
-        if not isinstance(value, list): sys.exit(1)
-        releases.extend(value)
-valid, seen = [], set()
-for release in releases:
-    if not isinstance(release, dict): sys.exit(1)
-    if release.get('draft') is True: continue
-    if release.get('draft') is not False or not isinstance(release.get('prerelease'), bool): sys.exit(1)
-    tag = release.get('tag_name')
-    if not isinstance(tag, str) or not tag.startswith('v'): sys.exit(1)
-    key = version_key(tag[1:])
-    if tag in seen: sys.exit(1)
-    seen.add(tag)
-    if release.get('html_url') != 'https://github.com/' + repository + '/releases/tag/' + tag: sys.exit(1)
-    published = release.get('published_at')
-    if not isinstance(published, str): sys.exit(1)
-    if datetime.datetime.fromisoformat(published.replace('Z', '+00:00')).tzinfo is None: sys.exit(1)
-    # A GitHub prerelease flag on a plain core version remains supported (v0.1.0
-    # is published that way). A SemVer prerelease cannot be treated as stable.
-    valid.append((key, tag, release['prerelease'] or not key[1]))
-if sys.argv[1]:
-    valid = [r for r in valid if r[1] == sys.argv[1]]
-else:
-    stable = [r for r in valid if not r[2]]
-    if stable: valid = stable
-if not valid: sys.exit(1)
-latest = max(r[0] for r in valid)
-selected = [r for r in valid if r[0] == latest]
-# Distinct tags at equal highest precedence require administrator selection.
-if len(selected) != 1: sys.exit(1)
-print(selected[0][1])
-PY
-    } | python3 - "$VERSION" "$MANAGER_REPO" "${metadata[@]}"
-    ) || bootstrap_die 'Ambiguous or invalid published manager release; select --version explicitly after review'
+value = load_metadata(sys.argv[1])
+tag, repository = sys.argv[2:]
+if (not isinstance(value, dict) or value.get('draft') is not False
+        or not isinstance(value.get('prerelease'), bool) or value.get('tag_name') != tag
+        or value.get('html_url') != 'https://github.com/' + repository + '/releases/tag/' + tag):
+    sys.exit(1)
+published = value.get('published_at')
+if not isinstance(published, str) or datetime.datetime.fromisoformat(published.replace('Z', '+00:00')).tzinfo is None:
+    sys.exit(1)
+print(tag)
+PYRELEASE
+    } | python3 - "$BOOTSTRAP_TMP/release.json" "$VERSION" "$MANAGER_REPO") || bootstrap_die 'Invalid published manager release'
     bootstrap_download "https://api.github.com/repos/$MANAGER_REPO/git/ref/tags/$MANAGER_TAG" "$BOOTSTRAP_TMP/ref.json" || bootstrap_die 'Published manager tag unavailable'
     for ((depth=0; depth<5; depth++)); do
         local object
@@ -213,18 +179,28 @@ PY
 validate_manager_pair() {
     [[ -s $BOOTSTRAP_TMP/telemt-web-manager.sh && -s $BOOTSTRAP_TMP/safety.py ]] || bootstrap_die 'Empty manager download'
     bash -n "$BOOTSTRAP_TMP/telemt-web-manager.sh" || bootstrap_die 'Invalid manager Bash syntax'
-    { bootstrap_version_code; cat <<'PY'
+    MANAGER_VERSION=$({ bootstrap_version_code; cat <<'PY'
 import sys
-script, helper, tag = sys.argv[1:]
+script, helper = sys.argv[1:]
 if not Path(script).read_bytes().startswith((b'#!/usr/bin/env bash\n# Telegram Web Proxy Manager.', b'#!/usr/bin/env bash\n# Telemt WEB Manager.')):
     raise ValueError('Downloaded program is not recognized as this manager')
 if not Path(helper).read_bytes().startswith(b'#!/usr/bin/env python3\n"""Strict, read-only parsers and staged Nginx plans.'):
     raise ValueError('Downloaded helper is not recognized')
-if manager_version(script) != tag[1:]:
-    raise ValueError('Downloaded SCRIPT_VERSION does not match published tag')
+version = manager_version(script)
+import ast
+tree = ast.parse(Path(helper).read_bytes())
+values = [node.value.value for node in tree.body
+          if isinstance(node, ast.Assign) and len(node.targets) == 1
+          and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'UPDATE_MANAGER_VERSION'
+          and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)]
+assignments = [node for node in ast.walk(tree) if isinstance(node, ast.Name)
+               and isinstance(node.ctx, ast.Store) and node.id == 'UPDATE_MANAGER_VERSION']
+if len(assignments) != 1 or values != [version]:
+    raise ValueError('Manager Bash/Python versions differ')
 compile(Path(helper).read_bytes(), 'safety.py', 'exec')
+print(version)
 PY
-    } | python3 - "$BOOTSTRAP_TMP/telemt-web-manager.sh" "$BOOTSTRAP_TMP/safety.py" "$MANAGER_TAG"
+    } | python3 - "$BOOTSTRAP_TMP/telemt-web-manager.sh" "$BOOTSTRAP_TMP/safety.py")
 }
 
 commit_manager_pair() {
@@ -234,7 +210,8 @@ commit_manager_pair() {
 import ast, ctypes, datetime, fcntl, hashlib, json, os, re, shutil, signal, stat, sys, tempfile
 from pathlib import Path
 source, dest, launcher, lock = map(Path, sys.argv[1:5])
-tag, explicit, state_path, systemd_path, canonical_path = sys.argv[5:]
+explicit, state_path, systemd_path, canonical_path = sys.argv[5:]
+candidate_version = manager_version(source / 'telemt-web-manager.sh')
 canonical = Path(canonical_path)
 launchers = (launcher, canonical)
 if launcher == canonical: raise ValueError('Launcher paths must be distinct')
@@ -515,8 +492,8 @@ try:
             else: missing_launchers.append(target)
         if had_pair:
             installed = manager_version(dest / 'telemt-web-manager.sh')
-            if not explicit and version_key(tag[1:]) < version_key(installed):
-                raise ValueError(f'Installed manager {installed}; automatically selected {tag}; '
+            if not explicit and version_key(candidate_version) < version_key(installed):
+                raise ValueError(f'Installed manager {installed}; automatically selected {candidate_version}; '
                                  'automatic downgrade refused. Use --version for an intentional published version.')
         # All validation and downgrade checks precede installation staging/commit files.
         stage = Path(tempfile.mkdtemp(prefix='.telemt-web-manager.', dir=dest.parent))
@@ -561,7 +538,7 @@ finally:
     for staged in staged_launchers.values():
         if staged.exists(): staged.unlink()
 PY
-    } | python3 - "$BOOTSTRAP_TMP" "$INSTALL_DIR" "$LAUNCHER" "$BOOTSTRAP_LOCK" "$MANAGER_TAG" "$VERSION" "$MANAGER_STATE" "$MANAGER_SYSTEMD_ROOT" "${CANONICAL_LAUNCHER:-${LAUNCHER%/*}/telegram-web-proxy-manager}"
+    } | python3 - "$BOOTSTRAP_TMP" "$INSTALL_DIR" "$LAUNCHER" "$BOOTSTRAP_LOCK" "$VERSION" "$MANAGER_STATE" "$MANAGER_SYSTEMD_ROOT" "${CANONICAL_LAUNCHER:-${LAUNCHER%/*}/telegram-web-proxy-manager}"
 }
 
 launch_manager_menu() {
@@ -590,13 +567,13 @@ bootstrap_main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
     resolve_manager_repository
-    resolve_manager_release
+    resolve_manager_source
     local base="https://raw.githubusercontent.com/$MANAGER_REPO/$MANAGER_COMMIT"
     bootstrap_download "$base/telemt-web-manager.sh" "$BOOTSTRAP_TMP/telemt-web-manager.sh" || bootstrap_die 'Manager shell download failed/empty'
     bootstrap_download "$base/lib/safety.py" "$BOOTSTRAP_TMP/safety.py" || bootstrap_die 'Manager helper download failed/empty'
     validate_manager_pair || bootstrap_die 'Invalid manager Python/Bash syntax'
     commit_manager_pair || bootstrap_die 'Manager installation transaction failed; review the error above'
-    printf 'Installed manager %s (%s). Run: telegram-web-proxy-manager\n' "$MANAGER_TAG" "$MANAGER_COMMIT"
+    printf 'Installed manager %s (%s). Run: telegram-web-proxy-manager\n' "$MANAGER_VERSION" "$MANAGER_COMMIT"
     rm -rf -- "$BOOTSTRAP_TMP"; BOOTSTRAP_TMP=''
     launch_manager_menu
 }

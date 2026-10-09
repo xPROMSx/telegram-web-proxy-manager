@@ -444,7 +444,7 @@ bash tests/upstream.sh   # Real pinned binary config healthcheck; no process sta
 bash tests/staging.sh    # Real config healthcheck; lifecycle/path/journal transport mocked
 sudo bash tests/runtime.sh # Disposable runner: actual Telemt, isolated net namespace
 bash tests/pinned.sh --versions # With TELEMT_TEST_EVIDENCE_DIR from all three layers
-bash tests/bootstrap_versions.sh # SemVer, installed parser and paginated release fixtures
+bash tests/bootstrap_versions.sh # SemVer, installed parser and explicit release fixtures
 sudo bash tests/bootstrap.sh # Root-owned isolated bootstrap atomicity/release/TTY fixtures
 bash tests/conntrack.sh  # CI: sudo + isolated namespace, actual Noble nf_tables
 bash tests/nginx.sh      # nginx + libnginx-mod-stream; private ports
@@ -574,35 +574,29 @@ It first queries `xPROMSx/telegram-web-proxy-manager`. Only an actual HTTP 404
 allows fallback to `xPROMSx/telemt-web-manager`. Canonical repository metadata must
 identify the fixed repository ID 1398514078 and owner ID 102687702, one of those two
 exact names and matching GitHub URL, and a public, non-fork, active repository.
-Network errors, rate limits and malformed/foreign metadata refuse; releases must
-match the selected canonical identity. After rename, discovery uses the new name
-directly. It ignores drafts, prefers
-the highest published stable SemVer, and uses the highest prerelease only while
-no stable exists. SemVer prerelease tags are never classified as stable even if
-GitHub's prerelease flag is false; a plain core tag flagged prerelease is supported.
-Duplicate JSON fields fail closed. Release pages are enumerated with 100 entries
-per page until a short page, up to 20 pages. A full twentieth page, failed page, malformed metadata or duplicate tag
-causes refusal rather than selection from an incomplete/ambiguous history.
-Publication timestamps validate published status but never decide precedence.
-Core and numeric prerelease identifiers compare by digit length then ASCII digits,
-without bounded integer conversion. Build metadata is accepted but ignored for
-precedence; distinct highest tags of equal precedence require explicit `--version`.
-The existing explicit-tag surface accepts a prerelease or a build suffix, not
-both together. Default discovery retains its existing support for both suffixes;
-ambiguities outside the explicit surface require manual review.
-`--version v0.1.0` selects an explicit published tag, including prereleases.
-The tag is resolved through official Git objects to a commit SHA; annotated tag
-objects must identify the exact requested object SHA;
-both files are fetched over HTTPS from that same immutable commit. Metadata
-cannot supply an arbitrary download URL or repository. Release ambiguity, unsafe
-ref syntax, failed/empty downloads, Bash/Python syntax errors all cause refusal.
+Network errors, rate limits and malformed/foreign metadata refuse. Ordinary
+installation resolves the exact `refs/heads/main` Git ref to a validated commit
+SHA. Both program files are downloaded from that frozen SHA, never independent
+mutable `raw/main` requests. No Releases or tags API is used in this mode.
 
-The bootstrap script itself is fetched from main in the quick command; review it
-or download it before execution if desired. The program pair is never installed
-from mutable main. To test an unpublished PR/commit, use the advanced/manual
-installation workflow with its reviewed immutable checkout.
-The manager's release channel is independent from the fixed Telemt 3.5.12 Install
-baseline and Universal Update's compatibility-driven official release discovery.
+`--version v1.1.0` selects only that published release, including prereleases.
+Its URL must match the selected canonical repository identity. The tag resolves
+through official Git objects to a commit SHA; annotated objects must identify
+the requested object SHA. Both files come from that immutable commit.
+Unsafe refs, failed/empty downloads and Bash/Python syntax errors cause refusal.
+The actual manager version is read statically from the shell and must match the
+helper's literal `UPDATE_MANAGER_VERSION`; downloaded programs are never executed
+for version discovery. A historical tag/content mismatch does not change the
+reported installed version. Completion prints the actual version and source SHA.
+
+The quick command fetches the bootstrap itself from main; review/download it
+before execution if desired. Unpublished PR testing still requires a reviewed
+immutable checkout. Manager installation is independent from Telemt's fixed
+3.5.12 Install baseline and Universal Update's official release discovery.
+Before publishing a new manager tag, run the explicit pre-publication check:
+`bash tests/bootstrap_versions.sh --release-tag v1.1.2`.
+This compares the intended tag with both source versions; it does not publish
+anything and cannot prevent a tag created without running the check.
 
 Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
 Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then
@@ -618,8 +612,8 @@ installed manager is read as UTF-8 text; only one exact unquoted
 fixed generated prologue is accepted. Missing,
 malformed, duplicate or ambiguous declarations fail closed, including for explicit
 updates. No installed shell content is sourced, evaluated or executed.
-Downloaded file identity and declared version must also match the published tag.
-For automatic selection, a candidate below the installed SemVer is refused before
+Downloaded file identity and Bash/Python version consistency are validated.
+For ordinary installation, the actual candidate version below the installed SemVer is refused before
 any installation stage, directory replacement or launcher mutation. The error
 shows both versions. Equal versions can safely reinstall; newer versions update.
 An explicit valid published `--version` permits an intentional downgrade while

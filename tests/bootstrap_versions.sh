@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# Read-only SemVer/release/parser tests; full transactions remain in bootstrap.sh.
+# Read-only SemVer/source/parser tests; full transactions remain in bootstrap.sh.
 set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 # shellcheck source=install.sh
 source ./install.sh
 SANDBOX=$(mktemp -d)
 trap 'rm -rf -- "$SANDBOX"' EXIT
+if [[ ${1:-} == --release-tag ]]; then
+    (( $# == 2 )) || bootstrap_die 'Usage: tests/bootstrap_versions.sh --release-tag vX.Y.Z'
+    BOOTSTRAP_TMP=$SANDBOX
+    cp telemt-web-manager.sh "$SANDBOX/telemt-web-manager.sh"
+    cp lib/safety.py "$SANDBOX/safety.py"
+    validate_manager_pair
+    [[ $2 == "v$MANAGER_VERSION" ]] || bootstrap_die 'Release target does not match manager Bash/Python version'
+    printf 'ok - release target %s matches source pair\n' "$2"
+    exit 0
+fi
 { bootstrap_version_code; cat <<'PY'
 import sys
 root = Path(sys.argv[1])
@@ -35,7 +45,7 @@ prefix = '\n'.join(Path('telemt-web-manager.sh').read_text().split('\n')[:6]) + 
 script.write_text(prefix+'readonly SCRIPT_VERSION=0.1.1\ntouch '+str(marker)+'\n')
 assert manager_version(script) == '0.1.1' and not marker.exists()
 # Real manager declarations and variable references remain supported.
-assert manager_version('telemt-web-manager.sh') == '1.1.0'
+assert manager_version('telemt-web-manager.sh') == '1.1.2'
 for bad in ('', '# readonly SCRIPT_VERSION=0.1.1', 'readonly SCRIPT_VERSION=01.1.1',
             'readonly SCRIPT_VERSION="0.1.1"', ' readonly SCRIPT_VERSION=0.1.1',
             'readonly SCRIPT_VERSION=0.1.1 # comment', 'SCRIPT_VERSION=0.1.1',
@@ -58,7 +68,7 @@ PY
 } | python3 - "$SANDBOX"
 
 # Validate the actual downloaded-pair path without root or executing either file.
-BOOTSTRAP_TMP=$SANDBOX MANAGER_TAG=v1.1.0
+BOOTSTRAP_TMP=$SANDBOX
 cp telemt-web-manager.sh "$SANDBOX/telemt-web-manager.sh"
 cp lib/safety.py "$SANDBOX/safety.py"
 validate_manager_pair
@@ -79,54 +89,34 @@ cp "$SANDBOX/valid-script" "$SANDBOX/telemt-web-manager.sh"
 printf 'print("unrecognized helper")\n' >"$SANDBOX/safety.py"
 if (validate_manager_pair) >"$SANDBOX/validation.log" 2>&1; then bootstrap_die 'Unrecognized helper accepted'; fi
 printf 'ok - syntactically valid unrelated helper refused before commit\n'
-fixture_mode='' expected='' explicit=''
+# Only explicitly selected published releases are resolved; no history enumeration.
+fixture_mode=''
 bootstrap_download() {
     local url=$1 target=$2
     case $url in
-        *'/releases?'*|*'/releases/tags/'*)
-            python3 - "$target" "$fixture_mode" "$url" <<'PY'
+        *'/releases/tags/'*)
+            python3 - "$target" "$fixture_mode" "${url##*/}" <<'PYRELEASE'
 import json, sys
-path, mode, url = sys.argv[1:]
-def release(tag, pre=False, draft=False, date='2026-01-01T00:00:00Z'):
-    return dict(tag_name=tag, draft=draft, prerelease=pre, published_at=date,
-                html_url='https://github.com/xPROMSx/telemt-web-manager/releases/tag/'+tag)
-value = {
- 'timestamp': [release('v0.3.0'), release('v0.2.5', date='2026-09-01T00:00:00Z')],
- 'stable': [release('v1.9.0'), release('v1.10.0'), release('v1.2.0')],
- 'stable-first': [release('v2.0.0-rc.1', True), release('v1.9.0')],
- 'prerelease': [release('v1.2.3-alpha.2', True), release('v1.2.3-alpha.10', True)],
- 'draft': [release('v1.9.0'), release('v99.0.0', draft=True)],
- 'semver-pre': [release('v1.9.0'), release('v2.0.0-rc.1')],
- 'build-tie': [release('v1.2.3+linux.1'), release('v1.2.3+sha.123')],
- 'duplicate': [release('v1.2.3'), release('v1.2.3')],
- 'invalid-tag': [release('v1.2.3-alpha..1')],
- 'invalid-zero': [release('v1.2.3-01')],
- 'malformed-json': [None],
- 'unpublished': [release('v1.2.3', date=None)],
- 'flags': [dict(release('v1.2.3'), draft=0)],
- 'oversized-page': [release('v0.0.'+str(i)) for i in range(101)],
- 'explicit-draft': [release('v1.2.3', draft=True)],
-}.get(mode, [release('v1.1.0')])
-if mode.startswith('pagination'):
-    page = int(url.rsplit('=', 1)[1])
-    if page == 1 or mode == 'pagination-limit':
-        value = [release('v0.0.'+str((page-1)*100+i)) for i in range(100)]
-    elif mode == 'pagination-failed': sys.exit(1)
-    elif mode == 'pagination-duplicate': value = [release('v0.0.0')]
-    else: value = [release('v9.0.0')]
-if '/tags/' in url:
-    tag = url.rsplit('/', 1)[1]
-    value = next((r for r in value if isinstance(r,dict) and r['tag_name'] == tag), None)
-Path = __import__('pathlib').Path
-if mode == 'duplicate-fields':
-    Path(path).write_text('[{"draft":true,"draft":false,"prerelease":false,"tag_name":"v1.1.0","published_at":"2026-01-01T00:00:00Z","html_url":"https://github.com/xPROMSx/telemt-web-manager/releases/tag/v1.1.0"}]')
-else: Path(path).write_text(json.dumps(value))
-PY
+path, mode, tag = sys.argv[1:]
+value = dict(tag_name=tag, draft=False, prerelease=False,
+             published_at='2026-01-01T00:00:00Z',
+             html_url='https://github.com/xPROMSx/telemt-web-manager/releases/tag/'+tag)
+if mode == 'draft': value['draft'] = True
+if mode == 'foreign': value['html_url'] = 'https://github.com/attacker/foreign/releases/tag/'+tag
+if mode == 'flags': value['prerelease'] = 0
+if mode == 'unpublished': value['published_at'] = None
+if mode == 'wrong-tag': value['tag_name'] = 'v9.9.9'
+if mode == 'malformed': value = []
+text = json.dumps(value)
+if mode == 'duplicate': text = text.replace('"draft": false', '"draft": true, "draft": false')
+__import__('pathlib').Path(path).write_text(text)
+PYRELEASE
             ;;
         *'/git/ref/tags/'*)
-            [[ $fixture_mode != bad-ref ]] || { printf '{"ref":"refs/tags/v1.1.0","object":{"sha":"oops","type":"commit"}}' >"$target"; return; }
             if [[ $fixture_mode == annotated || $fixture_mode == annotated-mismatch ]]; then
                 printf '{"ref":"refs/tags/%s","object":{"type":"tag","sha":"%040d"}}' "${url##*/}" 2 >"$target"
+            elif [[ $fixture_mode == bad-ref ]]; then
+                printf '{"ref":"refs/tags/wrong","object":{"type":"commit","sha":"oops"}}' >"$target"
             else printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%040d"}}' "${url##*/}" 1 >"$target"; fi;;
         *'/git/tags/'*)
             if [[ $fixture_mode == annotated-mismatch ]]; then
@@ -136,33 +126,27 @@ PY
     esac
 }
 select_release() {
-    local fixture_mode=$1 expected=$2 explicit=${3:-}
+    local fixture_mode=$1 expected=$2 explicit=${3:-v1.1.2}
     if (BOOTSTRAP_TMP=$SANDBOX VERSION=$explicit; resolve_manager_release; [[ $MANAGER_TAG == "$expected" ]]) >"$SANDBOX/result" 2>&1; then
         [[ -n $expected ]] || bootstrap_die "Unexpected release acceptance: $fixture_mode"
     else
         [[ -z $expected ]] || { cat "$SANDBOX/result" >&2; bootstrap_die "Release selection failed: $fixture_mode"; }
     fi
-    printf 'ok - release selection %s (%s)\n' "$fixture_mode" "${expected:-refused}"
+    printf 'ok - explicit release %s (%s)\n' "$fixture_mode" "${expected:-refused}"
 }
-select_release annotated v1.1.0
-select_release timestamp v0.3.0
-select_release stable v1.10.0
-select_release stable-first v1.9.0
-select_release prerelease v1.2.3-alpha.10
-select_release draft v1.9.0
-select_release semver-pre v1.9.0
-select_release build-tie ''
-select_release build-tie v1.2.3+sha.123 v1.2.3+sha.123
-for fixture_mode in duplicate invalid-tag invalid-zero malformed-json unpublished flags explicit-draft bad-ref duplicate-fields oversized-page annotated-mismatch; do
+select_release valid v1.1.2
+select_release annotated v1.1.2
+select_release valid v1.2.3-alpha.10 v1.2.3-alpha.10
+select_release valid v1.2.3+sha.123 v1.2.3+sha.123
+for fixture_mode in draft foreign flags unpublished wrong-tag malformed duplicate bad-ref annotated-mismatch; do
     select_release "$fixture_mode" ''
 done
-select_release explicit-draft '' v1.2.3
-select_release pagination v9.0.0
-select_release pagination-failed ''
-select_release pagination-duplicate ''
-select_release pagination-limit ''
-select_release stable v1.2.0 v1.2.0
-select_release stable '' v1.2.3-01
-select_release stable '' '../../other'
-select_release stable '' 'v1.2.3-rc.1+build'
-printf 'ok - complete paginated history; failed/truncated enumeration refused; explicit published version; equal precedence fail-closed\n'
+for explicit in 'v1.2.3-01' '../../other' 'v1.2.3-rc.1+build'; do
+    select_release valid '' "$explicit"
+done
+# Run this explicit pre-publication check before creating a release/tag.
+bash tests/bootstrap_versions.sh --release-tag v1.1.2
+if bash tests/bootstrap_versions.sh --release-tag v1.1.1 >"$SANDBOX/release-check.log" 2>&1; then
+    bootstrap_die 'Release target/content mismatch accepted'
+fi
+printf 'ok - release preparation rejects tag/content mismatch before publication\n'
