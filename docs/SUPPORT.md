@@ -1,12 +1,12 @@
 <div align="center">
 
-🇷🇺 **Русский** · 🇬🇧 English · 🇪🇬 العربية · 🇮🇷 فارسی · 🇨🇳 简体中文 · 🇪🇸 Español · 🇹🇷 Türkçe
+🇷🇺 **Русский** · [🇬🇧 English](SUPPORT.en.md) · [🇪🇬 العربية](SUPPORT_AR.md) · [🇮🇷 فارسی](SUPPORT_FA.md) · [🇨🇳 简体中文](SUPPORT_ZH_CN.md) · [🇪🇸 Español](SUPPORT_ES.md) · [🇹🇷 Türkçe](SUPPORT_TR.md)
 
 </div>
 
 # ❤️ Поддержать разработку
 
-Если Telegram Web Proxy Manager оказался полезен, вы можете добровольно поддержать его дальнейшее развитие. Проект и все его возможности остаются бесплатными и открытыми.
+Если мои проекты оказались полезны, Вы можете добровольно поддержать дальнейшее развитие. Проект и все его возможности остаются бесплатными и открытыми независимо от поддержки.
 
 ## 💳 Поддержать картой (QR / СБП)
 
@@ -37,7 +37,7 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 <details>
 <summary>Показать QR-код TRC20</summary>
 
-<img src="../assets/support/usdt-tron.png" width="184" alt="QR-код для USDT в сети Tron (TRC20)">
+<img src="../assets/support/usdt-tron.png" width="184" alt="QR-код для Tether USD (USDT) · Tron (TRC20)">
 
 </details>
 
@@ -56,7 +56,7 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 <details>
 <summary>Показать QR-код SPL</summary>
 
-<img src="../assets/support/usdt-solana.png" width="184" alt="QR-код для USDT в сети Solana (SPL)">
+<img src="../assets/support/usdt-solana.png" width="184" alt="QR-код для Tether USD (USDT) · Solana (SPL)">
 
 </details>
 
@@ -75,10 +75,10 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 <details>
 <summary>Показать QR-код BTC</summary>
 
-<img src="../assets/support/btc-bitcoin.png" width="184" alt="QR-код для Bitcoin (BTC)">
+<img src="../assets/support/btc-bitcoin.png" width="184" alt="QR-код для Bitcoin (BTC) · Bitcoin (native SegWit)">
 
 </details>
 
 ---
 
-> **Важно:** отправляйте только указанную криптовалюту в указанной сети. В частности, USDT в сетях Tron (TRC20) и Solana (SPL) нельзя переводить между собой без соответствующего обмена или моста. Перед отправкой проверьте весь адрес получателя и сеть. Переводы в блокчейне, как правило, необратимы.
+> **Важно:** отправляйте только указанную криптовалюту в указанной сети. В частности, USDT в сетях Tron (TRC20) и Solana (SPL) нельзя переводить напрямую из одной сети в другую. Перед отправкой проверьте полный адрес получателя и сеть. Переводы в блокчейне, как правило, необратимы.
