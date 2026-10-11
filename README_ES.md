@@ -75,3 +75,7 @@ El proyecto cuenta con pruebas automatizadas, incluida la integración con Nginx
 - [Cobertura y límites de las pruebas](docs/CI-COVERAGE.md)
 - [Fuentes de Telemt y verificación de versiones](docs/UPSTREAM.md)
 - [Licencia GPL-3.0](LICENSE)
+
+## ❤️ Apoyar el desarrollo
+
+Si el proyecto te ha resultado útil, puedes [apoyar su desarrollo](docs/SUPPORT.md). Las contribuciones son voluntarias y todas las funciones seguirán siendo gratuitas y de código abierto.

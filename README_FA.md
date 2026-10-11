@@ -75,3 +75,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-m
 - [پوشش آزمون‌ها و محدودیت‌ها](docs/CI-COVERAGE.md)
 - [منابع Telemt و اعتبارسنجی انتشارها](docs/UPSTREAM.md)
 - [مجوز GPL-3.0](LICENSE)
+
+## ❤️ حمایت از توسعه
+
+اگر این پروژه برایتان مفید بوده است، می‌توانید [از توسعهٔ آن حمایت کنید](docs/SUPPORT.md). کمک‌های مالی اختیاری هستند و تمام قابلیت‌های پروژه رایگان و متن‌باز باقی می‌مانند.
