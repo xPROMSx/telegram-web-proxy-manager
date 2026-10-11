@@ -69,7 +69,8 @@ class IdentityPolicyTests(unittest.TestCase):
             self.assertNotIn("person@", message)
             bad2 = commit("xPROMSx", identity.OWNER_EMAIL, "Private Example",
                           "person@example.invalid", "private committer")
-            ok, message = identity.check_pr(base, bad2, root)
+            # Start at the preceding commit: that earlier bad author is outside this PR.
+            ok, message = identity.check_pr(bad, bad2, root)
             self.assertFalse(ok)
             self.assertIn("committer identity not approved", message)
             self.assertNotIn("person@", message)
