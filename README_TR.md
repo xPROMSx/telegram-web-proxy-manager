@@ -75,3 +75,7 @@ Proje, gerçek Nginx entegrasyonu ve 3X-UI AUTO NGINX uyumluluğu dahil otomatik
 - [Test kapsamı ve sınırlamalar](docs/CI-COVERAGE.md)
 - [Telemt kaynakları ve sürüm doğrulaması](docs/UPSTREAM.md)
 - [GPL-3.0 Lisansı](LICENSE)
+
+## ❤️ Geliştirmeyi destekleyin
+
+Bu projeyi faydalı bulduysanız [geliştirilmesine destek olabilirsiniz](docs/SUPPORT.md). Katkılar isteğe bağlıdır; tüm özellikler ücretsiz ve açık kaynak olarak kalır.
