@@ -82,4 +82,4 @@ Follow project news and updates in the [@promsdev Telegram channel](https://t.me
 
 ## ❤️ Support Development
 
-If this project has been useful, you can [support its continued development](docs/SUPPORT.md). Contributions are optional; all features remain free and open source.
+If this project has been useful, you can [support its continued development](docs/SUPPORT.en.md). Contributions are optional; all features remain free and open source.

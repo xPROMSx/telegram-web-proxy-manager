@@ -82,4 +82,4 @@ Proje haberleri ve güncellemeler için [@promsdev Telegram kanalını](https://
 
 ## ❤️ Geliştirmeyi destekleyin
 
-Bu projeyi faydalı bulduysanız [geliştirilmesine destek olabilirsiniz](docs/SUPPORT.md). Katkılar isteğe bağlıdır; tüm özellikler ücretsiz ve açık kaynak olarak kalır.
+Bu projeyi faydalı bulduysanız [geliştirilmesine destek olabilirsiniz](docs/SUPPORT_TR.md). Katkılar isteğe bağlıdır; tüm özellikler ücretsiz ve açık kaynak olarak kalır.
