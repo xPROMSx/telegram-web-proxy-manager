@@ -1,54 +1,63 @@
-# ❤️ Support Development / Поддержать разработку
+# ❤️ Support Development
 
-**English**
+If Telegram Web Proxy Manager has been useful to you, you can support its continued development. Contributions are voluntary; the project and all its features remain free and open source.
 
-If Telegram Web Proxy Manager has been useful to you, consider supporting its continued development. Contributions are voluntary; the project and all its features remain free and open source.
+## Cryptocurrency
 
-**Русский**
+Choose a cryptocurrency and **match the network exactly**. Copy the address or scan its QR code in your wallet. The QR codes contain only the corresponding public receiving addresses.
 
-Если Telegram Web Proxy Manager оказался полезен, вы можете поддержать его дальнейшую разработку. Пожертвования добровольны; программа и все её возможности остаются бесплатными и открытыми.
+<a id="usdt-tron"></a>
+### USDT · Tron (TRC20)
 
-> **Preview / Предварительный просмотр**
->
-> Donation addresses and QR codes are not published yet. Please do not send any funds.
->
-> Адреса и QR-коды пока не опубликованы. Пожалуйста, не отправляйте средства.
+**Asset:** Tether USD (USDT)  
+**Network:** Tron (TRC20)
 
-## Cryptocurrency / Криптовалюта
+```text
+TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
+```
 
-Select the asset and **exact network** below.
+<img src="../assets/support/usdt-tron.png" width="184" alt="QR code for USDT on Tron (TRC20)">
 
-Выберите актив и **строго указанную сеть**.
+<a id="usdt-solana"></a>
+### USDT · Solana (SPL)
 
-<details>
-<summary><strong>USDT · Tron (TRC20)</strong></summary>
+**Asset:** Tether USD (USDT)  
+**Network:** Solana (SPL)
 
-**Address / Адрес:** _Pending / Будет добавлен после согласования._
+```text
+HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
+```
 
-**QR code / QR-код:** _Pending / Будет добавлен после согласования._
+<img src="../assets/support/usdt-solana.png" width="184" alt="QR code for USDT on Solana (SPL)">
 
-</details>
+<a id="bitcoin"></a>
+### Bitcoin (BTC)
 
-<details>
-<summary><strong>USDT · Solana (SPL)</strong></summary>
+**Asset:** Bitcoin (BTC)  
+**Network:** Bitcoin (native SegWit)
 
-**Address / Адрес:** _Pending / Будет добавлен после согласования._
+```text
+bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
+```
 
-**QR code / QR-код:** _Pending / Будет добавлен после согласования._
+<img src="../assets/support/btc-bitcoin.png" width="184" alt="QR code for Bitcoin (BTC)">
 
-</details>
+> **Important:** Send only the specified asset on the specified network. In particular, USDT on Tron and USDT on Solana are different blockchain networks. Check the full address in your wallet before sending. Blockchain transfers are generally irreversible.
 
-<details>
-<summary><strong>Bitcoin (BTC) · Bitcoin network</strong></summary>
+---
 
-**Address / Адрес:** _Pending / Будет добавлен после согласования._
+# ❤️ Поддержать разработку
 
-**QR code / QR-код:** _Pending / Будет добавлен после согласования._
+Если Telegram Web Proxy Manager оказался полезен, вы можете добровольно поддержать его дальнейшее развитие. Проект и все его возможности остаются бесплатными и открытыми.
 
-</details>
+## Криптовалюта
 
-> **Important / Важно**
->
-> Send only the specified asset through the specified network. Blockchain transfers are generally irreversible.
->
-> Отправляйте только указанный актив по соответствующей сети. Криптовалютные переводы, как правило, необратимы.
+**Адреса кошельков и QR-коды приведены выше**, в разделе [Cryptocurrency](#cryptocurrency). Нажмите на нужную валюту, чтобы перейти к её реквизитам:
+
+- [USDT в сети Tron (TRC20)](#usdt-tron)
+- [USDT в сети Solana (SPL)](#usdt-solana)
+- [Bitcoin (BTC)](#bitcoin)
+
+Вы можете скопировать адрес из блока с кодом или отсканировать QR-код кошельком.
+
+**Важно:** при отправке USDT обязательно выбирайте **ту же сеть**, которая указана рядом с адресом. Tron (TRC20) и Solana (SPL) несовместимы между собой. Перед подтверждением перевода проверьте полный адрес получателя. Криптовалютные переводы, как правило, необратимы.
