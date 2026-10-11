@@ -7,6 +7,8 @@ If Telegram Web Proxy Manager has been useful to you, you can support its contin
 
 Choose a cryptocurrency and **match the network exactly**. Copy the address or scan its QR code in your wallet. The QR codes contain only the corresponding public receiving addresses.
 
+---
+
 <a id="usdt-tron"></a>
 ### ₮ USDT · Tron (TRC20)
 
@@ -62,6 +64,8 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 </details>
 
+---
+
 > **Important:** Send only the specified asset on the specified network. In particular, USDT on Tron and USDT on Solana are different blockchain networks. Check the full address in your wallet before sending. Blockchain transfers are generally irreversible.
 
 ---
@@ -72,11 +76,11 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 ## 🪙 Криптовалюта
 
-**Адреса кошельков и QR-коды приведены выше**, в разделе [Cryptocurrency](#cryptocurrency). Нажмите на нужную валюту, чтобы перейти к её реквизитам:
+**Адреса кошельков и QR-коды приведены выше**, в разделе [Cryptocurrency](#-cryptocurrency). Нажмите на нужную валюту, чтобы перейти к её реквизитам:
 
-- [USDT в сети Tron (TRC20)](#usdt-tron)
-- [USDT в сети Solana (SPL)](#usdt-solana)
-- [Bitcoin (BTC)](#bitcoin)
+- [USDT в сети Tron (TRC20)](#-usdt--tron-trc20)
+- [USDT в сети Solana (SPL)](#-usdt--solana-spl)
+- [Bitcoin (BTC)](#-bitcoin-btc)
 
 Вы можете скопировать адрес из блока с кодом или раскрыть QR-код под нужным кошельком: **Show TRC20 QR code**, **Show SPL QR code** либо **Show BTC QR code**.
 
