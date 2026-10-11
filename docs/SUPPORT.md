@@ -18,11 +18,13 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 ```
 
 <details>
-<summary>Show QR code</summary>
+<summary>Show TRC20 QR code</summary>
 
 <img src="../assets/support/usdt-tron.png" width="184" alt="QR code for USDT on Tron (TRC20)">
 
 </details>
+
+---
 
 <a id="usdt-solana"></a>
 ### ₮ USDT · Solana (SPL)
@@ -35,11 +37,13 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
 <details>
-<summary>Show QR code</summary>
+<summary>Show SPL QR code</summary>
 
 <img src="../assets/support/usdt-solana.png" width="184" alt="QR code for USDT on Solana (SPL)">
 
 </details>
+
+---
 
 <a id="bitcoin"></a>
 ### ₿ Bitcoin (BTC)
@@ -52,7 +56,7 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 ```
 
 <details>
-<summary>Show QR code</summary>
+<summary>Show BTC QR code</summary>
 
 <img src="../assets/support/btc-bitcoin.png" width="184" alt="QR code for Bitcoin (BTC)">
 
@@ -74,6 +78,6 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 - [USDT в сети Solana (SPL)](#usdt-solana)
 - [Bitcoin (BTC)](#bitcoin)
 
-Вы можете скопировать адрес из блока с кодом либо открыть QR-код ссылкой **Show QR code** под нужным кошельком и отсканировать его.
+Вы можете скопировать адрес из блока с кодом или раскрыть QR-код под нужным кошельком: **Show TRC20 QR code**, **Show SPL QR code** либо **Show BTC QR code**.
 
 **Важно:** при отправке USDT обязательно выбирайте **ту же сеть**, которая указана рядом с адресом. Tron (TRC20) и Solana (SPL) несовместимы между собой. Перед подтверждением перевода проверьте полный адрес получателя. Криптовалютные переводы, как правило, необратимы.
