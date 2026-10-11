@@ -82,4 +82,4 @@ Sigue las novedades y actualizaciones del proyecto en el [canal de Telegram @pro
 
 ## ❤️ Apoyar el desarrollo
 
-Si el proyecto te ha resultado útil, puedes [apoyar su desarrollo](docs/SUPPORT.md). Las contribuciones son voluntarias y todas las funciones seguirán siendo gratuitas y de código abierto.
+Si el proyecto te ha resultado útil, puedes [apoyar su desarrollo](docs/SUPPORT_ES.md). Las contribuciones son voluntarias y todas las funciones seguirán siendo gratuitas y de código abierto.

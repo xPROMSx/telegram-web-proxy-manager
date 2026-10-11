@@ -82,4 +82,4 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-m
 
 ## ❤️ 支持项目开发
 
-如果这个项目对你有所帮助，欢迎[支持项目的持续开发](docs/SUPPORT.md)。捐助完全自愿，所有功能仍然免费且开源。
+如果这个项目对你有所帮助，欢迎[支持项目的持续开发](docs/SUPPORT_ZH_CN.md)。捐助完全自愿，所有功能仍然免费且开源。
