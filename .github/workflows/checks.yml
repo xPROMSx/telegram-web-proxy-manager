@@ -40,6 +40,22 @@ jobs:
         CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         CI_EVENT: ${{ github.event_name }}
       run: python3 tests/ci_plan.py classify --base "$CI_BASE" --head "$CI_HEAD" --event "$CI_EVENT"
+  identity:
+    name: CI / Commit identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        fetch-depth: 0
+    - name: Check PR-only author and committer metadata
+      env:
+        CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        CI_EVENT: ${{ github.event_name }}
+      run: python3 tests/ci_git_identity.py --base "$CI_BASE" --head "$CI_HEAD" --event "$CI_EVENT"
   static:
     name: CI / Static
     runs-on: ubuntu-24.04
@@ -411,6 +427,7 @@ jobs:
     name: CI / Required
     needs:
     - scope
+    - identity
     - static
     - regression
     - telemt

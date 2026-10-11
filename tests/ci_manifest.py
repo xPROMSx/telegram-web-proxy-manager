@@ -17,6 +17,14 @@ def check(root=ROOT):
     jobs = workflow['jobs']
     assert manifest['schema'] == 1
     assert set(jobs) == {*REQUIRED, 'required'}, 'unexpected/missing job'
+    assert jobs['identity']['name'] == 'CI / Commit identity'
+    assert jobs['identity'].get('if') is None, 'identity check must run on every event'
+    assert jobs['identity'].get('needs') is None, 'identity check must not depend on scope'
+    assert jobs['identity']['steps'][0]['with']['fetch-depth'] == 0
+    assert jobs['identity']['steps'][-1]['env'] == {
+        'CI_BASE': '${{ github.event.pull_request.base.sha || github.event.before }}',
+        'CI_HEAD': '${{ github.event.pull_request.head.sha || github.sha }}',
+        'CI_EVENT': '${{ github.event_name }}'}
     assert jobs['required']['name'] == 'CI / Required'
     assert jobs['required']['if'] in ('always()', '${{ always() }}')
     assert set(jobs['required']['needs']) == set(REQUIRED), 'gate omitted a job'

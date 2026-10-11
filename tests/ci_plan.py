@@ -7,7 +7,7 @@ import re
 import subprocess
 
 HEAVY = ('regression', 'telemt', 'lifecycle', 'nginx', 'system26', 'system24', 'arm')
-REQUIRED = ('scope', 'static', *HEAVY)
+REQUIRED = ('scope', 'identity', 'static', *HEAVY)
 READMES = {'README.md', 'README.en.md', 'README.ru.md'}
 
 

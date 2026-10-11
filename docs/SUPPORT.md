@@ -1,48 +1,54 @@
-# ❤️ Support Development
+# ❤️ Support Development / Поддержать разработку
 
-If Telegram Web Proxy Manager is useful to you, consider supporting its continued development. Contributions are entirely optional; the project remains free and open source.
+**English**
 
-> **Preview:** This page is being prepared. Payment addresses and QR codes are not available yet. Please do not attempt to make a payment using placeholders.
+If Telegram Web Proxy Manager has been useful to you, consider supporting its continued development. Contributions are voluntary; the project and all its features remain free and open source.
 
-## Cryptocurrency
+**Русский**
 
-Select the intended asset and **exact network**. Donation addresses and corresponding QR codes will be added after review.
+Если Telegram Web Proxy Manager оказался полезен, вы можете поддержать его дальнейшую разработку. Пожертвования добровольны; программа и все её возможности остаются бесплатными и открытыми.
+
+> **Preview / Предварительный просмотр**
+>
+> Donation addresses and QR codes are not published yet. Please do not send any funds.
+>
+> Адреса и QR-коды пока не опубликованы. Пожалуйста, не отправляйте средства.
+
+## Cryptocurrency / Криптовалюта
+
+Select the asset and **exact network** below.
+
+Выберите актив и **строго указанную сеть**.
 
 <details>
 <summary><strong>USDT · Tron (TRC20)</strong></summary>
 
-**Address:** _To be added after approval._
+**Address / Адрес:** _Pending / Будет добавлен после согласования._
 
-**QR code:** _To be added after approval._
+**QR code / QR-код:** _Pending / Будет добавлен после согласования._
 
 </details>
 
 <details>
 <summary><strong>USDT · Solana (SPL)</strong></summary>
 
-**Address:** _To be added after approval._
+**Address / Адрес:** _Pending / Будет добавлен после согласования._
 
-**QR code:** _To be added after approval._
+**QR code / QR-код:** _Pending / Будет добавлен после согласования._
 
 </details>
 
 <details>
 <summary><strong>Bitcoin (BTC) · Bitcoin network</strong></summary>
 
-**Address:** _To be added after approval._
+**Address / Адрес:** _Pending / Будет добавлен после согласования._
 
-**QR code:** _To be added after approval._
+**QR code / QR-код:** _Pending / Будет добавлен после согласования._
 
 </details>
 
-> **Important:** Send only the specified asset through the specified network. Blockchain transfers are generally irreversible.
-
----
-
-## По-русски
-
-Если Telegram Web Proxy Manager оказался полезен, вы можете добровольно поддержать дальнейшую разработку. Все возможности проекта остаются бесплатными и открытыми.
-
-**Страница готовится к публикации:** адреса и QR-коды пока не добавлены. Ничего отправлять по заглушкам не нужно.
-
-Для USDT обязательно выбирайте указанную сеть: **Tron (TRC20)** либо **Solana (SPL)**. BTC принимается только в сети **Bitcoin**. Криптовалютные переводы, как правило, необратимы.
+> **Important / Важно**
+>
+> Send only the specified asset through the specified network. Blockchain transfers are generally irreversible.
+>
+> Отправляйте только указанный актив по соответствующей сети. Криптовалютные переводы, как правило, необратимы.
