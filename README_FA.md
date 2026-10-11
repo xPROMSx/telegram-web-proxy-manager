@@ -14,7 +14,7 @@
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![انتشارها](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[انتشارها](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [گزارش مشکل](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 ارتباط با توسعه‌دهنده](https://t.me/promsdev)
+[📦 انتشارها](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [🐛 گزارش مشکل](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 ارتباط و بازخورد](https://t.me/promsdev)
 
 </div>
 

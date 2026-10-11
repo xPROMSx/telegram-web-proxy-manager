@@ -14,7 +14,7 @@ Telegram sunucularına doğrudan veya SOCKS5 üzerinden bağlanın.
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![Sürümler](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[Sürümler](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Sorun bildir](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 Topluluk](https://t.me/promsdev)
+[📦 Sürümler](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [🐛 Sorun bildir](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 Topluluk](https://t.me/promsdev)
 
 </div>
 
