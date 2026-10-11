@@ -2,12 +2,13 @@
 
 If Telegram Web Proxy Manager has been useful to you, you can support its continued development. Contributions are voluntary; the project and all its features remain free and open source.
 
-## Cryptocurrency
+<a id="cryptocurrency"></a>
+## 🪙 Cryptocurrency
 
 Choose a cryptocurrency and **match the network exactly**. Copy the address or scan its QR code in your wallet. The QR codes contain only the corresponding public receiving addresses.
 
 <a id="usdt-tron"></a>
-### USDT · Tron (TRC20)
+### ₮ USDT · Tron (TRC20)
 
 **Asset:** Tether USD (USDT)  
 **Network:** Tron (TRC20)
@@ -16,10 +17,15 @@ Choose a cryptocurrency and **match the network exactly**. Copy the address or s
 TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 ```
 
+<details>
+<summary>Show QR code</summary>
+
 <img src="../assets/support/usdt-tron.png" width="184" alt="QR code for USDT on Tron (TRC20)">
 
+</details>
+
 <a id="usdt-solana"></a>
-### USDT · Solana (SPL)
+### ₮ USDT · Solana (SPL)
 
 **Asset:** Tether USD (USDT)  
 **Network:** Solana (SPL)
@@ -28,10 +34,15 @@ TMQM99YVdfzN7sWn88ee57sTwVAk2DtUbt
 HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 ```
 
+<details>
+<summary>Show QR code</summary>
+
 <img src="../assets/support/usdt-solana.png" width="184" alt="QR code for USDT on Solana (SPL)">
 
+</details>
+
 <a id="bitcoin"></a>
-### Bitcoin (BTC)
+### ₿ Bitcoin (BTC)
 
 **Asset:** Bitcoin (BTC)  
 **Network:** Bitcoin (native SegWit)
@@ -40,7 +51,12 @@ HcxHutJjEqjobUy6PdGHMGd6ov7AbzFkarJHBp5RcN9Z
 bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 ```
 
+<details>
+<summary>Show QR code</summary>
+
 <img src="../assets/support/btc-bitcoin.png" width="184" alt="QR code for Bitcoin (BTC)">
+
+</details>
 
 > **Important:** Send only the specified asset on the specified network. In particular, USDT on Tron and USDT on Solana are different blockchain networks. Check the full address in your wallet before sending. Blockchain transfers are generally irreversible.
 
@@ -50,7 +66,7 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 
 Если Telegram Web Proxy Manager оказался полезен, вы можете добровольно поддержать его дальнейшее развитие. Проект и все его возможности остаются бесплатными и открытыми.
 
-## Криптовалюта
+## 🪙 Криптовалюта
 
 **Адреса кошельков и QR-коды приведены выше**, в разделе [Cryptocurrency](#cryptocurrency). Нажмите на нужную валюту, чтобы перейти к её реквизитам:
 
@@ -58,6 +74,6 @@ bc1qdxahy3jr4xquh583wde9fe8slaulula9qz3l6g
 - [USDT в сети Solana (SPL)](#usdt-solana)
 - [Bitcoin (BTC)](#bitcoin)
 
-Вы можете скопировать адрес из блока с кодом или отсканировать QR-код кошельком.
+Вы можете скопировать адрес из блока с кодом либо открыть QR-код ссылкой **Show QR code** под нужным кошельком и отсканировать его.
 
 **Важно:** при отправке USDT обязательно выбирайте **ту же сеть**, которая указана рядом с адресом. Tron (TRC20) и Solana (SPL) несовместимы между собой. Перед подтверждением перевода проверьте полный адрес получателя. Криптовалютные переводы, как правило, необратимы.
