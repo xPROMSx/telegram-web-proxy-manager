@@ -14,7 +14,7 @@ Conexión directa a los servidores de Telegram o mediante SOCKS5.
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![Versiones](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[Versiones](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Informar de un problema](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[📦 Versiones](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [🐛 Informar de un problema](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 Comunidad](https://t.me/promsdev)
 
 </div>
 
@@ -75,6 +75,10 @@ El proyecto cuenta con pruebas automatizadas, incluida la integración con Nginx
 - [Cobertura y límites de las pruebas](docs/CI-COVERAGE.md)
 - [Fuentes de Telemt y verificación de versiones](docs/UPSTREAM.md)
 - [Licencia GPL-3.0](LICENSE)
+
+## 💬 Comunidad y comentarios
+
+Sigue las novedades y actualizaciones del proyecto en el [canal de Telegram @promsdev](https://t.me/promsdev). Envía preguntas y propuestas mediante los [mensajes al canal](https://t.me/promsdev?direct). Para errores y problemas técnicos, utiliza [GitHub Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues).
 
 ## ❤️ Apoyar el desarrollo
 

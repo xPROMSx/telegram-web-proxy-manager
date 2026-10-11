@@ -14,7 +14,7 @@
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![版本发布](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[版本发布](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [反馈问题](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[📦 版本发布](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [🐛 反馈问题](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 交流与反馈](https://t.me/promsdev)
 
 </div>
 
@@ -75,6 +75,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-m
 - [测试覆盖范围与限制](docs/CI-COVERAGE.md)
 - [Telemt 来源与发布版本验证](docs/UPSTREAM.md)
 - [GPL-3.0 许可证](LICENSE)
+
+## 💬 交流与反馈
+
+在 [Telegram 频道 @promsdev](https://t.me/promsdev) 查看项目动态和更新。问题和建议可通过[频道私信](https://t.me/promsdev?direct)发送；错误报告和技术问题请使用 [GitHub Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)。
 
 ## ❤️ 支持项目开发
 

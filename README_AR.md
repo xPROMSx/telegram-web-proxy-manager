@@ -14,7 +14,7 @@
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![الإصدارات](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[الإصدارات](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [الإبلاغ عن مشكلة](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[📦 الإصدارات](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [🐛 الإبلاغ عن مشكلة](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 المجتمع](https://t.me/promsdev)
 
 </div>
 
@@ -75,6 +75,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-m
 - [نطاق الاختبارات وحدودها](docs/CI-COVERAGE.md)
 - [مصادر Telemt والتحقق من الإصدارات](docs/UPSTREAM.md)
 - [رخصة GPL-3.0](LICENSE)
+
+## 💬 المجتمع والتواصل
+
+تابع أخبار المشروع وتحديثاته عبر [قناة Telegram ‏@promsdev](https://t.me/promsdev). يمكنك إرسال الأسئلة والاقتراحات عبر [رسائل القناة](https://t.me/promsdev?direct). للإبلاغ عن الأخطاء والمشكلات التقنية، استخدم [GitHub Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues).
 
 ## ❤️ دعم التطوير
 

@@ -8,3 +8,5 @@ Supported Telemt: **3.5.12** — baseline свежего Install; Universal Upda
 Этот файл сохраняет прежнюю ссылку на русский README и совместимость с проверкой версии в CI.
 
 Поддержка проекта: [способы поддержки](docs/SUPPORT.md).
+
+Обратная связь: [Telegram-канал @promsdev](https://t.me/promsdev) · [Написать каналу](https://t.me/promsdev?direct).
