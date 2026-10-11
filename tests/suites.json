@@ -12,6 +12,11 @@
       "command": "python3 tests/ci_plan.py classify --base \"$CI_BASE\" --head \"$CI_HEAD\" --event \"$CI_EVENT\""
     },
     {
+      "path": "tests/ci_git_identity.py",
+      "job": "identity",
+      "command": "python3 tests/ci_git_identity.py --base \"$CI_BASE\" --head \"$CI_HEAD\" --event \"$CI_EVENT\""
+    },
+    {
       "path": "tests/ci_manifest.py",
       "job": "static",
       "command": "python3 tests/ci_manifest.py"
