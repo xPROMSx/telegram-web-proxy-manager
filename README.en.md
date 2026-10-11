@@ -14,7 +14,7 @@ Connect directly to Telegram servers or through SOCKS5.
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[Releases](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Report an issue](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[Releases](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [Report an issue](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 Community](https://t.me/promsdev)
 
 </div>
 
@@ -75,6 +75,10 @@ The project undergoes automated testing, including Nginx integration and compati
 - [Test coverage and limitations](docs/CI-COVERAGE.md)
 - [Telemt sources and release verification](docs/UPSTREAM.md)
 - [GPL-3.0 License](LICENSE)
+
+## 💬 Community & Feedback
+
+Follow project news and updates in the [@promsdev Telegram channel](https://t.me/promsdev). Send questions and ideas via [channel messages](https://t.me/promsdev?direct). For bugs and technical issues, please use [GitHub Issues](https://github.com/xPROMSx/telegram-web-proxy-manager/issues).
 
 ## ❤️ Support Development
 
