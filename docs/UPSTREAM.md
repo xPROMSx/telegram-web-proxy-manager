@@ -319,7 +319,7 @@ Both run the existing fresh/rollback/ACME/real-Nginx integration chain.
 
 HTTP :80 recognition retains the legacy redirect-only form and adds only the
 exact webroot+redirect form: `listen 80` and `listen [::]:80`, exact non-conflicting
-names, an ACME `^~` location rooted at `/var/www/acme` with `default_type text/plain`
+names, an ACME `^~` location rooted at `/var/www/acme` with optional `default_type text/plain`
 and `try_files $uri =404`, plus a root location returning
 `301 https://$host$request_uri`. Extra routing, includes, directives or listener
 options are refused. Telemt continues using its own ACME webroot, ownership

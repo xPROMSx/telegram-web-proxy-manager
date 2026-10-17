@@ -345,6 +345,110 @@ printf 'INSTALL_CONTINUED\\n'
         self.assertEqual(json.loads(self.plan.read_text())['edits'], [])
         for name, raw in before.items(): self.assertEqual(Path(name).read_bytes(), raw)
 
+    def vision_topology(self):
+        # Semantic output of assets/vision/managed.py at immutable 3x-ui commit
+        # b1fd00282a887456d974c29e74891c017235050b; upstream is never executed.
+        (self.root / 'sites-enabled/80.conf').write_text(self.webroot_http())
+        self.stream.write_text(self.stream.read_text().replace(
+            '    hostnames;\n', '    hostnames;\n    vision.example.com vision;\n')
+            + '\nupstream vision { server 127.0.0.1:10443; }\n')
+        (self.root / 'sites-enabled/vision.conf').write_text("""server {
+    listen 127.0.0.1:10444 proxy_protocol;
+    server_name vision.example.com;
+    server_tokens off;
+    root /var/www/html;
+    index index.html;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+    if ($host != vision.example.com) { return 404; }
+    location / { try_files $uri $uri/ =404; }
+}
+""")
+        path = self.root / 'sites-enabled/vision-acme.conf'
+        path.write_text(self.webroot_http().replace(
+            'panel.example.com reality.example.com', 'vision.example.com').replace(
+            '        default_type text/plain;\n', ''))
+        return path
+
+    def test_vision_acme_without_default_type_preserves_foreign_topology(self):
+        self.vision_topology()
+        before = self.snapshot()
+        metadata = {str(p): (p.lstat().st_mode, p.lstat().st_uid, p.lstat().st_gid)
+                    for p in self.root.rglob('*')}
+        # WEB/SNI already accepts Vision; the RED is specifically acme_plan().
+        self.assertEqual(len(self.plan_nginx()['edits']), 2)
+        self.assertEqual(before, self.snapshot())
+        own_root = '/var/lib/telemt-web-manager-acme'
+        acme = self.root / 'conf.d/telemt-web-manager-acme.conf'
+        try:
+            s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+        finally:
+            self.assertEqual(before, self.snapshot())
+            self.assertEqual(metadata, {str(p): (p.lstat().st_mode, p.lstat().st_uid, p.lstat().st_gid)
+                                       for p in self.root.rglob('*')})
+        self.assertEqual(json.loads(self.plan.read_text())['edits'],
+                         [dict(path=str(acme), content=s.render_acme('proxy.example.com', own_root), old=None)])
+        acme.write_text(s.render_acme('proxy.example.com', own_root))
+        s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+        self.assertEqual(json.loads(self.plan.read_text())['edits'], [])
+        for name, raw in before.items(): self.assertEqual(Path(name).read_bytes(), raw)
+        # Include the WEB integration as an already-installed deployment, then
+        # prove both planners stay idempotent and never change foreign files.
+        for edit in self.plan_nginx()['edits']: Path(edit['path']).write_text(edit['content'])
+        installed = self.snapshot()
+        self.assertEqual(self.plan_nginx()['edits'], [])
+        s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+        self.assertEqual(json.loads(self.plan.read_text())['edits'], [])
+        self.assertEqual(installed, self.snapshot())
+
+    def test_external_webroot_without_plain_type_is_allowed_without_vision(self):
+        (self.root / 'sites-enabled/80.conf').write_text(
+            self.webroot_http().replace('        default_type text/plain;\n', ''))
+        before = self.snapshot()
+        s.acme_plan(self.root, 'proxy.example.com', self.plan, '/var/lib/telemt-web-manager-acme')
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(len(json.loads(self.plan.read_text())['edits']), 1)
+
+    def test_vision_acme_with_explicit_plain_type_preserves_foreign_topology(self):
+        path = self.vision_topology()
+        path.write_text(path.read_text().replace('root /var/www/acme;',
+                                                 'root /var/www/acme; default_type text/plain;'))
+        before = self.snapshot()
+        own_root = '/var/lib/telemt-web-manager-acme'
+        s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(json.loads(self.plan.read_text())['edits'], [dict(
+            path=str(self.root / 'conf.d/telemt-web-manager-acme.conf'),
+            content=s.render_acme('proxy.example.com', own_root), old=None)])
+
+    def test_vision_acme_unsafe_variants_and_occupied_domains_refused(self):
+        path = self.vision_topology()
+        original = path.read_text()
+        cases = (
+            ('root /var/www/acme;', 'root /wrong;'),
+            ('try_files $uri =404;', 'try_files $uri /index.html =404;'),
+            ('root /var/www/acme;', 'root /var/www/acme; default_type text/html;'),
+            ('root /var/www/acme;', 'root /var/www/acme; default_type text/plain; default_type text/plain;'),
+            ('root /var/www/acme;', 'root /var/www/acme; proxy_pass http://127.0.0.1;'),
+            ('location / {', 'location /other { return 404; } location / {'),
+            ('listen 80;', 'listen 80; listen 80;'),
+        )
+        for old, new in cases:
+            with self.subTest(replacement=new):
+                path.write_text(original.replace(old, new)); self.plan.unlink(missing_ok=True)
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    s.acme_plan(self.root, 'proxy.example.com', self.plan, '/var/lib/telemt-web-manager-acme')
+                self.assertEqual(before, self.snapshot())
+                self.assertTrue(all(not e['path'].endswith('/telemt-web-manager-acme.conf')
+                                    for e in json.loads(self.plan.read_text())['edits']))
+        path.write_text(original)
+        before = self.snapshot()
+        for host in ('vision.example.com', 'panel.example.com'):
+            with self.subTest(host=host), self.assertRaises(s.NginxDomainInUse):
+                s.acme_plan(self.root, host, self.plan, '/var/lib/telemt-web-manager-acme')
+            self.assertEqual(before, self.snapshot())
+
     def test_acme_webroot_unknown_routing_refused_without_mutation(self):
         original = self.webroot_http()
         path = self.root / 'sites-enabled/80.conf'
@@ -352,8 +456,8 @@ printf 'INSTALL_CONTINUED\\n'
             ('root /var/www/acme;', 'root /wrong;'),
             ('root /var/www/acme;', 'root $document_root;'),
             ('root /var/www/acme;', 'alias /var/www/acme;'),
-            ('default_type text/plain;', ''),
             ('default_type text/plain;', 'default_type text/html;'),
+            ('default_type text/plain;', 'default_type text/plain; default_type text/plain;'),
             ('try_files $uri =404;', ''),
             ('try_files $uri =404;', 'try_files $uri =200;'),
             ('try_files $uri =404;', 'try_files $uri /index.html =404;'),
