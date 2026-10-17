@@ -843,7 +843,7 @@ def acme_plan(root, host, output, webroot):
             require([n.args for n in directives if n.args[0] == "return"]
                     == [["return", "301", "https://$host$request_uri"]])
         else:
-            # Only the exact external 3x-ui webroot+redirect profile is trusted.
+            # Exact external webroot+redirect profile; Vision omits optional text/plain.
             require(all(n.args[0] != "include" for n in server.children))
             require(sorted(n.args for n in listens) == [["listen", "80"], ["listen", "[::]:80"]])
             require(len(names[0].args) > 1 and len(set(names[0].args[1:])) == len(names[0].args[1:]))
@@ -858,7 +858,9 @@ def acme_plan(root, host, output, webroot):
             require({tuple(n.args) for n in locations} == set(expected))
             for location in locations:
                 require(location.children is not None and all(n.children is None for n in location.children)
-                        and sorted(n.args for n in location.children) == sorted(expected[tuple(location.args)]))
+                        and sorted(n.args for n in location.children) in (
+                            sorted(expected[tuple(location.args)]),
+                            sorted(args for args in expected[tuple(location.args)] if args[0] != "default_type")))
             # Duplicate names on :80 would make Nginx select an ambiguous vhost.
             for other in exact(http.children, "server"):
                 if other is server or other.path == acme: continue
