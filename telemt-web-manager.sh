@@ -819,10 +819,37 @@ issue_webroot_certificate() {
     )
 }
 
+detect_public_ipv4() {
+    local url address
+    for url in https://api.ipify.org https://ipv4.icanhazip.com; do
+        if address=$(curl -4 --noproxy '*' --connect-timeout 2 --max-time 4 --max-filesize 64 -fsS "$url" 2>/dev/null |
+            python3 -c '
+import ipaddress, sys
+value = sys.stdin.buffer.read(65).decode("ascii").removesuffix("\n")
+address = ipaddress.IPv4Address(value)
+if not address.is_global or address.is_multicast:
+    sys.exit(1)
+print(address)
+' 2>/dev/null); then
+            printf '%s\n' "$address"
+            return 0
+        fi
+    done
+    return 1
+}
+
 prompt_install() {
     [[ -t 0 ]] || die 'Non-interactive install requires --domain and --public-ip (see --help)'
     read -r -p 'WEB domain: ' DOMAIN
-    read -r -p 'Public IPv4 (must match DNS A): ' PUBLIC_IP
+    local detected_ip
+    if detected_ip=$(detect_public_ipv4); then
+        say "Detected public IPv4: $detected_ip"
+        read -r -p "Public IPv4 [$detected_ip]: " PUBLIC_IP
+        PUBLIC_IP=${PUBLIC_IP:-$detected_ip}
+    else
+        say 'Could not detect public IPv4 automatically.'
+        read -r -p 'Public IPv4 (must match DNS A): ' PUBLIC_IP
+    fi
     local choice host port
     read -r -p 'Use SOCKS5 upstream? [y/N] ' choice
     if [[ $choice == y || $choice == Y ]]; then
