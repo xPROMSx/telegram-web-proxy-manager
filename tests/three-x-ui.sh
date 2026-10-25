@@ -6,7 +6,7 @@ fixture_dir=$(mktemp -d)
 trap 'rm -rf -- "$fixture_dir"' EXIT
 script=x-ui-latest.sh
 [[ $# -le 1 ]]
-for profile in legacy webroot v2.1.7 v2.1.7-ipv4; do
+for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision; do
     root="$fixture_dir/$profile"
     source_args=()
     if [[ $# == 1 ]]; then source_args=(--source "$1/$profile"); fi

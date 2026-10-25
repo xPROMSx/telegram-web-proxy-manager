@@ -311,13 +311,18 @@ from `xPROMSx/3x-ui-auto-nginx`:
 | --- | --- | --- |
 | legacy | `59ff07f3bfeaf4b33bc5d803dfe9a3334ab8c1fd` | `c19f7c2116adf41dcc7509fd47ecf2c64f5c1c81` |
 | webroot | `eba91cfe80144f91ce2ce771859ba1787421d0fa` | `c98dcfb9cc8456b8fe72fe34b1238311c59ae1ed` |
-| v2.1.7 / v2.1.7-ipv4 | `2ae180bb36efdc1af36912fd96c673e9e7d9055a` | `f93b6c0178e125294ff514adca15c6d00bc591cf` |
+| v2.1.7 / v2.1.7-ipv4 / v2.1.7-no-vision / v2.1.7-ipv4-no-vision | `2ae180bb36efdc1af36912fd96c673e9e7d9055a` | `f93b6c0178e125294ff514adca15c6d00bc591cf` |
 
 The webroot source is the owner-provided final frozen [PR #12 release candidate](https://github.com/xPROMSx/3x-ui-auto-nginx/pull/12).
 Only inert Nginx heredocs are rendered, with exact source-blob verification;
 the installer is not executed and no profile uses a mutable branch URL.
 All listed profiles run the existing fresh/rollback/ACME/real-Nginx integration chain.
-The v2.1.7 fixtures include Vision, with both IPv4-only and dual-stack listeners.
+The v2.1.7 fixtures cover IPv4-only and dual-stack listeners, each with and without Vision.
+Vision profiles also verify `assets/vision/managed.py` from the same commit against
+blob `e5c41a3c3f0c65990a53627399eb0b6db68cf9d5`. Only the literal fallback/ACME
+templates and exact stream insertion are read via AST; upstream Python is never executed.
+Offline `--source` uses a local checkout with `x-ui-latest.sh` and, for Vision profiles,
+`assets/vision/managed.py`; missing or changed sources are refused without a network fallback.
 They preserve the optional stream-level `map_hash_bucket_size 272`; duplicates,
 other values, parameters and contexts are refused.
 
