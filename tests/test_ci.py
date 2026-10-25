@@ -170,7 +170,7 @@ class ManifestTests(unittest.TestCase):
                         'bash tests/three-x-ui.sh', 'bash tests/update_boot.sh 24.04',
                         'bash tests/update_boot.sh 26.04', 'bash tests/update_arm.sh 24.04'):
             with self.subTest(command=command): self.assertIn(command, commands)
-        self.assertIn('for profile in legacy webroot;', (ROOT/'tests/three-x-ui.sh').read_text())
+        self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4;', (ROOT/'tests/three-x-ui.sh').read_text())
         for job in ('telemt', 'lifecycle', 'system26', 'system24', 'arm'):
             calls = '\n'.join(step.get('run','') for step in workflow['jobs'][job]['steps'])
             self.assertIn('sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py', calls)

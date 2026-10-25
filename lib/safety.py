@@ -678,8 +678,12 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     streams, https = exact(nodes, "stream"), exact(nodes, "http")
     require(len(streams) == len(https) == 1)
     stream, http = streams[0], https[0]
-    require(all(n.args[0] in ("map", "upstream", "server") for n in expand(stream.children)),
+    require(all(n.args[0] in ("map", "upstream", "server", "map_hash_bucket_size")
+                for n in expand(stream.children)),
             "unknown stream context directive")
+    buckets = exact(stream.children, "map_hash_bucket_size")
+    require(not buckets or (len(buckets) == 1 and buckets[0].args == ["map_hash_bucket_size", "272"]
+                            and buckets[0].children is None), "unknown stream hash bucket contract")
     maps = exact(stream.children, "map")
     routers = exact(stream.children, "server")
     require(len(maps) == len(routers) == 1)
@@ -845,7 +849,7 @@ def acme_plan(root, host, output, webroot):
         else:
             # Exact external webroot+redirect profile; Vision omits optional text/plain.
             require(all(n.args[0] != "include" for n in server.children))
-            require(sorted(n.args for n in listens) == [["listen", "80"], ["listen", "[::]:80"]])
+            require(["listen", "80"] in [n.args for n in listens])
             require(len(names[0].args) > 1 and len(set(names[0].args[1:])) == len(names[0].args[1:]))
             for name in names[0].args[1:]: domain(name)
             require(len(directives) == len(listens) + 3 and len(locations) == 2

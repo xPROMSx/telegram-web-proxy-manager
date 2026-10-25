@@ -56,6 +56,36 @@ class SafetyTests(unittest.TestCase):
             self.plan_nginx()
         self.assertEqual(before, self.snapshot())
 
+    def test_stream_hash_bucket_preserved_and_idempotent(self):
+        path = self.root / 'stream.conf'
+        path.write_text('map_hash_bucket_size 272;\n' + path.read_text())
+        before = self.snapshot()
+        plan = self.plan_nginx()
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(len(plan['edits']), 2)
+        for edit in plan['edits']: Path(edit['path']).write_text(edit['content'])
+        self.assertTrue(path.read_text().startswith('map_hash_bucket_size 272;\n'))
+        self.assertEqual(self.plan_nginx()['edits'], [])
+
+    def test_stream_hash_bucket_unsafe_variants_refused_without_mutation(self):
+        path = self.root / 'stream.conf'
+        original = path.read_text()
+        variants = [directive + original for directive in (
+            'map_hash_bucket_size 128;\n', 'map_hash_bucket_size 272 extra;\n',
+            'map_hash_bucket_size;\n', 'map_hash_bucket_size 272 {}\n',
+            'map_hash_bucket_size 272; map_hash_bucket_size 272;\n',
+            'map_hash_max_size 272;\n')]
+        variants.append(original.replace('proxy_protocol on;',
+                                         'proxy_protocol on; map_hash_bucket_size 272;'))
+        for text in variants:
+            with self.subTest(text=text):
+                path.write_text(text)
+                self.plan.unlink(missing_ok=True)
+                before = self.snapshot()
+                with self.assertRaises(ValueError): self.plan_nginx()
+                self.assertEqual(before, self.snapshot())
+                self.assertFalse(self.plan.exists())
+
     def test_no_proxy_protocol_refused(self):
         path = self.root / "stream.conf"
         path.write_text(path.read_text().replace("proxy_protocol on;", ""))
@@ -421,6 +451,32 @@ printf 'INSTALL_CONTINUED\\n'
             path=str(self.root / 'conf.d/telemt-web-manager-acme.conf'),
             content=s.render_acme('proxy.example.com', own_root), old=None)])
 
+    def test_vision_acme_ipv4_only_preserves_foreign_topology(self):
+        self.vision_topology()
+        originals = {self.root / 'sites-enabled' / name:
+                     (self.root / 'sites-enabled' / name).read_text()
+                     for name in ('80.conf', 'vision-acme.conf')}
+        for plain_type in (False, True):
+            with self.subTest(default_type=plain_type):
+                for path, text in originals.items():
+                    text = text.replace('    listen [::]:80;\n', '')
+                    if plain_type and path.name == 'vision-acme.conf':
+                        text = text.replace('root /var/www/acme;', 'root /var/www/acme; default_type text/plain;')
+                    path.write_text(text)
+                before = self.snapshot()
+                own_root = '/var/lib/telemt-web-manager-acme'
+                self.assertEqual(len(self.plan_nginx()['edits']), 2)
+                s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+                self.assertEqual(before, self.snapshot())
+                acme = self.root / 'conf.d/telemt-web-manager-acme.conf'
+                self.assertEqual(json.loads(self.plan.read_text())['edits'], [dict(
+                    path=str(acme), content=s.render_acme('proxy.example.com', own_root), old=None)])
+                acme.write_text(s.render_acme('proxy.example.com', own_root))
+                s.acme_plan(self.root, 'proxy.example.com', self.plan, own_root)
+                self.assertEqual(json.loads(self.plan.read_text())['edits'], [])
+                for name, raw in before.items(): self.assertEqual(Path(name).read_bytes(), raw)
+                acme.unlink()
+
     def test_vision_acme_unsafe_variants_and_occupied_domains_refused(self):
         path = self.vision_topology()
         original = path.read_text()
@@ -482,7 +538,10 @@ printf 'INSTALL_CONTINUED\\n'
             ('listen 80;', 'listen 80 default_server;'),
             ('listen 80;', 'listen 80 reuseport;'),
             ('listen 80;', 'listen 80; listen 127.0.0.1:80;'),
-            ('listen [::]:80;', ''),
+            ('listen 80;', ''),  # IPv6-only remains unsupported; IPv6 is optional.
+            ('listen 80;', 'listen 80; listen 80;'),
+            ('listen [::]:80;', 'listen [::]:80; listen [::]:80;'),
+            ('listen 80;', 'listen 0.0.0.0:80;'),
             ('location / {', 'location /extra { return 404; } location / {'),
             ('listen 80;', 'listen 80; resolver 127.0.0.1;'),
             ('listen 80;', 'listen 80; include snippets/webroot-empty.conf;'),
