@@ -1,5 +1,6 @@
 """Scope/gate refusal and inventory reachability regressions; no runtime suite."""
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import yaml
 import ci_docs
 import ci_manifest
 import ci_plan
+import three_x_ui
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -170,10 +172,62 @@ class ManifestTests(unittest.TestCase):
                         'bash tests/three-x-ui.sh', 'bash tests/update_boot.sh 24.04',
                         'bash tests/update_boot.sh 26.04', 'bash tests/update_arm.sh 24.04'):
             with self.subTest(command=command): self.assertIn(command, commands)
-        self.assertIn('for profile in legacy webroot;', (ROOT/'tests/three-x-ui.sh').read_text())
+        self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision;',
+                      (ROOT/'tests/three-x-ui.sh').read_text())
         for job in ('telemt', 'lifecycle', 'system26', 'system24', 'arm'):
             calls = '\n'.join(step.get('run','') for step in workflow['jobs'][job]['steps'])
             self.assertIn('sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py', calls)
+
+    def test_v217_matrix_has_independent_ipv6_and_vision_flags(self):
+        expected = {'v2.1.7': (True, True), 'v2.1.7-ipv4': (False, True),
+                    'v2.1.7-no-vision': (True, False), 'v2.1.7-ipv4-no-vision': (False, False)}
+        self.assertEqual(three_x_ui.V217_OPTIONS, expected)
+        for profile in expected:
+            self.assertEqual(three_x_ui.PROFILES[profile],
+                             ('2ae180bb36efdc1af36912fd96c673e9e7d9055a',
+                              'f93b6c0178e125294ff514adca15c6d00bc591cf'))
+
+    def test_local_upstream_source_is_hash_checked_and_never_executed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'assets/vision/managed.py'
+            path.parent.mkdir(parents=True)
+            data = b'raise AssertionError("upstream must never execute")\n'
+            path.write_bytes(data)
+            blob = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
+            with patch.object(three_x_ui.urllib.request, 'urlopen', side_effect=AssertionError('offline')):
+                self.assertEqual(three_x_ui.source_bytes('assets/vision/managed.py',
+                                 three_x_ui.V217_COMMIT, blob, directory), data)
+                with self.assertRaises(ValueError):
+                    three_x_ui.source_bytes('assets/vision/managed.py', three_x_ui.V217_COMMIT,
+                                            '0' * 40, directory)
+                path.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    three_x_ui.source_bytes('assets/vision/managed.py', three_x_ui.V217_COMMIT,
+                                            blob, directory)
+
+    def test_vision_templates_use_only_literal_substitutions(self):
+        # Minimal AST-contract sample, not an alternative integration config.
+        source = '''MARKER = '# fixture\\n'
+raise AssertionError('upstream must never execute')
+def stream_config(text, domain, port):
+    anchor = 'map $ssl_preread_server_name $sni_name {\\n    hostnames;\\n'
+    return text.replace(anchor, anchor + f'    {domain} vision;\\n') + f'\\nupstream vision {{ server 127.0.0.1:{port}; }}\\n'
+def fallback_config(domain, port, root='/var/www/html'):
+    return MARKER + f'fallback {domain} {port} {root}'
+def acme_config(domain, ipv6=None):
+    listener = '    listen [::]:80;\\n' if ipv6 else ''
+    return MARKER + f'acme {domain} {listener}'
+'''
+        for ipv6 in (False, True):
+            stream, fallback, acme = three_x_ui.vision_configs(source,
+                'map $ssl_preread_server_name $sni_name {\n    hostnames;\n}\n', ipv6)
+            self.assertIn('vision.example.com vision;', stream)
+            self.assertIn('127.0.0.1:10443', stream)
+            self.assertEqual(fallback, '# fixture\nfallback vision.example.com 10444 /var/www/html')
+            self.assertEqual('[::]:80' in acme, ipv6)
+        with self.assertRaises(ValueError):
+            three_x_ui.vision_configs(source.replace('{root}', '{danger()}'),
+                'map $ssl_preread_server_name $sni_name {\n    hostnames;\n}\n', False)
 
 
 class DocumentationTests(unittest.TestCase):

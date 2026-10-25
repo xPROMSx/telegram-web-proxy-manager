@@ -80,7 +80,7 @@ TLS trust. For new issuance, explicitly accept ACME terms with `--email` and `--
 Free port 80 uses standalone HTTP-01 without stopping Nginx. If the port belongs
 to the same verified Nginx master/workers, webroot accepts two exact HTTP :80
 profiles: legacy redirect-only vhosts, or the recognized 3x-ui webroot+redirect
-form. The latter has IPv4/IPv6 listeners, exact domain names, only an ACME
+form. The latter has a required IPv4 listener and optional IPv6 listener, exact domain names, only an ACME
 `location ^~ /.well-known/acme-challenge/` with `root /var/www/acme`,
 optional `default_type text/plain`, `try_files $uri =404`, and `location /` returning
 `301 https://$host$request_uri`. Legacy direct 301 redirects remain supported.

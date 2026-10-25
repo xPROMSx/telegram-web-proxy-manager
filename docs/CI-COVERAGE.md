@@ -13,7 +13,7 @@ There is no workflow-level path exclusion.
 | CI / Regression | Policy skip | Root discovery, transactions, bootstrap barrier, offline shell contracts |
 | Integration / Telemt | Policy skip | Official provenance, baseline/download/staging/runtime and evidence parity |
 | Integration / Lifecycle | Policy skip | Fresh/rollback/account, bootstrap/signals, WEB-link PTY and Uninstall |
-| Integration / Nginx | Policy skip | ACME/renewal contracts, real Nginx and both pinned 3x-ui profiles |
+| Integration / Nginx | Policy skip | ACME/renewal contracts, real Nginx and pinned 3x-ui profiles, including v2.1.7 with/without Vision (IPv4-only/dual-stack) |
 | System / Ubuntu 26.04 | Policy skip | Existing primary real QEMU suite |
 | System / Ubuntu 24.04 | Policy skip | Existing compatibility real QEMU suite |
 | Architecture / ARM64 | Policy skip | Existing qemu-user checks in a minimal Ubuntu 24.04 image |
