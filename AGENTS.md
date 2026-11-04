@@ -133,3 +133,15 @@ new standalone tests/helpers so the manifest proves a real CI execution path;
 `test_*.py` modules use existing discovery. Keep public PR descriptions concise
 and free of private findings. Do not rewrite published history or claim pending
 CI/live checks passed. Stop at the requested review boundary; no implicit merge.
+
+## Independent integration management
+
+Telegram Manager remains an independent project. A future 3X-UI menu entry
+`4. Telegram Web Proxy Manager` may run the installed manager directly, without
+an automatic update, or offer installation through the official `install.sh`
+when absent; source is never copied into the 3X-UI repository. The existing
+bootstrap resolves current `main` to one exact SHA and verifies the components
+before installation. Install, Check, Update, Repair, Uninstall and Telemt updates
+remain Telegram Manager functions. Routine manager fixes need no companion 3X-UI
+PR: each project owns its services, certificates, configuration and data.
+No new CLI flags, bootstrap auto-update or synchronized releases are required.

@@ -15,9 +15,9 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
     STATE="$case_dir/state" CERT_ROOT="$case_dir/certs" BACKUP_ROOT="$case_dir/backups"
     mkdir "$TMP"
     if [[ $scenario == free ]]; then
-        cp -r tests/fixtures/nginx "$NGINX_ROOT"
+        cp -rp tests/fixtures/nginx "$NGINX_ROOT"
     else
-        cp -r "$fixture" "$NGINX_ROOT"
+        cp -rp "$fixture" "$NGINX_ROOT"
     fi
     mkdir -p "$NGINX_ROOT/conf.d"
     DOMAIN=proxy.example.com EMAIL=operator@example.com AGREE_TOS=1
@@ -32,7 +32,7 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
         cp "$sandbox/key" "$CERT_ROOT/live/$DOMAIN/privkey.pem"
         printf '[renewalparams]\nauthenticator = standalone\n' >"$CERT_ROOT/renewal/$DOMAIN.conf"
     fi
-    cp -r "$NGINX_ROOT" "$case_dir/original"
+    cp -rp "$NGINX_ROOT" "$case_dir/original"
     ss() { if [[ $scenario != free && $scenario != pending-config ]]; then printf occupied; fi; }
     nginx_runtime_identity() { return 0; }
     nginx_port_owned() { [[ $scenario != foreign ]]; }

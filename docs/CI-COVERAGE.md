@@ -361,3 +361,15 @@ unsafe/conflicting launcher paths, failed second-wrapper publication and signal
 interruption. Current-brand/version assertions run alongside the existing SemVer,
 no-candidate-execution and recovery-barrier bootstrap tests. Persistent legacy
 paths and markers remain compatibility ABI; the GitHub repository is renamed manually.
+
+## Stream include compatibility
+
+`test_nginx_includes.py` runs through existing unittest discovery: pinned PR #93
+configuration, inherited map include context, install/idempotence, exact owned
+fragment hashes, legacy retention when extension points appear, reverse planning
+and byte-identical neighbor preservation, plus partial/changed/duplicate/misplaced
+refusals. `three-x-ui.sh` adds the pinned include profiles to the existing
+Fresh/rollback/ACME/real-Nginx chain. The real Nginx test delays activation of the
+owned SNI include for the same verified TLS refusal/reload/acceptance contract as
+legacy. Its origin is a Python fixture; it does not prove real Telegram traffic,
+live ACME issuance or production systemd behavior.

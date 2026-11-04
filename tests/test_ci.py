@@ -172,7 +172,7 @@ class ManifestTests(unittest.TestCase):
                         'bash tests/three-x-ui.sh', 'bash tests/update_boot.sh 24.04',
                         'bash tests/update_boot.sh 26.04', 'bash tests/update_arm.sh 24.04'):
             with self.subTest(command=command): self.assertIn(command, commands)
-        self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision;',
+        self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision includes includes-ipv4;',
                       (ROOT/'tests/three-x-ui.sh').read_text())
         for job in ('telemt', 'lifecycle', 'system26', 'system24', 'arm'):
             calls = '\n'.join(step.get('run','') for step in workflow['jobs'][job]['steps'])

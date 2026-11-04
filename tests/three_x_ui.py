@@ -23,9 +23,14 @@ VISION_BLOB = "e5c41a3c3f0c65990a53627399eb0b6db68cf9d5"
 # Independent (IPv6 listeners, Vision) flags; all four use the same source pin.
 V217_OPTIONS = {'v2.1.7': (True, True), 'v2.1.7-ipv4': (False, True),
                 'v2.1.7-no-vision': (True, False), 'v2.1.7-ipv4-no-vision': (False, False)}
+CONTRACT_COMMIT = "c55553de7b7ccf7bd3db9e44df2f5b0a6d116a5d"
+CONTRACT_BLOB = "0aed3f7a85dd79f0fe7067b36cfa73332e35c3dd"
+CONTRACT_VISION_BLOB = "7787f61cf05220d52f68f4657ebc75452521fa15"
+CONTRACT_OPTIONS = {'includes': (True, True), 'includes-ipv4': (False, False)}
 PROFILES = {"legacy": (COMMIT, BLOB), "webroot": (NEW_COMMIT, NEW_BLOB),
             "v1.6.2": (V162_COMMIT, V162_BLOB),
-            **{name: (V217_COMMIT, V217_BLOB) for name in V217_OPTIONS}}
+            **{name: (V217_COMMIT, V217_BLOB) for name in V217_OPTIONS},
+            **{name: (CONTRACT_COMMIT, CONTRACT_BLOB) for name in CONTRACT_OPTIONS}}
 VALUES = {
     "domain": "panel.example.com", "reality_domain": "reality.example.com",
     "sub_path": "subscription", "json_path": "json", "xhttp_path": "xhttp",
@@ -126,14 +131,18 @@ def build(root, script, source=None, profile="legacy"):
     if script != "x-ui-latest.sh":
         raise ValueError("only the reviewed Fresh Install topology is supported")
     commit, blob = PROFILES[profile]
-    ipv6, vision = V217_OPTIONS.get(profile, (True, False))
+    ipv6, vision = {**V217_OPTIONS, **CONTRACT_OPTIONS}.get(profile, (True, False))
     data = source_bytes(script, commit, blob, source)
-    vision_data = source_bytes('assets/vision/managed.py', commit, VISION_BLOB, source) if vision else None
+    vision_data = source_bytes('assets/vision/managed.py', commit, CONTRACT_VISION_BLOB if profile in CONTRACT_OPTIONS else VISION_BLOB, source) if vision else None
     text = data.decode("utf-8").replace("\r\n", "\n")
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     (root / "conf.d").mkdir(exist_ok=True)
     (root / "sites-enabled").mkdir(exist_ok=True)
+    if profile in CONTRACT_OPTIONS:
+        for name in ('stream-sni.d', 'stream-upstreams.d', 'snippets/x-ui-auto-optional'):
+            (root / name).mkdir(parents=True, exist_ok=True, mode=0o755)
+            (root / name).chmod(0o755)
     count = 0
     for match in re.finditer(r"(?m)^[ \t]*cat > ([^\n]+) <<EOF\n(.*?)^EOF[ \t]*$", text, re.S):
         target = match.group(1).strip('"')
@@ -166,7 +175,7 @@ def build(root, script, source=None, profile="legacy"):
         "events { worker_connections 1024; }\n"
         "http {\n    include conf.d/*.conf;\n    include sites-enabled/*;\n}\n"
         "stream { include stream-enabled/*.conf; }\n", encoding="utf-8")
-    if profile in V217_OPTIONS:
+    if profile in {**V217_OPTIONS, **CONTRACT_OPTIONS}:
         content = '\n'.join(p.read_text() for p in root.rglob('*') if p.is_file())
         assert bool(re.search(r'listen\s+\[', content)) == ipv6
         assert ('vision.example.com' in content) == vision

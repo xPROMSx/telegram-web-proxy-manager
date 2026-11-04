@@ -369,3 +369,16 @@ Owner-tested commit `1b23cf92b1a1a6b69b7d47b3e47ac3bd28dfcc9d` uses local
 `/cover.css` for all covers and Service Status without weakening CSP. Visual
 covers, random changes and CSS delivery passed. The stylesheet is 6772 bytes,
 SHA256 `8bf41f327d642d6f5b63e2efa368335c18729e58a389357ff56175c0f860c4d4`.
+
+## 3X-UI stream extension contract
+
+The include profile pins merged PR #93 at
+`c55553de7b7ccf7bd3db9e44df2f5b0a6d116a5d`, with `x-ui-latest.sh` blob
+`0aed3f7a85dd79f0fe7067b36cfa73332e35c3dd` and Vision helper blob
+`7787f61cf05220d52f68f4657ebc75452521fa15`. The existing generator verifies
+both blobs and reads literal templates without executing upstream code.
+`includes` covers dual stack with Vision; `includes-ipv4` covers IPv4 without
+Vision in the existing integration chain. Historical profiles remain pinned.
+`tests/fixtures/nginx-3x-includes` is the generated `includes` topology for offline
+regressions (trailing whitespace from empty substitutions is trimmed); shared empty directories are created by fixture setup, as Git does
+not store empty directories. Production must receive them from 3X-UI.

@@ -9,9 +9,9 @@ sandbox=$(mktemp -d)
 trap 'rm -rf -- "$sandbox"' EXIT
 NGINX_ROOT="$sandbox/nginx" TMP="$sandbox/tmp" BACKUP_ROOT="$sandbox/backups"
 DOMAIN=proxy.example.com
-cp -r "$fixture" "$NGINX_ROOT"
+cp -rp "$fixture" "$NGINX_ROOT"
 mkdir "$TMP"
-cp -r "$NGINX_ROOT" "$sandbox/original"
+cp -rp "$NGINX_ROOT" "$sandbox/original"
 nginx_plan
 nginx_test() { [[ ! -e $NGINX_ROOT/conf.d/telemt-web-manager.conf ]]; }
 nginx_reload() { return 0; }
