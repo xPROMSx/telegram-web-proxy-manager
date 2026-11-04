@@ -104,7 +104,7 @@ binary's version/healthcheck CLI, not a server. Healthcheck with API disabled is
 configuration validation. `REAL_CANDIDATE` in fresh means that same boundary only;
 readiness, service lifecycle, path health and journal source remain fixtures.
 `upstream.sh` also runs strict parser/version regressions with its real verified
-3.5.12 binary and unchanged TOML. Complete binary/DATA activation and rollback now
+3.5.16 binary and unchanged TOML. Complete binary/DATA activation and rollback now
 run in the stronger universal root transaction suite and the real boot fixtures;
 the previous binary-only shell transaction is no longer production Update.
 
@@ -117,7 +117,7 @@ dwell with a second actual listener/HTTP check, and absence of pinned conntrack
 reconciliation/retry/shutdown failure fragments. Clean exit and nft/IPv4/IPv6
 inspection follow. These absence assertions are upstream runtime contracts, not
 production WARN exceptions. The seven 3.5.10 WARNs remain historical classifier
-regressions, not healthy 3.5.12 runtime expectations. Fatal injection tests the
+regressions, not healthy current-pin runtime expectations. Fatal injection tests the
 production classifier on captured output; it does not inject a runtime service
 crash. The smoke runs as root in the disposable Actions namespace, not as the
 production telemt account under the full systemd sandbox. It never proves systemd

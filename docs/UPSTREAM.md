@@ -204,7 +204,7 @@ new downloaded release. These labels and future-version acceptance fixtures have
 been corrected. Healthcheck with API disabled loads config; it does not prove a
 running listener. [Complete CI truth table](CI-COVERAGE.md).
 
-The smoke runs the verified 3.5.12 process in a new Linux network namespace with
+The smoke runs the verified current 3.5.16 process in a new Linux network namespace with
 real helpers and CAP_NET_ADMIN; verifies PID-owned socket and actual HTTP 200/index,
 proves owned chains absent before startup and rechecks listener/HTTP after a
 measured >=10-second readiness dwell (covering the old 1/2/4-second retries).
@@ -229,7 +229,7 @@ maintenance process check, never a moving production download dependency.
 
 The following path/security inventory records the earlier 3.5.9 source review.
 It is historical source evidence, not the current download policy or a promise of
-future release compatibility. Current 3.5.12 healthcheck and runtime smoke add
+future release compatibility. The retained 3.5.12 evidence and current 3.5.16 healthcheck/runtime smoke add
 release-specific evidence. Successful 0.1.2 VPS acceptance under systemd on Ubuntu
 26.04.1 LTS x86_64 is recorded in the [technical live acceptance history](CI-COVERAGE.md#owner-live-acceptance-history);
 the historical source review and CI do not establish other deployment combinations.
