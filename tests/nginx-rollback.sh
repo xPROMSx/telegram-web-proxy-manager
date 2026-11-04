@@ -24,6 +24,8 @@ for failure in write test reload; do
         }
         nginx_test() { [[ $failure != test || ! -e $NGINX_ROOT/conf.d/telemt-web-manager.conf ]]; }
         nginx_reload() { [[ $failure != reload || ! -e $NGINX_ROOT/conf.d/telemt-web-manager.conf ]]; }
+        # Called indirectly by the sourced rollback cleanup.
+        # shellcheck disable=SC2317
         systemctl() { return 0; }
         set +e
         (set -Eeuo pipefail; trap cleanup EXIT; backup_begin; ARMED=1 INSTALLING=1; apply_nginx) >"$sandbox/rollback.log" 2>&1
