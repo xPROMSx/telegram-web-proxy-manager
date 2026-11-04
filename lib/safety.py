@@ -495,7 +495,7 @@ class Nginx:
         self.stack = []
         self.reads = 0
 
-    def read(self, path):
+    def read(self, path, context="directives"):
         path = Path(path).resolve()
         require(not any(c in str(path) for c in "\t\r\n"), "unsupported Nginx filename")
         external_module = path.is_relative_to(Path("/usr/share/nginx/modules-available"))
@@ -556,11 +556,11 @@ class Nginx:
                     matches = sorted(glob.glob(str(include)))
                     require(matches or any(c in str(include) for c in "*?["))
                     for item in matches:
-                        node.children.extend(self.read(item))
+                        node.children.extend(self.read(item, context))
             require(not nested)
             return nodes, len(source)
 
-        nodes, _ = parse()
+        nodes, _ = parse(context=context)
         if external_module:
             require(all(n.args[0] == "load_module" and n.children is None for n in nodes))
         self.stack.pop()
@@ -648,6 +648,40 @@ def nginx_tokens(source):
     return tokens
 
 
+def nginx_stream_includes(parser, nodes, stream, mapping):
+    """Recognize only the two active, correctly scoped 3X-UI extension points."""
+    paths = [parser.root / name for name in ('stream-sni.d', 'stream-upstreams.d')]
+    found = []
+    for directory, context in zip(paths, (mapping, stream)):
+        matches = [n for n in walk(nodes) if n.args[0] == 'include' and len(n.args) == 2
+                   and str(parser.root / n.args[1]) == str(directory / '*.conf')]
+        require(len(matches) <= 1, 'duplicate stream extension point')
+        if matches:
+            # Include wrappers may lead to the stream, but never through another
+            # map/server/upstream block. Only direct directives at this level.
+            def level(items):
+                for node in items:
+                    yield node
+                    if node.args[0] == 'include': yield from level(node.children)
+            require(matches[0] in list(level(context.children)), 'misplaced stream extension point')
+        found.append(bool(matches))
+    require(found[0] == found[1], 'incomplete stream extension contract')
+    if all(found):
+        for directory in paths:
+            safe_path(directory)
+            require(directory.is_dir(), 'stream extension directory missing')
+            info = directory.stat()
+            require(info.st_uid == os.geteuid() and info.st_gid == os.getegid()
+                    and stat.S_IMODE(info.st_mode) == 0o755, 'unsafe stream extension directory')
+    return all(found)
+
+
+def nginx_stream_files(parser, host):
+    return ((parser.root / 'stream-sni.d/telemt-web-manager.conf', f'{host} twm_frontend;\n'),
+            (parser.root / 'stream-upstreams.d/telemt-web-manager.conf',
+             'upstream twm_frontend {\n    server 127.0.0.1:7444;\n}\n'))
+
+
 def nginx_owned_stream(parser, host, stream):
     """Exact owned fragments, independent of unrelated stream configuration."""
     mappings=[n for n in exact(stream.children,'map') if len(n.args)==3 and n.args[1]=='$ssl_preread_server_name']
@@ -659,6 +693,21 @@ def nginx_owned_stream(parser, host, stream):
     require(sum('twm_frontend' in n.args for n in walk(stream.children))==2,
             'managed upstream shared or substituted')
     ranges={}; managed={}
+    files = nginx_stream_files(parser, host)
+    included = (rows[0].path == files[0][0], upstreams[0].path == files[1][0])
+    require(included[0] == included[1], 'mixed stream ownership formats')
+    if all(included):
+        for key, node, (path, literal) in zip(('nginx-map', 'nginx-upstream'),
+                                             (rows[0], upstreams[0]), files):
+            safe_path(path)
+            info = path.lstat()
+            require(info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o644,
+                    'unsafe managed stream file')
+            require(parser.sources[path] == literal, 'managed stream file changed')
+            managed[key] = hashlib.sha256((str(path.relative_to(parser.root))+'\0'+literal).encode()).hexdigest()
+            ranges[path] = None  # Entire proven-owned include, not a shared file.
+        return managed, ranges
+    require(not any(os.path.lexists(path) for path, _ in files), 'orphan managed stream file')
     for node,literal in ((rows[0],f'    {host} twm_frontend; # telemt-web-manager\n'),
                         (upstreams[0],'\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n')):
         source=parser.sources[node.path]; line_start=source.rfind('\n',0,node.start)+1
@@ -690,6 +739,8 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     mapping, router = maps[0], routers[0]
     require(len(mapping.args) == 3 and mapping.args[1] == "$ssl_preread_server_name"
             and re.fullmatch(r"\$[a-zA-Z_][a-zA-Z_0-9]*", mapping.args[2]))
+    include_contract = nginx_stream_includes(parser, nodes, stream, mapping)
+    stream_files = nginx_stream_files(parser, host)
     directives = [n.args for n in expand(router.children)]
     allowed = {"listen", "proxy_pass", "ssl_preread", "proxy_protocol", "proxy_timeout",
                "proxy_connect_timeout", "access_log", "error_log", "tcp_nodelay",
@@ -766,7 +817,17 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         require(existing[0].args == [host, "twm_frontend"])
         require([n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]])
         require(vhost.read_text() == render_vhost(host), "managed Nginx vhost differs; manual review required")
+        managed, ranges = nginx_owned_stream(parser, host, stream)
+        if any(spans is None for spans in ranges.values()):
+            require(include_contract, 'managed stream includes inactive')
     else:
+        require(not any(os.path.lexists(path) for path, _ in stream_files), 'orphan managed stream file')
+    if not (existing or owned or vhost.exists()) and include_contract:
+        for path, literal in stream_files:
+            safe_path(path)
+            edits[path] = literal
+        edits[vhost] = render_vhost(host)
+    elif not (existing or owned or vhost.exists()):
         source = parser.sources[mapping.path]
         require(mapping.path == stream.path or mapping.path.is_relative_to(parser.root))
         edits[mapping.path] = source[:mapping.close] + f"    {host} twm_frontend; # telemt-web-manager\n" + source[mapping.close:]
@@ -782,6 +843,9 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         require(sum("twm_frontend" in n.args for n in walk(nodes)) == 2)
         managed,ranges = nginx_owned_stream(parser,host,stream)
         for path, spans in ranges.items():
+            if spans is None:
+                edits[path] = None
+                continue
             content = parser.sources[path]
             for start, end in sorted(spans, reverse=True): content = content[:start] + content[end:]
             edits[path] = content
@@ -1522,7 +1586,15 @@ def certificate_cleanup_plan(output, state, host, cert_root, webroot, nginx_root
     require(re.search(r'^archive_dir\s*=\s*' + re.escape(str(Path(cert_root,'archive',host))) + r'\s*$', top, re.M))
     nginx_plan(nginx_root, host, output, webroot)
     plan = strict_json(output)
-    require(len(plan['edits']) == 2)  # Core WEB integration has already gone.
+    # Core WEB integration has already gone. Reinstallation would create either
+    # the legacy pair or the two include files plus HTTPS vhost; do not infer
+    # absence from a format-dependent edit count.
+    expected = {Path(nginx_root) / 'conf.d/telemt-web-manager.conf',
+                *(path for path, _ in nginx_stream_files(Nginx(nginx_root), host))}
+    require(all(not os.path.lexists(path) for path in expected)
+            and any(Path(edit['path']) == Path(nginx_root) / 'conf.d/telemt-web-manager.conf'
+                    and edit['old'] is None for edit in plan['edits']),
+            'core WEB integration still present')
     paths = []
     if value['renewal_kind'] == 'webroot':
         root = Path(webroot)

@@ -175,15 +175,19 @@ class Transactions(unittest.TestCase):
             self.assertEqual(s.UpdateReceipt.read(f.layout.backup(journal['transaction_id'])/'old-receipt.json'),f.old)
             self.assertFalse((f.layout.backup(journal['transaction_id'])/'rehearsal').exists())
 
-    def managed_host(self):
+    def managed_host(self, includes=False):
         run=s.update_run; f=self.fixture()
         f.commands.stop()
         f.commands=patch.object(s,'update_run',side_effect=lambda args,**kw:
             b'enabled\n' if args[:2]==['systemctl','is-enabled'] else run(args,**kw))
         f.commands.start()
         host='proxy.example.com'; nginx=f.layout.path('/etc/nginx')
-        shutil.copytree(ROOT/'tests/fixtures/nginx',nginx)
-        (nginx/'conf.d').mkdir()
+        shutil.copytree(ROOT/('tests/fixtures/nginx-3x-includes' if includes else 'tests/fixtures/nginx'),nginx)
+        (nginx/'conf.d').mkdir(exist_ok=True)
+        if includes:
+            for name in ('stream-sni.d','stream-upstreams.d','snippets/x-ui-auto-optional'):
+                (nginx/name).mkdir(parents=True, exist_ok=True)
+                (nginx/name).chmod(0o755)
         cert=f.layout.path('/etc/letsencrypt')
         for name in ('archive/'+host,'live/'+host,'renewal','renewal-hooks/deploy'):
             (cert/name).mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -245,6 +249,19 @@ class Transactions(unittest.TestCase):
                         self.assertEqual((f.layout.path('/etc/letsencrypt/live/proxy.example.com/privkey.pem')).resolve().name,'privkey2.pem')
                         self.assertIn(b'version = 2',s.update_read(f.layout.path('/etc/letsencrypt/renewal/proxy.example.com.conf')))
                     self.assertFalse(any(k.startswith('cert-') or k=='foreign-firewall' for k in f.controls))
+
+    def test_include_update_preserves_owned_files_and_detects_drift(self):
+        f=self.managed_host(includes=True); nginx=f.layout.path('/etc/nginx')
+        before={p:p.read_bytes() for p in nginx.rglob('*') if p.is_file()}
+        f.engine.update()
+        self.assertEqual(f.engine.immutable(),f.controls)
+        self.assertEqual({p:p.read_bytes() for p in before},before)
+        path=nginx/'stream-enabled/stream.conf'
+        path.write_bytes(path.read_bytes()+b'\n# unrelated administration\n')
+        self.assertEqual(f.engine.immutable(),f.controls)
+        path=nginx/'stream-sni.d/telemt-web-manager.conf'
+        path.write_bytes(path.read_bytes()+b'# altered owned file\n')
+        with self.assertRaises(ValueError): f.engine.immutable()
 
     def test_foreign_nginx_bytes_may_change_but_owned_fragments_remain_exact(self):
         f=self.managed_host(); nginx=f.layout.path('/etc/nginx')

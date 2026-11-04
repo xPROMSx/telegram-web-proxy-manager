@@ -211,7 +211,7 @@ runtime_refusals() {
             drift-manifest) drift_target=$STATE/manifest.json;; drift-link) drift_target=$STATE/web-link.txt;;
             drift-index) drift_target=$DATA/public/index.html;; drift-certificate) drift_target=$STATE/certificate.json;;
             drift-vhost) drift_target=$NGINX_ROOT/conf.d/telemt-web-manager.conf;;
-            drift-stream) drift_target=$NGINX_ROOT/stream-enabled/stream.conf;;
+            drift-stream) drift_target=${managed_stream_file:-$NGINX_ROOT/stream-enabled/stream.conf};;
         esac
         if [[ $variation == drift-* ]]; then cp "$drift_target" "$case_dir/static-original"; fi
         # Golden evidence includes the intentional concurrent edit. The manager
@@ -281,13 +281,17 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     chmod 0755 "$case_dir/bin/telemt-web-manager"
     DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 EMAIL=operator@example.com AGREE_TOS=1
     kind=webroot
-    if [[ $scenario == preserve-standalone ]]; then kind=standalone; cp -r tests/fixtures/nginx "$NGINX_ROOT";
-    else cp -r tests/fixtures/nginx-3x-ui "$NGINX_ROOT"; fi
+    if [[ $scenario == preserve-standalone ]]; then kind=standalone; cp -r --preserve=mode tests/fixtures/nginx "$NGINX_ROOT";
+    else cp -r --preserve=mode "${TWM_TEST_NGINX_FIXTURE:-tests/fixtures/nginx-3x-ui}" "$NGINX_ROOT"; fi
     mkdir -p "$NGINX_ROOT/conf.d"
     set +e
     (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$case_dir/install.log" 2>&1
     result=$?; set -e
     if (( result )); then cat "$case_dir/install.log"; exit 1; fi
+    managed_stream_file="$NGINX_ROOT/stream-enabled/stream.conf"
+    if [[ -f $NGINX_ROOT/stream-upstreams.d/telemt-web-manager.conf ]]; then
+        managed_stream_file="$NGINX_ROOT/stream-upstreams.d/telemt-web-manager.conf"
+    fi
     if [[ $scenario == *-generation ]]; then python3 "$ROOT/tests/update_state_fixture.py" create "$case_dir"; fi
     [[ -f $STATE/manifest.json && -f $STATE/certificate.json && $(cat "$case_dir/issuance") == issued ]]
     if [[ $scenario == runtime-* ]]; then runtime_fixture seed "$DATA"; fi
@@ -337,7 +341,7 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
         malformed) printf 'bad json' >"$STATE/manifest.json";;
         schema) jq '.schema=99' "$STATE/manifest.json" >"$case_dir/m"; cp "$case_dir/m" "$STATE/manifest.json";;
         vhost) printf '# manual\n' >>"$NGINX_ROOT/conf.d/telemt-web-manager.conf";;
-        stream) sed -i 's/127.0.0.1:7444/127.0.0.1:7445/' "$NGINX_ROOT/stream-enabled/stream.conf";;
+        stream) sed -i 's/127.0.0.1:7444/127.0.0.1:7445/' "$managed_stream_file";;
         unit) printf '# changed\n' >>"$UNIT";;
         symlink) mv "$CONFIG" "$case_dir/original-toml"; ln -s "$case_dir/original-toml" "$CONFIG";;
         account) sed -i 's/424242/424243/g' "$FIXTURE_ACCOUNTS/passwd";;
@@ -452,3 +456,11 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     if [[ $scenario == lock ]]; then flock -u 8; exec 8>&-; fi
     rm -rf "$case_dir"
 done
+
+# The lifecycle CI already supplies root, mount isolation and verified baseline
+# artifacts. Reuse its complete removal/refusal/rollback suite for PR #93 too;
+# the Nginx-only job deliberately runs without those privileges/artifacts.
+if [[ -z ${TWM_TEST_NGINX_FIXTURE:-} ]]; then
+    python3 tests/three_x_ui.py "$sandbox/includes" --script x-ui-latest.sh --profile includes
+    TWM_TEST_NGINX_FIXTURE="$sandbox/includes" bash "$0" --inside
+fi

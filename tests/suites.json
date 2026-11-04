@@ -280,7 +280,20 @@
     "tests/fixtures/nginx-3x-ui/sites-enabled/panel.conf",
     "tests/fixtures/nginx-3x-ui/sites-enabled/reality.conf",
     "tests/fixtures/nginx-3x-ui/snippets/includes.conf",
-    "tests/fixtures/nginx-3x-ui/stream-enabled/stream.conf"
+    "tests/fixtures/nginx-3x-ui/stream-enabled/stream.conf",
+    "tests/fixtures/nginx-3x-includes/nginx.conf",
+    "tests/fixtures/nginx-3x-includes/sites-available/00-maps.conf",
+    "tests/fixtures/nginx-3x-includes/sites-available/80.conf",
+    "tests/fixtures/nginx-3x-includes/sites-available/panel.example.com",
+    "tests/fixtures/nginx-3x-includes/sites-available/reality.example.com",
+    "tests/fixtures/nginx-3x-includes/sites-enabled/00-maps.conf",
+    "tests/fixtures/nginx-3x-includes/sites-enabled/80.conf",
+    "tests/fixtures/nginx-3x-includes/sites-enabled/panel.example.com",
+    "tests/fixtures/nginx-3x-includes/sites-enabled/reality.example.com",
+    "tests/fixtures/nginx-3x-includes/sites-enabled/vision-acme.conf",
+    "tests/fixtures/nginx-3x-includes/sites-enabled/vision.conf",
+    "tests/fixtures/nginx-3x-includes/snippets/includes.conf",
+    "tests/fixtures/nginx-3x-includes/stream-enabled/stream.conf"
   ],
   "metadata": [
     "tests/suites.json"

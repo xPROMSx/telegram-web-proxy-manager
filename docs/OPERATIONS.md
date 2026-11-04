@@ -46,6 +46,23 @@ escaped directive/include/listen names and ambiguous syntax are refused.
 Re-running does not duplicate mapping/upstream/vhost. New includes or changes
 during staging cause refusal.
 
+New 3X-UI installations can expose `include /etc/nginx/stream-sni.d/*.conf;`
+inside the active SNI map and `include /etc/nginx/stream-upstreams.d/*.conf;`
+at stream level. With both extension points active, the manager writes only
+`telemt-web-manager.conf` in each directory plus its existing HTTPS vhost;
+3X-UI stream configuration stays byte-identical. Both shared directories must
+already exist with root:root ownership and mode 0755. The manager never creates
+or removes them. Directories alone do not select the include format.
+
+Existing exact inline fragments remain inline even after 3X-UI adds the extension
+points. Check, Repair and Universal Update verify both formats; Update hashes
+the exact owned fragments/files without freezing unrelated 3X-UI configuration.
+No automatic migration occurs. Partial, duplicate, mixed or changed owned objects
+require manual review. Uninstall removes only the two exact owned include files
+(or the original exact inline fragments) and HTTPS vhost, preserving shared
+directories and unrelated routes. Certificate cleanup proves core integration is
+absent independently of the format; Certbot/ACME ownership rules are unchanged.
+
 Regex/wildcard SNI maps, nested dynamic routing, multiple routers, unknown listen
 flags/addresses, custom `nginx -c/-p`, occupied private ports and direct HTTPS
 without a stream router are not automatically configured. Unknown setups are not

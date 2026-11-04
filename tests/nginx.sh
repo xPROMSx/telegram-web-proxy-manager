@@ -69,23 +69,31 @@ for p in (t/'nginx').rglob('*'):
     text = re.sub(r'(ssl_certificate_key\s+)[^;]+;', lambda m: m[1] + str(t/f'{name}.key.pem') + ';', text)
     p.write_text(text)
 stream = next(p for p in (t/'nginx').rglob('stream.conf'))
-planned = stream.read_text()
+sni = t/'nginx/stream-sni.d/telemt-web-manager.conf'
+route = sni if sni.exists() else stream
+planned = route.read_text()
 (t/'planned-stream').write_text(planned)
 # Keep the initial SNI table active until the first verified TLS refusal.
-stream.write_text(re.sub(r'^.*proxy\.example\.com.*\n', '', planned, flags=re.M))
+route.write_text(re.sub(r'^.*proxy\.example\.com.*\n', '', planned, flags=re.M))
 if (t/'nginx/sites-enabled').exists():
     # Inert stand-in for Xray's existing PROXY-to-TLS REALITY forwarding only.
-    stream.write_text(stream.read_text() +
-        '\nserver { listen 127.0.0.1:18443 proxy_protocol; proxy_pass 127.0.0.1:19443; }\n')
-    (t/'planned-stream').write_text(planned +
-        '\nserver { listen 127.0.0.1:18443 proxy_protocol; proxy_pass 127.0.0.1:19443; }\n')
+    # PR #93's REALITY TLS fallback also expects PROXY; historical profiles
+    # terminate it at Xray. Model the emitted backend's actual boundary.
+    forward_proxy = any(re.search(r'listen\s+[^;]*:19443[^;]*\bproxy_protocol\b', p.read_text())
+                        for p in (t/'nginx/sites-enabled').iterdir() if p.is_file())
+    forwarding = ('\nserver { listen 127.0.0.1:18443 proxy_protocol; '
+                  + ('proxy_protocol on; ' if forward_proxy else '')
+                  + 'proxy_pass 127.0.0.1:19443; }\n')
+    stream.write_text(stream.read_text() + forwarding)
+    if route == stream:
+        (t/'planned-stream').write_text(planned + forwarding)
 else:
     for name, port in (('panel', 18443), ('reality', 19443)):
         (t/f'nginx/conf.d/fixture-{name}.conf').write_text(
             f'server {{ listen 127.0.0.1:{port} ssl proxy_protocol; server_name {name}.example.com; '
             f'ssl_certificate {t}/{name}.cert.pem; ssl_certificate_key {t}/{name}.key.pem; '
             f'location / {{ return 200 "{name}\\n"; }} }}\n')
-(t/'active-stream-path').write_text(str(stream))
+(t/'active-stream-path').write_text(str(route))
 p = t/'nginx/nginx.conf'
 temporary_paths = ''.join(f'{kind}_temp_path {t}/temp/{kind};\n' for kind in
                          ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))

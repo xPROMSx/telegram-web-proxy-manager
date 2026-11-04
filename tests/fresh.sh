@@ -28,7 +28,7 @@ CERT_ROOT="$SANDBOX/certs"
 RENEW_HOOK="$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager"
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 mkdir "$TMP"
-cp -r "${1:-$ROOT/tests/fixtures/nginx}" "$NGINX_ROOT"
+cp -r --preserve=mode "${1:-$ROOT/tests/fixtures/nginx}" "$NGINX_ROOT"
 mkdir -p "$NGINX_ROOT/conf.d"
 stream_file="$NGINX_ROOT/stream.conf"
 if [[ -f $NGINX_ROOT/stream-enabled/stream.conf ]]; then stream_file="$NGINX_ROOT/stream-enabled/stream.conf"; fi
@@ -352,6 +352,26 @@ before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file")
 install_manager >"$SANDBOX/rerun.log" 2>&1
 [[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$stream_file") == "$before" ]]
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
+# Exercise the public lifecycle entrypoints with the same transport boundaries
+# as Install. Real load_installation and Nginx ownership checks remain active.
+nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
+(
+    systemctl() {
+        if [[ $* == *MainPID* ]]; then printf '%s\n' "$$"
+        elif [[ $* == *FragmentPath* ]]; then printf '%s\n' "$UNIT"; fi
+        return 0
+    }
+    listener_ready() { return 0; }
+    renewal_scheduler_status() { return 0; }
+    # This fixture models certificate transport; real TLS is in nginx.sh.
+    openssl() { if [[ $1 == x509 ]]; then return 0; else command openssl "$@"; fi; }
+    universal_update() { printf 'fixture Update engine delegation\n'; }
+    check_manager
+    update_manager
+    repair_manager
+) >"$SANDBOX/lifecycle.log" 2>&1
+[[ $(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort) == "$nginx_before" ]]
+printf 'ok - Check/Update delegation/Repair validate installed ownership without Nginx migration (runtime transports mocked)\n'
 before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file")
 set +e
 (set -Eeuo pipefail; installed_compatibility() { return 1; }; load_installation) >"$SANDBOX/isolation-failure.log" 2>&1
