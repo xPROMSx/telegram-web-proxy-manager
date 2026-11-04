@@ -19,7 +19,7 @@ owned conntrack/firewall state; this is not a promise of no kernel-level effects
 A destructive rebuild of the neighboring project is not an automatic cross-project
 recovery workflow.
 
-Current source versions are manager `1.1.2` and Fresh Install Telemt `3.5.12`.
+Current source versions are manager `1.1.2` and Fresh Install Telemt `3.5.16`.
 Check the shell/helper constants before updating guidance: they must agree, and
 historical records/pins must not be changed by blanket replacement.
 Production requires root, active systemd, Ubuntu 24.04/26.04, Bash 5+ and Python

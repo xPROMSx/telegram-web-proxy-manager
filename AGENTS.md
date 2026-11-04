@@ -30,7 +30,7 @@ Source and current workflow establish behavior; historical acceptance records
 prove only their recorded revisions, not every future environment.
 
 At this baseline, manager `SCRIPT_VERSION` and `UPDATE_MANAGER_VERSION` are
-`1.1.2`. Fresh Install pins Telemt `3.5.12`; Universal Update verifies the newest
+`1.1.2`. Fresh Install pins Telemt `3.5.16`; Universal Update verifies the newest
 official stable compatible version across SemVer series. Do not mass-replace
 historical versions or change pins as part of unrelated work.
 The production preflight requires root, active systemd, Ubuntu 24.04 or 26.04,

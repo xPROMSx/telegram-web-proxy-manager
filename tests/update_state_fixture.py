@@ -25,7 +25,7 @@ if command=='baseline':
     s.update_install_baseline(layout)
     s.update_service_gate(layout)
 elif command=='create':
-    receipt=s.UpdateReceipt.create(layout.binary,uuid.uuid4().hex,uuid.uuid4().hex,frozen=frozen('3.5.12'))
+    receipt=s.UpdateReceipt.create(layout.binary,uuid.uuid4().hex,uuid.uuid4().hex,frozen=frozen(s.BASELINE_VERSION))
     s.update_write_json(layout.receipt,receipt)
     s.update_write_json(layout.generation,s.update_generation_value(receipt))
     s.update_write_json(layout.data/'.telemt-web-manager-generation.json',dict(schema=1,generation_id=receipt['generation_id']))

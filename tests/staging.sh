@@ -11,9 +11,10 @@ download_candidate
 secret=$(openssl rand -hex 16)
 for SOCKS in direct 127.0.0.1:1080; do
     # Reproduce the old invalid ordering with no production filesystem.
+    # 3.5.16 healthcheck alone permits absent assets; the manager must not.
     generate_config "$secret" >"$TMP/old.toml"
     mkdir -p "$TMP/empty-cwd"
-    if candidate_healthcheck "$CANDIDATE" "$TMP/old.toml" "$TMP/empty-cwd"; then
+    if candidate_compatibility "$CANDIDATE" "$TMP/old.toml" "$TMP/empty-cwd"; then
         die 'Old missing static-directory ordering unexpectedly passed'
     fi
     [[ ! -e $DATA ]]
@@ -27,7 +28,7 @@ for SOCKS in direct 127.0.0.1:1080; do
     mv "$TMP/compat-data/public/index.html" "$TMP/compat-data/public/saved-index"
     if candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$TMP/compat-data"; then die 'Missing static index accepted'; fi
     mv "$TMP/compat-data/public/saved-index" "$TMP/compat-data/public/index.html"
-    printf 'ok - official binary healthcheck rejects missing static_directory and index; old ordering fails before issuance (%s)\n' "$SOCKS"
+    printf 'ok - manager compatibility rejects missing static_directory and index; old ordering fails before issuance (%s)\n' "$SOCKS"
     # Root mismatch and symlink escape must not turn staging into a weaker contract.
     if candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$DATA"; then die 'Unexpected data root accepted'; fi
     rm -rf -- "$TMP/compat-data"

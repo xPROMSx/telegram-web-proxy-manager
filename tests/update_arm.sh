@@ -11,7 +11,8 @@ docker run --rm --network=none --read-only --cap-drop=ALL \
     --cap-add=DAC_OVERRIDE --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --cap-add=SETPCAP \
     --security-opt=no-new-privileges --pids-limit=128 --memory=512m --cpus=1 \
     --tmpfs /tmp:rw,nosuid,nodev,size=64m \
-    -v "$PWD:/src:ro" -v "$artifacts/aarch64/candidate:/official-candidate:ro" \
+    -v "$PWD:/src:ro" -v "$artifacts/aarch64/candidate:/historical-candidate:ro" \
+    -v "$artifacts/fresh-aarch64/candidate:/fresh-candidate:ro" \
     "twm-boot:$family" bash -c '
 set -Eeuo pipefail
 source /src/telemt-web-manager.sh
@@ -20,8 +21,13 @@ temporary=$(mktemp -d)
 finish() { local result=$?; if (( result )); then printf "ARM fixture failed at %s; exit=%s (private output withheld)\n" "$stage" "$result" >&2; fi; rm -rf -- "$temporary"; }
 trap finish EXIT
 chmod 0755 "$temporary"
-install -m 0755 /official-candidate "$temporary/telemt"
-[[ $(sha256sum "$temporary/telemt" | cut -d" " -f1) == d280700fe1508f4b1e13119d422c8a5dba20fd38a71e099fbcf68791c09903e3 ]]
+for target in historical fresh; do
+    case $target in
+        historical) version=3.5.13; digest=d280700fe1508f4b1e13119d422c8a5dba20fd38a71e099fbcf68791c09903e3;;
+        fresh) version=3.5.16; digest=ebaec212fd5556ceca7fb0fcc4d3d23c01a8883d20a4cbc567219022d57c2a0b;;
+    esac
+install -m 0755 "/$target-candidate" "$temporary/telemt"
+[[ $(sha256sum "$temporary/telemt" | cut -d" " -f1) == "$digest" ]]
 DATA="$temporary/data" DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 mkdir -p "$DATA/public" "$DATA/state"
 chmod 0750 "$DATA" "$DATA/public" "$DATA/state"
@@ -42,7 +48,7 @@ probe() {
         env -i PATH=/usr/bin:/bin LANG=C HOME=/tmp qemu-aarch64 "$temporary/telemt" "$@")
 }
 stage=version
-[[ $(probe --version) == "telemt 3.5.13" ]]
+[[ $(probe --version) == "telemt $version" ]]
 for SOCKS in direct 127.0.0.1:1080; do
     # Direct and SOCKS managed TOML are generated with a new private fixture secret.
     token=$(openssl rand -hex 16); generate_config "$token" >"$temporary/config.toml"; unset token
@@ -58,6 +64,8 @@ for SOCKS in direct 127.0.0.1:1080; do
     stage="unknown-key-$SOCKS"
     [[ $result == 1 && $(sha256sum "$temporary/config.toml") == "$before" ]]
 done
-printf "REAL official aarch64 3.5.13: archive/ELF identity, emulated version, direct/SOCKS strict healthcheck, unknown-key exit=1, unchanged TOML: PASS\n"
+printf "REAL official aarch64 %s: archive/ELF identity, emulated version, direct/SOCKS strict healthcheck, unknown-key exit=1, unchanged TOML: PASS\n" "$version"
+rm -rf -- "$DATA"
+done
 printf "ARM limitation: qemu-user parser coverage only; full native ARM systemd/CAP/firewall/WEB runtime is not claimed.\n"
 '

@@ -2301,13 +2301,22 @@ class UpdateProgress:
 UPDATE_SCHEMA = 1
 UPSTREAM_REPOSITORY = dict(id=1125007401, full_name='telemt/telemt')
 UPDATE_MANAGER_VERSION = '1.1.2'
-BASELINE_VERSION = '3.5.12'
-BASELINE_COMMIT = 'c4555e25f39dd5be200ccf6353f7d82bfcf89131'
+BASELINE_VERSION = '3.5.16'
+BASELINE_COMMIT = '84e5b827a6619fb2e09ad3d09f253cdffe04bc2f'
 BASELINE_HASHES = {
-    'x86_64': ('92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3',
-               '53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964'),
-    'aarch64': ('16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3',
-                '308271c73ece5d748aeab21680c10c2bea153ba29c83135b1b84aa79a394173c')}
+    'x86_64': ('e6f46b2f3becf29bfd555cec8a059e429f7c082c1af402499b3a7940cf8ebd34',
+               '1954f18faeb9f5838e9444880f2ffb00704c6bd5b2836bc86dd64611537d49b8'),
+    'aarch64': ('1e1bc87f05923b9673cbbaf34a3e50f7fdcf7d496cd24efcdb34c278ed18a659',
+                'ebaec212fd5556ceca7fb0fcc4d3d23c01a8883d20a4cbc567219022d57c2a0b')}
+# Only these two reviewed identities may create/adopt baseline receipts.
+# Historical 3.5.12 records retain their original identifiers and hash policy.
+REVIEWED_BASELINES = {
+    '3.5.12': ('c4555e25f39dd5be200ccf6353f7d82bfcf89131', {
+        'x86_64': ('92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3',
+                   '53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964'),
+        'aarch64': ('16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3',
+                    '308271c73ece5d748aeab21680c10c2bea153ba29c83135b1b84aa79a394173c')}),
+    BASELINE_VERSION: (BASELINE_COMMIT, BASELINE_HASHES)}
 LEGACY_RELEASES = {
     286377748: ('2.0.0.1', '2026-02-14T13:29:46Z'),
     285764063: ('1.2.0.2', '2026-02-12T16:30:28Z'),
@@ -2640,8 +2649,10 @@ class UpdateReceipt:
         update_timestamp(value['installed_at'])
         update_version(value['manager_version'])
         if value['origin'] == 'reviewed-baseline':
-            archive, binary = BASELINE_HASHES[value['architecture']]
-            require(value['installed_version'] == BASELINE_VERSION and value['commit_sha'] == BASELINE_COMMIT
+            require(value['installed_version'] in REVIEWED_BASELINES)
+            commit, pins = REVIEWED_BASELINES[value['installed_version']]
+            archive, binary = pins[value['architecture']]
+            require(value['commit_sha'] == commit
                     and value['archive_sha256'] == archive and value['binary']['sha256'] == binary
                     and value['trust_policy'] == 'embedded-reviewed-baseline-v1')
             require(all(value[k] is None for k in ('tag_object_sha', 'tag_verification', 'release',
@@ -2678,11 +2689,19 @@ class UpdateReceipt:
     @staticmethod
     def create(binary, transaction, generation, frozen=None, arch=None):
         architecture = arch or update_architecture()
+        identity = update_hash(binary)
+        version, commit, archive = BASELINE_VERSION, BASELINE_COMMIT, BASELINE_HASHES[architecture][0]
+        if not frozen:
+            matches = [(version, commit, pins[architecture][0])
+                       for version, (commit, pins) in REVIEWED_BASELINES.items()
+                       if identity['sha256'] == pins[architecture][1]]
+            require(len(matches) == 1, 'unreviewed baseline binary')
+            version, commit, archive = matches[0]
         value = dict(schema=UPDATE_SCHEMA, origin='official-release' if frozen else 'reviewed-baseline',
-            repository=UPSTREAM_REPOSITORY, architecture=architecture, installed_version=BASELINE_VERSION,
-            tag=BASELINE_VERSION, tag_object_sha=None, commit_sha=BASELINE_COMMIT, tag_verification=None,
-            release=None, asset=None, checksum_asset=None, archive_sha256=BASELINE_HASHES[architecture][0],
-            binary=update_hash(binary), installed_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            repository=UPSTREAM_REPOSITORY, architecture=architecture, installed_version=version,
+            tag=version, tag_object_sha=None, commit_sha=commit, tag_verification=None,
+            release=None, asset=None, checksum_asset=None, archive_sha256=archive,
+            binary=identity, installed_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             manager_version=UPDATE_MANAGER_VERSION, transaction_id=transaction, generation_id=generation,
             trust_policy='embedded-reviewed-baseline-v1')
         if frozen:
@@ -3364,7 +3383,9 @@ class UpdateEngine:
                 os.path.lexists(self.layout.data/'.telemt-web-manager-generation.json'))
         require(not os.path.lexists(self.layout.dropin.parent) and not os.path.lexists(self.layout.recovery_unit),
                 'missing receipt with update gate present; manual recovery required')
-        require(update_hash(self.layout.binary)['sha256']==BASELINE_HASHES[update_architecture()][1],
+        installed_hash=update_hash(self.layout.binary)['sha256']
+        require(any(installed_hash==pins[update_architecture()][1]
+                    for _, pins in REVIEWED_BASELINES.values()),
                 'missing receipt for non-pristine baseline; adoption refused')
         return UpdateReceipt.create(self.layout.binary,uuid.uuid4().hex,uuid.uuid4().hex)
 
@@ -3575,7 +3596,7 @@ class UpdateEngine:
             require(latest['version']==old['installed_version'], 'non-exact equal version requires manual review')
             if old['origin']=='official-release':
                 require(all(old[k]==v for k,v in frozen.items()), 'same-version upstream identity changed')
-            else: require(frozen['commit_sha']==BASELINE_COMMIT and frozen['asset']['sha256']==old['archive_sha256'])
+            else: require(frozen['commit_sha']==old['commit_sha'] and frozen['asset']['sha256']==old['archive_sha256'])
             if not self.layout.receipt.exists(): old=self.migrate(old)
             print('already up to date; local receipt and objective health verified'); return
         if not self.layout.receipt.exists(): old=self.migrate(old)
