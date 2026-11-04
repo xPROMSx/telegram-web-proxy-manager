@@ -58,6 +58,11 @@ trusted loopback boundary. Follow OPERATIONS for exact permissions.
 
 ## Contracts that must survive changes
 
+The no-argument TTY menu selects English or Russian once per invocation, without
+persisting a preference. Explicit CLI flags remain English. Keep translations at
+human-facing call sites; structured helper responses, state and generated configs
+are language-independent. WEB link display requires terminal stdin/stdout/stderr.
+
 - Ordinary bootstrap verifies official repository/owner identity, resolves `main`
   once and downloads both files from the same immutable SHA. `--version` resolves
   only an explicitly requested published release/tag. Versions are read as data,

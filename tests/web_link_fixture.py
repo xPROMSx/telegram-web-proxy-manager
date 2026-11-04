@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'lib/safety.py'
-MENU = b'1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Change cover site\n7. Uninstall Telegram proxy\n8. Exit\n'
+MENU = b'  1. Install Telegram proxy\n  2. Update Telemt\n  3. Check status\n  4. Check and restart services\n  5. Show connection link\n  6. Change cover site\n  7. Uninstall Telegram proxy\n  0. Exit\n'
 COUNT = 0
 
 
@@ -32,11 +32,11 @@ def passed(reason):
     print('ok - '+reason, flush=True)
 
 
-def terminal(command, answer=b'', env=None, input_tty=True, output_tty=True):
+def terminal(command, answer=b'', env=None, input_tty=True, output_tty=True, error_tty=True):
     master, slave = pty.openpty()
     child = subprocess.Popen(command, stdin=slave if input_tty else subprocess.PIPE,
                              stdout=slave if output_tty else subprocess.PIPE,
-                             stderr=slave if output_tty else subprocess.STDOUT,
+                             stderr=slave if output_tty and error_tty else subprocess.PIPE,
                              cwd=ROOT, env=env, start_new_session=True)
     os.close(slave)
     captured = bytearray()
@@ -48,7 +48,8 @@ def terminal(command, answer=b'', env=None, input_tty=True, output_tty=True):
             child.stdin = None
         deadline = time.monotonic()+30
         if not output_tty:
-            captured.extend(child.communicate(timeout=30)[0])
+            output,error=child.communicate(timeout=30)
+            captured.extend(output); captured.extend(error or b'')
         else:
             while time.monotonic() < deadline:
                 ready, _, _ = select.select([master], [], [], .1)
@@ -66,11 +67,14 @@ def terminal(command, answer=b'', env=None, input_tty=True, output_tty=True):
                     break
             require(time.monotonic() < deadline, 'PTY process timeout')
         result = child.wait(timeout=5)
+        if output_tty and child.stderr: captured.extend(child.stderr.read())
         return result, bytes(captured).replace(b'\r\n', b'\n')
     finally:
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGKILL)
         child.wait()
+        for channel in (child.stdin,child.stdout,child.stderr):
+            if channel is not None: channel.close()
         os.close(master)
 
 
@@ -129,7 +133,7 @@ main
             target = shutil.which(name)
             require(target is not None, 'missing fixture tool: '+name)
             (tools/name).symlink_to(target)
-        result, output = terminal(command, b'5\n', dict(env, PATH=str(tools)))
+        result, output = terminal(command, b'1\n5\n', dict(env, PATH=str(tools)))
         require(result == 0 and expected in output, 'Show link gained unrelated dependencies')
         passed('actual Show link succeeds with conntrack/Nginx/Certbot/systemd tools absent')
 
@@ -149,23 +153,38 @@ main
                     and b'UNEXPECTED_APT' not in captured, 'immutable platform guard: '+reason)
             passed('real platform guard before apt: '+reason)
         before = snapshot(root)
-        for name, extra, colored in [('color', {}, True), ('NO_COLOR', {'NO_COLOR':'1'}, False),
-                                     ('TERM=dumb', {'TERM':'dumb'}, False)]:
-            result, output = terminal(command, b'5\n', dict(env, **extra))
-            require(result == 0 and MENU in output, 'exact eight-entry menu')
-            require(expected in output and output.count(expected) == 1, 'exact current TOML/domain link display')
-            require((b'\x1b[' in output) == colored, 'terminal color policy')
-            require(b'WARNING: This link contains a bearer secret.' in output, 'bearer warning')
-            require(snapshot(root) == before, 'show operation mutated managed files')
-            passed('read-only exact menu/link '+name+'; no service, Nginx or backup operation')
+        for language, menu, warning in [('1',MENU,b'WARNING: This link contains a bearer secret.'),
+                ('2','  1. Установить Telegram-прокси\n  2. Обновить Telemt\n  3. Проверить состояние\n  4. Проверить и перезапустить службы\n  5. Показать ссылку подключения\n  6. Сменить сайт-прикрытие\n  7. Удалить Telegram-прокси\n  0. Выход\n'.encode(),
+                 'ВНИМАНИЕ: ссылка содержит секрет доступа.'.encode())]:
+            for name, extra, colored in [('color', {}, True), ('NO_COLOR', {'NO_COLOR':'1'}, False),
+                                         ('NO_COLOR empty', {'NO_COLOR':''}, False), ('TERM=dumb', {'TERM':'dumb'}, False),
+                                         ('TERM=unknown', {'TERM':'unknown'}, False)]:
+                result, output = terminal(command, (language+'\n5\n').encode(), dict(env, **extra))
+                require(result == 0 and menu in output, 'exact localized eight-entry menu')
+                require(output.count(b'SELECT LANGUAGE /')==1, 'one language choice per invocation')
+                require(expected in output and output.count(expected) == 1, 'exact current TOML/domain link display')
+                require((b'\x1b[' in output) == colored, 'terminal color policy')
+                require(warning in output, 'localized bearer warning')
+                require(snapshot(root) == before, 'show operation mutated managed files')
+                passed('read-only exact menu/link '+language+' '+name+'; no service, Nginx or backup operation')
         result = subprocess.run(['python3', str(HELPER), 'web-link-validate', str(state), str(config)],
                                 capture_output=True, timeout=5)
         require(result.returncode == 0 and not result.stdout and not result.stderr, 'silent validation')
         passed('validation-only helper emits no secret or diagnostics on success')
         for input_tty, output_tty in [(True,False),(False,True),(False,False)]:
-            result, output = terminal(command, b'5\n', env, input_tty, output_tty)
+            result, output = terminal(command, b'1\n5\n', env, input_tty, output_tty)
             require(result != 0 and expected not in output and token.encode() not in output
                     and b'\x1b' not in output, 'noninteractive secret/color disclosure')
+        for language in ('1','2'):
+            result,output=terminal(command,(language+'\n5\n').encode(),env,error_tty=False)
+            require(result!=0 and expected not in output and token.encode() not in output,
+                    'redirected stderr secret disclosure')
+        for language in ('en','ru'):
+            result,output=terminal(['python3',str(HELPER),'web-link-display',str(state),str(config)],
+                                   env=dict(env,TWM_UI_LANGUAGE=language),error_tty=False)
+            require(result!=0 and expected not in output and token.encode() not in output and b'\x1b' not in output,
+                    'direct helper redirected stderr disclosure')
+        passed('redirected stderr refuses explicit link display in both languages')
         for action in ('web-link-display',):
             result = subprocess.run(['python3', str(HELPER), action, str(state), str(config)],
                                     capture_output=True, timeout=5)
@@ -182,10 +201,12 @@ main
             require(result.returncode != 0 and not result.stdout
                     and result.stderr == b'Safety validation failed; manual review required (no credentials displayed).\n',
                     'unsafe file validation: '+name)
-            result, output = terminal(command, b'5\n', env)
-            require(result != 0 and b'tg://' not in output and token.encode() not in output,
-                    'failure secret disclosure: '+name)
-            require(b'No valid manager-owned WEB link is available.' in output, 'failure UX: '+name)
+            for language, refusal in [('1',b'No valid manager-owned WEB link is available.'),
+                                      ('2','Проверенная WEB-ссылка этой установки недоступна'.encode())]:
+                result, output = terminal(command, (language+'\n5\n').encode(), env)
+                require(result != 0 and b'tg://' not in output and token.encode() not in output,
+                        'failure secret disclosure: '+language+' '+name)
+                require(refusal in output, 'failure UX: '+language+' '+name)
             passed('refusal without secret: '+name)
 
         invalid('missing link', lambda: link.unlink())
@@ -227,10 +248,10 @@ main
         passed('unsafe ancestor refused')
         with lock.open('r+') as held:
             fcntl.flock(held, fcntl.LOCK_SH)
-            result, output = terminal(command,b'5\n',env)
+            result, output = terminal(command,b'1\n5\n',env)
             require(result == 0 and expected in output, 'concurrent shared read blocked')
             fcntl.flock(held, fcntl.LOCK_EX)
-            result, output = terminal(command,b'5\n',env)
+            result, output = terminal(command,b'1\n5\n',env)
             require(result != 0 and token.encode() not in output, 'exclusive mutation not respected')
         passed('shared lock coexists with reader and refuses concurrent exclusive mutation')
 
@@ -242,7 +263,7 @@ take_lock() { :; }
 install_manager() { [[ $INTERACTIVE_INSTALL == "$1" ]]; }
 '''
         # The mock accepts no arguments from main, so the desired flag is literal in its body.
-        for argument, expected_flag, answer in [('', '1', b'1\n'), ('--install','0',b'')]:
+        for argument, expected_flag, answer in [('', '1', b'1\n1\n'), ('--install','0',b'')]:
             script = route.replace('"$1"', expected_flag)+'main '+argument
             result, _ = terminal(['bash','-c',script],answer,env)
             require(result == 0, 'menu versus CLI Install provenance flag')
@@ -255,21 +276,27 @@ install_manager() { [[ $INTERACTIVE_INSTALL == "$1" ]]; }
             os.chown(path, 65534, 65534)
         fresh = ['bash', str(ROOT/'tests/fresh.sh'), str(nginx_source)]
         fresh_env = dict(env,FIXTURE_LINK_UX='1')
-        result, output = terminal(fresh, env=fresh_env)
-        require(result == 0 and output.count(b'tg://webproxy?server=') == 1
-                and output.index(b'FIXTURE_COMMITTED') < output.index(b'tg://webproxy?server='),
-                'interactive fresh committed display')
-        passed('actual fresh transaction displays validated link only after ARMED=0, manifest and health commit')
-        result, output = terminal(fresh,env=dict(fresh_env,FIXTURE_INCOMPATIBLE='1'))
-        require(result != 0 and b'tg://' not in output and b'FIXTURE_COMMITTED' not in output,
-                'rejected interactive Install disclosed link')
-        passed('interactive candidate failure/rollback does not present link')
+        for language in ('en','ru'):
+            localized_fresh=dict(fresh_env,FIXTURE_UI_LANGUAGE=language)
+            result, output = terminal(fresh, env=localized_fresh)
+            require(result == 0 and output.count(b'tg://webproxy?server=') == 1
+                    and output.index(b'FIXTURE_COMMITTED') < output.index(b'tg://webproxy?server='),
+                    'interactive fresh committed display')
+            passed('actual fresh transaction displays validated link only after ARMED=0, manifest and health commit')
+            result, output = terminal(fresh,env=dict(localized_fresh,FIXTURE_INCOMPATIBLE='1'))
+            require(result != 0 and b'tg://' not in output and b'FIXTURE_COMMITTED' not in output,
+                    'rejected interactive Install disclosed link')
+            passed('interactive candidate failure/rollback does not present link')
         for settings, output_tty in [({'FIXTURE_MENU_INSTALL':'0'},True), ({},False)]:
             result, output = terminal(fresh,env=dict(fresh_env,**settings),output_tty=output_tty)
             require(result == 0 and b'tg://' not in output and b'\x1b' not in output
                     and b'Private WEB link:' in output and b'FIXTURE_COMMITTED' not in output,
                     'CLI/redirected fresh Install disclosed link')
         passed('CLI Install even on PTY and redirected menu Install show saved path only')
+        result,output=terminal(fresh,env=dict(fresh_env,FIXTURE_UI_LANGUAGE='ru'),error_tty=False)
+        require(result==0 and b'tg://' not in output and 'Секретная WEB-ссылка сохранена:'.encode() in output,
+                'committed Russian Install with redirected stderr disclosed link')
+        passed('committed Russian Install with redirected stderr retains saved-path-only disclosure')
     print(f'WEB link regression: {COUNT} checks passed; captured credentials never printed.')
 
 

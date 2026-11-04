@@ -59,6 +59,11 @@ under qemu-user, not a native ARM VPS/systemd acceptance.
 
 ## Lifecycle and security boundaries
 
+The no-argument TTY menu selects English or Russian once per invocation, without
+persisting a preference. Explicit CLI flags remain English. Keep translations at
+human-facing call sites; structured helper responses, state and generated configs
+are language-independent. WEB link display requires terminal stdin/stdout/stderr.
+
 - Mutate only proven manager-owned installations. Preserve exact TOML, service,
   Nginx, certificate, WEB-link and recovery contracts; unknown/changed state
   requires manual review. Check does not repair or migrate state. Repair only

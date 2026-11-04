@@ -1704,18 +1704,33 @@ def current_web_link(state, config):
                           web_link_read(state / 'web-link.txt', {0o600}, 512))
 
 
+def presentation_language():
+    """Ephemeral context supplied only to human-facing manager commands."""
+    return ('ru' if os.environ.get('TWM_UI_LANGUAGE') == 'ru'
+            and sys.stdin.isatty() and sys.stdout.isatty() else 'en')
+
+
+def presentation_color(stream):
+    return (stream.isatty() and os.environ.get('TERM','') not in ('','dumb','unknown')
+            and 'NO_COLOR' not in os.environ)
+
+
 def display_web_link(state, config):
     # Keep validation-only CLI silent; only this explicit terminal path prints.
-    require(sys.stdin.isatty() and sys.stdout.isatty())
+    require(sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty())
     link = current_web_link(state, config)
-    color = os.environ.get('TERM', '') != 'dumb' and not os.environ.get('NO_COLOR')
-    header, cyan, warning, reset = ('\033[1;32m', '\033[96m', '\033[33m', '\033[0m') if color else ('',) * 4
-    rule = '=' * 40
-    print(f'{header}{rule}\n        TELEGRAM WEB PROXY\n{rule}{reset}\n')
-    print('CURRENT CONNECTION LINK:\n')
+    color = presentation_color(sys.stdout)
+    header, cyan, warning, reset = ('\033[1;36m', '\033[96m', '\033[33m', '\033[0m') if color else ('',) * 4
+    russian = presentation_language() == 'ru'
+    rule = '=' * 60
+    print(f'{header}{rule}\n                  TELEGRAM WEB PROXY MANAGER\n{rule}{reset}\n')
+    print('ТЕКУЩАЯ ССЫЛКА ПОДКЛЮЧЕНИЯ:\n' if russian else 'CURRENT CONNECTION LINK:\n')
     print(f'{cyan}{link}{reset}\n')
-    print(f'{warning}WARNING: This link contains a bearer secret.\nStore it securely and do not share it.{reset}\n')
-    print(f'Saved locally:\n  {Path(state) / "web-link.txt"}\n\n{rule}')
+    notice = ('ВНИМАНИЕ: ссылка содержит секрет доступа.\nХраните её в безопасном месте и не передавайте посторонним.' if russian
+              else 'WARNING: This link contains a bearer secret.\nStore it securely and do not share it.')
+    print(f'{warning}{notice}{reset}\n')
+    saved = 'Сохранена локально:' if russian else 'Saved locally:'
+    print(f'{saved}\n  {Path(state) / "web-link.txt"}\n\n{rule}')
 
 
 COVER_BUNDLE = {
@@ -2220,7 +2235,8 @@ def cover_initial(directory, source=None):
             require(raw in [SERVICE_STATUS,*cover_assets().values()], 'unknown staged cover')
         else: raw = cover_choose()
     except (ValueError,UnicodeError):
-        print('Cover assets unavailable; using Service Status.',file=sys.stderr)
+        print('Сайты-прикрытия недоступны; используется Service Status.' if presentation_language() == 'ru'
+              else 'Cover assets unavailable; using Service Status.',file=sys.stderr)
         raw = SERVICE_STATUS
     cover_atomic(directory,stylesheet,initial=True,filename='cover.css')
     cover_atomic(directory,raw,initial=True)
@@ -2250,22 +2266,27 @@ def cover_change(state, config, data, mode, previous):
 
 class UpdateProgress:
     """Presentation only. Deadlines, samples and transaction authority stay in Engine."""
-    def __init__(self, stream=None):
+    def __init__(self, stream=None, language=None):
         self.stream = stream or sys.stdout
-        self.enabled = self.stream.isatty() and os.environ.get('TERM','') != 'dumb'
-        self.color = self.enabled and not os.environ.get('NO_COLOR')
+        self.language = (language if language in ('en','ru') else presentation_language()) if self.stream.isatty() else 'en'
+        self.enabled = self.stream.isatty() and os.environ.get('TERM','') not in ('','dumb','unknown')
+        self.color = presentation_color(self.stream)
         self.stage = None; self.line = False; self.failed = False
 
     def end_line(self):
         if self.line: print(file=self.stream,flush=True); self.line = False
 
     def event(self, stage, legacy):
-        if not self.enabled: print(legacy,file=self.stream,flush=True); return
+        if not self.enabled and self.language != 'ru': print(legacy,file=self.stream,flush=True); return
         if self.stage == stage: return
         self.end_line(); self.stage = stage
         labels = {1:'Verifying release',2:'Compatibility check',3:'Preparing safe update',
                   4:'Stability check',5:'Restart verification'}
-        print(f'[{stage}/5] {labels[stage]}…',file=self.stream,flush=True)
+        if self.language == 'ru':
+            labels = {1:'Проверка релиза',2:'Проверка совместимости',3:'Подготовка безопасного обновления',
+                      4:'Проверка стабильности',5:'Проверка после перезапуска'}
+        cyan,reset = ('\033[1;36m','\033[0m') if self.color else ('','')
+        print(f'{cyan}[{stage}/5] {labels[stage]}…{reset}',file=self.stream,flush=True)
 
     def wait(self, deadline, start, total):
         if not self.enabled:
@@ -2276,23 +2297,30 @@ class UpdateProgress:
             now = time.monotonic(); elapsed = min(total,max(0,int(now-start)))
             filled = min(10,int(elapsed*10/max(1,total))); bar = '█'*filled+'░'*(10-filled)
             green,reset = ('\033[32m','\033[0m') if self.color else ('','')
-            print(f'\r[{self.stage}/5] {green}[{bar}]{reset} {elapsed:3d} / {total} s — Please wait…',
+            waiting = 'с — Подождите…' if self.language == 'ru' else 's — Please wait…'
+            print(f'\r[{self.stage}/5] {green}[{bar}]{reset} {elapsed:3d} / {total} {waiting}',
                   end='',file=self.stream,flush=True); self.line = True
             if now >= deadline: break
             time.sleep(min(1,deadline-now))
 
     def sample(self, sample):
         if not self.enabled:
-            print(f'Acceptance sample {sample}s: process, cgroup, path and current journal OK',file=self.stream,flush=True)
+            message = (f'Проверка на {sample} с: процесс, cgroup, маршрут и текущий журнал исправны' if self.language == 'ru'
+                       else f'Acceptance sample {sample}s: process, cgroup, path and current journal OK')
+            print(message,file=self.stream,flush=True)
 
-    def finish(self, message, failed=False):
+    def finish(self, message, failed=False, russian=None):
         self.end_line()
         self.failed = self.failed or failed
-        if self.enabled: print(('✗ ' if failed else '✓ ')+message,file=self.stream,flush=True)
+        if self.enabled or self.language == 'ru':
+            text = russian if self.language == 'ru' and russian is not None else message
+            color,reset = (('\033[1;31m' if failed else '\033[1;32m'),'\033[0m') if self.color else ('','')
+            print(color+('✗ ' if failed else '✓ ')+text+reset,file=self.stream,flush=True)
 
-    def log(self, message):
+    def log(self, message, russian=None, stream=None):
         self.end_line()
-        print(message,file=self.stream,flush=True)
+        print(russian if self.language == 'ru' and russian is not None else message,
+              file=stream or self.stream,flush=True)
 
 
 
@@ -3556,7 +3584,7 @@ class UpdateEngine:
 
     def migrate(self, receipt):
         """No binary/DATA rewrite: journal baseline ownership and start gate."""
-        print('Verifying pristine baseline ownership and publishing recovery controls.',flush=True)
+        self.progress.log('Verifying pristine baseline ownership and publishing recovery controls.', 'Проверяем принадлежность исходной установки и создаём средства безопасного восстановления.')
         self.ownership(); self.systemd.identity(receipt); self.systemd.path_health()
         transaction=self.journal.begin(receipt,receipt_present=False,immutable=self.immutable(),kind='baseline-migration')
         try:
@@ -3570,7 +3598,7 @@ class UpdateEngine:
             self.journal.result('PREPARED')
             self.step('PUBLISH_GATE',lambda:update_gate_publish(self.layout))
             self.systemd.reload()
-            print('Starting durable manager recovery barrier.',flush=True)
+            self.progress.log('Starting durable manager recovery barrier.', 'Запускаем защиту запуска и восстановления менеджера.')
             self.systemd.ensure_recovery()
             current=self.immutable()
             require({k:v for k,v in current.items() if k not in ('gate','recovery-unit')}==self.journal.value['immutable'])
@@ -3590,7 +3618,9 @@ class UpdateEngine:
         latest=self.releases.latest(); frozen=self.releases.freeze(latest,update_architecture())
         comparison=version_compare(latest['version'],old['installed_version'])
         self.progress.event(1, 'Verified official stable candidate: '+latest['version']+'; installed: '+old['installed_version'])
-        if self.progress.enabled: print('Updating Telemt '+old['installed_version']+' → '+latest['version'],flush=True)
+        if self.progress.enabled or self.progress.language == 'ru':
+            self.progress.log('Updating Telemt '+old['installed_version']+' → '+latest['version'],
+                              'Обновление Telemt '+old['installed_version']+' → '+latest['version'])
         require(comparison>=0, 'installed release is newer; automatic downgrade refused')
         if comparison==0:
             require(latest['version']==old['installed_version'], 'non-exact equal version requires manual review')
@@ -3598,7 +3628,8 @@ class UpdateEngine:
                 require(all(old[k]==v for k,v in frozen.items()), 'same-version upstream identity changed')
             else: require(frozen['commit_sha']==old['commit_sha'] and frozen['asset']['sha256']==old['archive_sha256'])
             if not self.layout.receipt.exists(): old=self.migrate(old)
-            print('already up to date; local receipt and objective health verified'); return
+            self.progress.log('already up to date; local receipt and objective health verified',
+                              'Уже установлена актуальная версия; запись о релизе и работоспособность проверены.'); return
         if not self.layout.receipt.exists(): old=self.migrate(old)
         previous=self.journal.read() if self.layout.journal.exists() else None
         lkg=previous['transaction_id'] if previous and previous['phase']=='COMMITTED' and previous['snapshot'] else (previous['lkg'] if previous else None)
@@ -3655,19 +3686,23 @@ class UpdateEngine:
             self.step('COMMIT',lambda:require(update_generation(self.layout)==new),'COMMITTED')
             update_clear_permit(self.layout)
             self.finish_committed()
-            if self.progress.enabled:
-                self.progress.finish('Telemt updated successfully: '+old['installed_version']+' → '+new['installed_version'])
+            if self.progress.enabled or self.progress.language == 'ru':
+                self.progress.finish('Telemt updated successfully: '+old['installed_version']+' → '+new['installed_version'],
+                                     russian='Telemt успешно обновлён: '+old['installed_version']+' → '+new['installed_version'])
             else: print('Updated to '+new['installed_version']+'. TOML and deployment controls preserved byte-for-byte.')
         except BaseException:
             message = ('Update committed; housekeeping requires manual review.' if self.journal.value['phase']=='COMMITTED'
                        else 'Update failed at '+str(self.progress.stage)+'/5; validating rollback.')
-            self.progress.finish(message,failed=True)
+            self.progress.finish(message,failed=True,
+                russian=('Обновление завершено; очистка сохранённых данных требует ручной проверки.' if self.journal.value['phase']=='COMMITTED'
+                         else 'Ошибка обновления на этапе '+str(self.progress.stage)+'/5; проверяем восстановление прежней версии.'))
             if self.journal.value['phase']!='COMMITTED':
                 self.journal.value['error']='validation-failed'; self.journal.publish()
                 self.recover(force=True)
                 raise
             self.journal.value['error']='cleanup-failed'; self.journal.publish()
-            print('Update committed successfully. Retained generation cleanup requires manual review; new version remains active.',file=sys.stderr)
+            self.progress.log('Update committed successfully. Retained generation cleanup requires manual review; new version remains active.',
+                              'Обновление завершено. Очистка сохранённого поколения требует ручной проверки; новая версия остаётся активной.', stream=sys.stderr)
 
     def finish_committed(self):
         value=self.journal.value
@@ -3781,7 +3816,8 @@ class UpdateEngine:
                 try: self.journal.publish()
                 except OSError:
                     if not boot: raise
-                print('Terminal generation is authoritative; housekeeping remains pending. Next mutation/bootstrap requires cleanup.',file=sys.stderr)
+                self.progress.log('Terminal generation is authoritative; housekeeping remains pending. Next mutation/bootstrap requires cleanup.',
+                                  'Рабочее поколение подтверждено, но очистка не завершена. Перед следующим изменением или обновлением менеджера нужна ручная проверка и очистка.', stream=sys.stderr)
                 if not boot: raise
             return
         self.clean_readonly()
@@ -3828,14 +3864,16 @@ class UpdateEngine:
             self.accept(old,first=15)
             self.journal.value['phase']='ROLLBACK_COMPLETE'; self.journal.value['intent']=None; self.journal.publish()
             self.finish_rollback()
-            self.progress.log('Rollback complete: old binary, full DATA, receipt and objective health restored.')
+            self.progress.log('Rollback complete: old binary, full DATA, receipt and objective health restored.',
+                              'Восстановление завершено: прежний бинарник, все данные (DATA) и запись о релизе восстановлены; работоспособность проверена.')
         except BaseException:
             if self.journal.value['phase']=='ROLLBACK_COMPLETE':
                 self.journal.value['error']='cleanup-failed'
                 try: self.journal.publish()
                 except OSError:
                     if not boot: raise
-                print('Old generation restored and healthy; retained evidence cleanup requires manual review.',file=sys.stderr)
+                self.progress.log('Old generation restored and healthy; retained evidence cleanup requires manual review.',
+                                  'Прежнее поколение восстановлено и работает; очистка сохранённых данных требует ручной проверки.', stream=sys.stderr)
                 if boot: return
                 raise
             try:
@@ -3860,7 +3898,8 @@ class UpdateEngine:
             update_clear_permit(self.layout)
             try: self.systemd.stop(candidate=True)
             except (ValueError,OSError,subprocess.SubprocessError): pass
-            print('CRITICAL: start gate closed; backup and journal retained for manual review.',file=sys.stderr)
+            self.progress.log('CRITICAL: start gate closed; backup and journal retained for manual review.',
+                              'КРИТИЧЕСКАЯ ОШИБКА: запуск заблокирован. Резервная копия и журнал сохранены; требуется ручное восстановление администратором.', stream=sys.stderr)
             raise
         finally:
             signal.pthread_sigmask(signal.SIG_SETMASK,blocked)
@@ -3924,7 +3963,8 @@ class UpdateEngine:
         update_private_directory(self.layout.backups); update_private_directory(evidence)
         update_write_json(evidence/'migration-result.json',self.journal.value)
         self.layout.journal.unlink(); update_fsync(self.layout.journal.parent)
-        print('Baseline migration rolled back; prior receipt absence and deployment preserved.')
+        self.progress.log('Baseline migration rolled back; prior receipt absence and deployment preserved.',
+                          'Перенос состояния отменён с восстановлением: установка сохранена, запись о релизе по-прежнему отсутствует.')
 
 
 def update_remove_gate(layout,allow_partial=False):
@@ -4036,7 +4076,9 @@ def update_command(command, args):
                 with update_exclusive_lock(layout): engine.update()
             except BaseException:
                 if not engine.progress.failed:
-                    engine.progress.finish('Update failed at stage '+str(engine.progress.stage)+'/5; no success reported.',failed=True)
+                    engine.progress.finish('Update failed at stage '+str(engine.progress.stage)+'/5; no success reported.',failed=True,
+                                           russian=('Ошибка обновления до проверки релиза; успешное завершение не подтверждено.' if engine.progress.stage is None
+                                                    else 'Ошибка обновления на этапе '+str(engine.progress.stage)+'/5; успешное завершение не подтверждено.'))
                 raise
             finally: engine.progress.end_line()
         else:
@@ -4538,5 +4580,8 @@ if __name__ == "__main__":
         sys.exit(20)
     except (ValueError, OSError, KeyError, TypeError, AttributeError, IndexError, tarfile.TarError, subprocess.SubprocessError):
         # Config parse errors may contain credentials. Never echo exception text.
-        print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
+        if len(sys.argv)>1 and sys.argv[1] in ('update-universal','update-recover','web-link-display') and presentation_language() == 'ru':
+            print("Проверка безопасности не пройдена. Автоматическое изменение остановлено; требуется ручная проверка. Секреты не показаны.", file=sys.stderr)
+        else:
+            print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
         sys.exit(1)
