@@ -115,7 +115,9 @@ capabilities, real helpers, PID-owned listener, HTTP body, actual merged stdout/
 stderr, absent owned chains before startup, measured >=10-second post-readiness
 dwell with a second actual listener/HTTP check, and absence of pinned conntrack
 reconciliation/retry/shutdown failure fragments. Clean exit and nft/IPv4/IPv6
-inspection follow. These absence assertions are upstream runtime contracts, not
+inspection follow. The existing trusted Update WEB probe also verifies authenticated
+bootstrap/session/Hello/uplink replay/close against the current Fresh binary.
+These absence assertions are upstream runtime contracts, not
 production WARN exceptions. The seven 3.5.10 WARNs remain historical classifier
 regressions, not healthy current-pin runtime expectations. Fatal injection tests the
 production classifier on captured output; it does not inject a runtime service

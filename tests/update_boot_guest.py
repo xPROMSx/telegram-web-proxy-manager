@@ -249,7 +249,9 @@ install_manager
 check_manager
 '''
     try:
-        s.update_run(['bash','-c',code,'fresh-guest',str(MANAGER/'telemt-web-manager.sh'),str(source)],timeout=240)
+        # TCG performs many real helper/process/fsync operations here. Bound the
+        # whole CLI independently of its unchanged per-operation deadlines.
+        s.update_run(['bash','-c',code,'fresh-guest',str(MANAGER/'telemt-web-manager.sh'),str(source)],timeout=900)
     except s.UpdateCommandFailed:
         # Emit only fixed failure strings from the trusted manager source;
         # captured output, TOML, WEB links and arbitrary exception text stay private.
@@ -263,9 +265,14 @@ check_manager
     assert receipt['installed_version']=='3.5.16' and receipt['origin']=='reviewed-baseline'
     engine=s.UpdateEngine(); engine.ownership(); engine.systemd.identity(receipt); engine.systemd.path_health()
     before=engine.immutable()
+    preserved=(layout.binary,layout.receipt,layout.journal,layout.generation,
+               layout.data/'.telemt-web-manager-generation.json',
+               layout.data/'public/index.html',layout.data/'public/cover.css')
+    identities={path:s.update_hash(path) for path in preserved}
     s.update_run(['bash','-c','source "$1"; TMP=$(mktemp -d); trap cleanup EXIT; take_lock; install_manager',
-                  'fresh-idempotence',str(MANAGER/'telemt-web-manager.sh')],timeout=120)
+                  'fresh-idempotence',str(MANAGER/'telemt-web-manager.sh')],timeout=300)
     assert engine.immutable()==before
+    assert {path:s.update_hash(path) for path in preserved}==identities
     print('TWM_FRESH_3516_OK actual Install/state/systemd/WEB/Check/idempotent rerun; historical 3.5.12 -> 3.5.13 recovery unchanged',flush=True)
 
 

@@ -213,6 +213,8 @@ background retry, shutdown-clear or cleanup-incomplete fragments. These strings
 are pinned-upstream runtime assertions only; production WARN remains generic.
 It classifies actual logs, injects fatal classifier negatives, requires clean
 shutdown and inspects nft/IPv4/IPv6 state for Telemt-owned names.
+The existing Update WEB probe also checks authenticated bootstrap/session/Hello,
+uplink replay and close against the current Fresh binary.
 Namespace destruction isolates all firewall effects. No skip or mocked fallback
 is permitted. It does not cover systemd sandbox execution, public DNS/ACME, external
 TLS, Telegram clients, real SOCKS egress or a VPS host's firewall coexistence.

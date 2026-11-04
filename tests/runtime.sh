@@ -91,6 +91,18 @@ elapsed = time.monotonic_ns() - int(sys.argv[1])
 assert elapsed >= 10_000_000_000, 'minimum ten-second post-readiness dwell required'
 print(f'ok - REAL post-readiness runtime dwell {elapsed / 1e9:.3f}s >= 10s; PID/listener/HTTP index remain healthy')
 PY
+    # Reuse the Update acceptance protocol probe against this Fresh baseline.
+    # Public cover HTTP alone does not establish the authenticated WEB contract.
+    python3 - "$ROOT" "$fixture/runtime.toml" <<'PY'
+import importlib.util, sys
+try:
+    spec = importlib.util.spec_from_file_location('fresh_web_runtime',sys.argv[1]+'/lib/safety.py')
+    s = importlib.util.module_from_spec(spec); sys.modules[spec.name] = s; spec.loader.exec_module(s)
+    s.UpdateWEBProbe(s.read_config(sys.argv[2])).run(full=False)
+except Exception:
+    raise SystemExit('REAL Fresh WEB protocol probe failed; private configuration withheld') from None
+print('ok - REAL authenticated WEB bootstrap/session/Hello/uplink replay/close: PASS')
+PY
     # Static assets are cached at config load. Atomic replacement is visible only
     # after the same graceful restart used by Change cover site.
     cp "$fixture/http-body" "$fixture/old-cover"
