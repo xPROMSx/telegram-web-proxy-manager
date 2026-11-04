@@ -1,10 +1,43 @@
 # Upstream audit
 
-Supported Telemt: **3.5.12** (fresh Install baseline).
+Supported Telemt: **3.5.16** (fresh Install baseline).
 
-The current release and source were verified through official GitHub metadata and
-actual downloads on 3 October 2026 (UTC). Manager SCRIPT_VERSION is
-1.1.0. Fresh Install stays deliberately fixed. Universal Update enumerates the
+## Current Fresh Install baseline
+
+Independently downloaded and verified on 4 November 2026 from the official stable
+[3.5.16 release](https://github.com/telemt/telemt/releases/tag/3.5.16), published
+31 October 2026 (`2026-10-31T11:59:29Z`, release ID `429908214`). Both GNU archives
+match release metadata, exact checksum assets and downloaded SHA256 before safe
+extraction. The annotated tag is GitHub verified/valid. No x86_64-v3 asset is used.
+
+| Identity | Value |
+| --- | --- |
+| Source commit | `84e5b827a6619fb2e09ad3d09f253cdffe04bc2f` |
+| Annotated tag | `210883304cae6a9aed583631634081087baaa4da` |
+| x86_64 GNU archive SHA256 | `e6f46b2f3becf29bfd555cec8a059e429f7c082c1af402499b3a7940cf8ebd34` |
+| aarch64 GNU archive SHA256 | `1e1bc87f05923b9673cbbaf34a3e50f7fdcf7d496cd24efcdb34c278ed18a659` |
+| Extracted x86_64 ELF SHA256 | `1954f18faeb9f5838e9444880f2ffb00704c6bd5b2836bc86dd64611537d49b8` |
+| Extracted aarch64 ELF SHA256 | `ebaec212fd5556ceca7fb0fcc4d3d23c01a8883d20a4cbc567219022d57c2a0b` |
+
+The two explicit reviewed baselines are 3.5.12 and 3.5.16. Receipts retain their
+original version/commit/archive/ELF identities; creation or receiptless recognition
+requires an exact known binary hash, never version output alone. The independent
+bootstrap validator accepts both unchanged schema-1 records. No installed state is
+rewritten merely by updating the manager. Historical 3.5.12 -> 3.5.13 update/boot
+fixtures remain separate from current Fresh artifacts; current ARM parser checks
+also cover 3.5.16. Universal Update still discovers the highest official stable
+compatible release and refuses downgrade, without a Fresh-version restriction.
+
+Telemt 3.5.16 healthcheck permits missing static files. The manager retains its
+pre-issuance rejection through explicit safe-path/directory/index checks in the
+existing `candidate_healthcheck` wrapper; unknown-key rejection is still proven
+against the real binary. No TOML, unit, Nginx or state schema changes are needed.
+
+## Retained historical 3.5.12 baseline
+
+The historical 3.5.12 release and source were verified through official GitHub metadata and
+actual downloads on 3 October 2026 (UTC). At that review manager SCRIPT_VERSION was
+1.1.0. Fresh Install was deliberately fixed. Universal Update enumerates the
 complete official release history, choosing the highest stable SemVer across all
 series and verifying its compatibility; it does not select an unchecked latest URL.
 
@@ -16,8 +49,8 @@ series and verifying its compatibility; it does not select an unchecked latest U
 | x86_64 archive SHA256 | `92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3` |
 | aarch64 archive SHA256 | `16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3` |
 
-Both architecture assets were downloaded and hashed independently. Production
-constructs the exact official `releases/download/3.5.12/telemt-ARCH-linux-gnu.tar.gz`
+Both architecture assets were downloaded and hashed independently. That baseline
+constructed the exact official `releases/download/3.5.12/telemt-ARCH-linux-gnu.tar.gz`
 URL, compares its hash with the embedded pin before extraction/execution, retains
 strict archive validation, and verifies the binary's exact version. No x86_64-v3
 asset is selected. Tag verification reports GitHub's result, not independent
@@ -26,7 +59,7 @@ signing-key authentication; asset digests are integrity checks, not signatures.
 CI mechanically compares the production pin, docs, real downloaded binary, staging
 healthcheck binary and runtime binary. A changed asset fails closed.
 
-Fresh Install downloads only this pin. Check uses a local validated receipt plus
+Fresh Install now downloads only the current pin documented above. Check uses a local validated receipt plus
 objective health, with no GitHub dependency or version equality. Universal Update
 checks exact release identity even on equal versions and refuses downgrade/custom
 build ambiguity. The full contract is in [OPERATIONS](OPERATIONS.md#universal-update-020).

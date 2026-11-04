@@ -82,7 +82,7 @@ WantedBy=multi-user.target
                    b'<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>\n',0o440)
     os.chown(layout.data/'public/index.html',0,gid)
     s.update_copy_stream(ARTIFACTS/'baseline',layout.binary,0o755)
-    assert s.update_hash(layout.binary)['sha256']==s.BASELINE_HASHES['x86_64'][1]
+    assert s.update_hash(layout.binary)['sha256']==s.REVIEWED_BASELINES['3.5.12'][1]['x86_64'][1]
     s.update_write(layout.path('/etc/systemd/system/telemt.service'),bash('generate_unit'),0o644)
     cert_root=Path('/etc/letsencrypt'); cert_root.mkdir(mode=0o755,exist_ok=True)
     for directory in (cert_root/'archive'/HOST,cert_root/'live'/HOST,cert_root/'renewal',cert_root/'renewal-hooks/deploy'):
@@ -204,6 +204,56 @@ def assert_terminal_housekeeping_boot(version,authority,terminal):
     assert repaired['normalized'] and repaired['error'] is None
     print('TWM_TERMINAL_HOUSEKEEPING_BOOT_OK '+terminal+': authoritative service active; persistent cleanup pending; normal CLI mutation refused; safe cleanup retry',flush=True)
     return engine
+
+
+
+def fresh_baseline_acceptance():
+    """After every historical recovery assertion, reuse this disposable guest
+    for a genuine Fresh Install. Only DNS/GitHub transports are fixture adapters.
+    Keep the independently trusted local lineage and normal Nginx router.
+    """
+    nginx=Path('/etc/nginx'); plan=Path('/root/fresh-removal-plan.json')
+    s.nginx_plan(nginx,HOST,plan,uninstall=True)
+    s.update_run(['systemctl','disable','--now','telemt.service'])
+    s.update_run(['systemctl','disable','--now','telemt-web-manager-recovery.service'])
+    s.update_remove_gate(layout)
+    for edit in s.update_json(plan.read_bytes())['edits']:
+        path=Path(edit['path'])
+        if edit['content'] is None: path.unlink()
+        else: s.update_write(path,edit['content'].encode(),0o644)
+    layout.path('/etc/systemd/system/telemt.service').unlink()
+    # These roots were created only by setup() in this disposable QEMU guest.
+    for path in (layout.config.parent,layout.data): shutil.rmtree(path)
+    for path in layout.state.iterdir():
+        if path.name!='certificate.json': path.unlink()
+    s.update_run(['userdel','telemt'])
+    s.update_run(['groupdel','telemt'],accepted=(0,6))
+    s.update_run(['systemctl','daemon-reload'])
+    s.update_run(['systemctl','restart','nginx'])
+    source=ARTIFACTS/'fresh-x86_64/candidate'
+    assert s.update_hash(source)['sha256']==s.BASELINE_HASHES['x86_64'][1]
+    code='''source "$1"
+DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
+CANDIDATE_SOURCE=$2
+TMP=$(mktemp -d)
+trap cleanup EXIT
+# GitHub bytes/tag/checksum were independently verified before this offline VM.
+download_candidate() { CANDIDATE="$TMP/candidate"; cp "$CANDIDATE_SOURCE" "$CANDIDATE"; chmod 0755 "$CANDIDATE"; }
+# The function receives no args; bind only this already verified fixture path.
+dns_preflight() { helper domain "$DOMAIN"; helper ipv4 "$PUBLIC_IP"; }
+take_lock
+install_manager
+check_manager
+'''
+    s.update_run(['bash','-c',code,'fresh-guest',str(MANAGER/'telemt-web-manager.sh'),str(source)],timeout=240)
+    receipt=s.UpdateReceipt.read(layout.receipt)
+    assert receipt['installed_version']=='3.5.16' and receipt['origin']=='reviewed-baseline'
+    engine=s.UpdateEngine(); engine.ownership(); engine.systemd.identity(receipt); engine.systemd.path_health()
+    before=engine.immutable()
+    s.update_run(['bash','-c','source "$1"; TMP=$(mktemp -d); trap cleanup EXIT; take_lock; install_manager',
+                  'fresh-idempotence',str(MANAGER/'telemt-web-manager.sh')],timeout=120)
+    assert engine.immutable()==before
+    print('TWM_FRESH_3516_OK actual Install/state/systemd/WEB/Check/idempotent rerun; historical 3.5.12 -> 3.5.13 recovery unchanged',flush=True)
 
 
 def main():
@@ -332,6 +382,7 @@ def main():
         s.update_run(['systemctl','reboot']); return
     if stage=='rollback-terminal-boot':
         assert_terminal_housekeeping_boot('3.5.12',phase['authority'],'ROLLBACK_COMPLETE')
+        fresh_baseline_acceptance()
         print('TWM_BOOT_ALL_PASS',flush=True)
         s.update_run(['systemctl','poweroff']); return
     raise ValueError('unexpected boot fixture phase')

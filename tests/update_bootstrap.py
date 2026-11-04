@@ -139,6 +139,32 @@ class BootstrapBarrier(unittest.TestCase):
             self.invoke(f)
 
 
+def verify_reviewed_bootstrap(artifacts):
+    """Real terminal baseline records/ELFs; manager candidates remain data only."""
+    for version, binary in (('3.5.12',Path(artifacts)/'baseline'),
+                            ('3.5.16',Path(artifacts)/'fresh-x86_64/candidate')):
+        case=BootstrapBarrier('test_supported_terminal_contract_commits_without_candidate_execution')
+        try:
+            f=case.fixture()
+            f.layout.binary.unlink()
+            s.update_copy_stream(binary,f.layout.binary,0o755)
+            receipt=s.UpdateReceipt.create(f.layout.binary,'3'*32,'4'*32)
+            assert receipt['installed_version']==version and receipt['origin']=='reviewed-baseline'
+            s.update_write_json(f.layout.receipt,receipt)
+            s.update_write_json(f.layout.generation,s.update_generation_value(receipt))
+            s.update_write_json(f.layout.data/'.telemt-web-manager-generation.json',dict(schema=1,generation_id=receipt['generation_id']))
+            journal=s.UpdateJournal(f.layout); journal.begin(receipt)
+            journal.value['new']=journal.value['old']; journal.publish()
+            journal.value['phase']='PREPARED'; journal.publish()
+            journal.intent('COMMIT'); journal.result('COMMITTED')
+            paths=[*f.layout.state.rglob('*'),*f.layout.data.rglob('*')]
+            before={p:p.read_bytes() for p in paths if p.is_file()}
+            case.invoke(f,success=True)
+            assert before=={p:p.read_bytes() for p in before}
+            print('REAL bootstrap over reviewed '+version+': manager pair accepted; receipt/journal/generation/DATA unchanged',flush=True)
+        finally: case.doCleanups()
+
+
 if __name__=='__main__':
     if os.geteuid()!=0: raise SystemExit('Use an isolated root test environment')
     unittest.main(verbosity=2)

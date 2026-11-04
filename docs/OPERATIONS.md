@@ -5,7 +5,7 @@
 This document contains the detailed deployment and trust-boundary material.
 Start with the README installation commands. Examples use TEST-NET and example.com.
 
-Supported Telemt: **3.5.12** (fresh Install baseline). Universal Update (introduced in 0.2.0) is
+Supported Telemt: **3.5.16** (fresh Install baseline). Universal Update (introduced in 0.2.0) is
 compatibility-driven across all stable SemVer series. See [upstream provenance](UPSTREAM.md) and the
 [REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
 
@@ -270,7 +270,8 @@ receipt hash and root-owned DATA marker. All controls are regular non-symlink,
 single-link root:root 0600 files below root-only 0700 state. A pristine v0.1.4
 3.5.12 deployment may migrate under the exclusive lock after embedded binary
 hash, running image and managed health are proven. Its reviewed-baseline receipt
-honestly leaves unavailable release/tag verification fields null. A non-baseline
+honestly leaves unavailable release/tag verification fields null. The same exact-hash recognition covers reviewed 3.5.16. Updating the manager pair
+does not rewrite receipts/journals or migrate installations. A non-baseline
 missing receipt, partial state or custom binary is never adopted.
 
 Private candidate execution, including version/healthcheck, uses a root-controlled
@@ -370,7 +371,7 @@ precedes the drop-in that activates its dependency. A valid terminal authoritati
 generation may boot while housekeeping is pending; cleanup errors stay visible
 and block subsequent mutation/bootstrap until resolved.
 
-Fresh Install writes the unchanged 3.5.12 baseline receipt/generation/gate before
+Fresh Install writes the 3.5.16 baseline receipt/generation/gate in the unchanged schema before
 first start. Repair remains conservative. Uninstall removes the exact live update
 controls, DATA marker, drop-in and recovery unit, while root-owned retained backups/
 LKG and existing certificate policy remain. Account ownership scans stay strict.
@@ -386,8 +387,8 @@ systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/T
 expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
 lines are not printed. Root is required; private temporary diagnostics are deleted.
 Version reporting is local: manager, receipted installed Telemt and Install baseline
-3.5.12. A valid receipted newer version can pass objective health without baseline
-equality; no GitHub query is made. A pristine legacy 3.5.12 can report receipt
+3.5.16. A valid receipted newer version can pass objective health without baseline
+equality; no GitHub query is made. A pristine reviewed 3.5.12 or 3.5.16 can report receipt
 migration pending, without mutating it during Check. Pending/CRITICAL Update refuses
 read-only Check/Show; a locked mutation performs recovery first. WARN records only
 contribute a diagnostic count. ERROR/FATAL and genuine
@@ -414,7 +415,7 @@ and foreign units/drop-ins need manual review.
 protections, restricted address families/realtime/SUID/namespaces, W^X and personality.
 Limits: 65536 descriptors, 4096 tasks, MemoryMax=1G. Review VPS capacity/workload;
 external unit edits require review. CAP_NET_ADMIN remains for upstream conntrack
-cleanup even in tracked mode. Telemt 3.5.12 requires `conntrack` on its PATH;
+cleanup even in tracked mode. Telemt 3.5.16 and retained 3.5.12 require `conntrack` on its PATH;
 Ubuntu provides it in the `conntrack` package. Preflight checks it and the account
 creation/deletion tools (`getent`, `useradd`, `userdel`, `groupdel`) before temporary
 transaction setup, downloads or ACME. `systemd-path search-binaries-default`
@@ -562,7 +563,7 @@ and rollback policy is unchanged.
 
 The v0.1.0 coverage gap was the combination of a real binary and fresh ordering:
 `upstream.sh` pre-created DATA/public/index.html, while `fresh.sh` mocked healthcheck.
-`staging.sh` now verifies the official pinned 3.5.12 digest and runs the actual
+`staging.sh` now verifies the official pinned 3.5.16 digest and runs the actual
 binary through fresh orchestration in direct and SOCKS modes. It proves the old
 absent-directory state and a missing index fail, usable staging succeeds, strict
 unknown keys fail, final paths never contain staging, config semantics match,
@@ -609,7 +610,7 @@ reported installed version. Completion prints the actual version and source SHA.
 The quick command fetches the bootstrap itself from main; review/download it
 before execution if desired. Unpublished PR testing still requires a reviewed
 immutable checkout. Manager installation is independent from Telemt's fixed
-3.5.12 Install baseline and Universal Update's official release discovery.
+3.5.16 Install baseline and Universal Update's official release discovery.
 Before publishing a new manager tag, run the explicit pre-publication check:
 `bash tests/bootstrap_versions.sh --release-tag v1.1.2`.
 This compares the intended tag with both source versions; it does not publish

@@ -136,8 +136,8 @@ recent_logs() { return 0; }
 download_candidate() {
     CANDIDATE="$TMP/candidate"
     if [[ $scenario == *-generation ]]; then
-        cp "${TELEMT_UPDATE_ARTIFACTS:?Verified official baseline required}/baseline" "$CANDIDATE"
-        [[ $(sha256sum "$CANDIDATE" | cut -d' ' -f1) == 53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964 ]]
+        cp "${TELEMT_UPDATE_ARTIFACTS:?Verified official baseline required}/fresh-x86_64/candidate" "$CANDIDATE"
+        [[ $(sha256sum "$CANDIDATE" | cut -d' ' -f1) == 1954f18faeb9f5838e9444880f2ffb00704c6bd5b2836bc86dd64611537d49b8 ]]
         chmod 0755 "$CANDIDATE"; return
     fi
     # Keep production's version and strict supplied-config probe assertions.

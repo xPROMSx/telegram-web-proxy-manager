@@ -4,7 +4,7 @@ set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
-[[ $SUPPORTED_TELEMT_VERSION == 3.5.12 ]]
+[[ $SUPPORTED_TELEMT_VERSION == 3.5.16 ]]
 python3 - "$SUPPORTED_TELEMT_VERSION" <<'PY'
 from pathlib import Path
 import sys

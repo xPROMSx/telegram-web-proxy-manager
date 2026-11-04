@@ -31,7 +31,7 @@ sys.exit(1)
 ''');path.chmod(0o755)
 PY
 }
-for version in 3.5.12 3.5.13 4.0.0 42.7.123; do
+for version in 3.5.12 3.5.13 3.5.16 4.0.0 42.7.123; do
     make_binary "$BIN" "$version" compatible
     [[ $(binary_version "$BIN") == "$version" ]]
 done
@@ -70,6 +70,6 @@ path_health() { return 0; }
 recent_logs() { return 0; }
 openssl() { return 0; }
 check_manager >"$sandbox/check.log" 2>&1
-grep -Fq 'installed Telemt: 4.0.0; Install baseline: 3.5.12' "$sandbox/check.log"
+grep -Fq "installed Telemt: 4.0.0; Install baseline: $SUPPORTED_TELEMT_VERSION" "$sandbox/check.log"
 grep -q 'Check result: OK' "$sandbox/check.log"
 printf 'ok - Check uses local receipt/objective health, with no baseline equality or GitHub query\n'

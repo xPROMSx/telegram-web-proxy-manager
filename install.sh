@@ -310,13 +310,21 @@ def recovery_receipt(value):
     recovery_hex(value['binary']['sha256'],64)
     recovery_valid(type(value['binary']['size']) is int and 0<value['binary']['size']<=128*1024*1024)
     if value['origin']=='reviewed-baseline':
-        pins={'x86_64':('92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3',
-                        '53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964'),
-              'aarch64':('16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3',
-                        '308271c73ece5d748aeab21680c10c2bea153ba29c83135b1b84aa79a394173c')}
+        baselines={
+            '3.5.12':('c4555e25f39dd5be200ccf6353f7d82bfcf89131', {
+                'x86_64':('92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3',
+                          '53da315a9f61975913235f72c4adb413313089b966ffcca700653b4663d3d964'),
+                'aarch64':('16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3',
+                           '308271c73ece5d748aeab21680c10c2bea153ba29c83135b1b84aa79a394173c')}),
+            '3.5.16':('84e5b827a6619fb2e09ad3d09f253cdffe04bc2f', {
+                'x86_64':('e6f46b2f3becf29bfd555cec8a059e429f7c082c1af402499b3a7940cf8ebd34',
+                          '1954f18faeb9f5838e9444880f2ffb00704c6bd5b2836bc86dd64611537d49b8'),
+                'aarch64':('1e1bc87f05923b9673cbbaf34a3e50f7fdcf7d496cd24efcdb34c278ed18a659',
+                           'ebaec212fd5556ceca7fb0fcc4d3d23c01a8883d20a4cbc567219022d57c2a0b')})}
+        recovery_valid(value['installed_version'] in baselines)
+        commit,pins=baselines[value['installed_version']]
         archive,binary=pins[value['architecture']]
-        recovery_valid(value['installed_version']=='3.5.12' and
-            value['commit_sha']=='c4555e25f39dd5be200ccf6353f7d82bfcf89131' and
+        recovery_valid(value['commit_sha']==commit and
             value['archive_sha256']==archive and value['binary']['sha256']==binary and
             value['trust_policy']=='embedded-reviewed-baseline-v1' and
             all(value[key] is None for key in ('tag_object_sha','tag_verification','release','asset','checksum_asset')))

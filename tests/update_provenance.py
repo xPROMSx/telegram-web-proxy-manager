@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real official 3.5.13 metadata/download/extraction and both GNU architectures.
+"""Verify historical 3.5.12/3.5.13 and current Fresh GNU artifacts.
 Artifacts are private outside the checkout. No candidate executes in this step.
 """
 import importlib.util
@@ -47,9 +47,33 @@ print('REAL provenance/download: both architectures; candidate execution deferre
 baseline=s.UpdateReleases.release(policy.http.api('/releases/tags/3.5.12'))|{'version':'3.5.12'}
 directory=root/'baseline-provenance'; directory.mkdir(mode=0o700)
 frozen=policy.freeze(baseline,'x86_64')
-assert frozen['commit_sha']==s.BASELINE_COMMIT and frozen['asset']['sha256']==s.BASELINE_HASHES['x86_64'][0]
+legacy_commit,legacy_pins=s.REVIEWED_BASELINES['3.5.12']
+assert frozen['commit_sha']==legacy_commit and frozen['asset']['sha256']==legacy_pins['x86_64'][0]
 policy.recheck(frozen,require_latest=False)
 binary=policy.download(frozen,directory)
-assert s.update_hash(binary)['sha256']==s.BASELINE_HASHES['x86_64'][1]
+assert s.update_hash(binary)['sha256']==legacy_pins['x86_64'][1]
 s.update_copy_stream(binary,root/'baseline',0o755)
 print('REAL reviewed 3.5.12 baseline: signed tag, pinned archive SHA256 and exact embedded ELF identity verified',flush=True)
+
+# Current Fresh Install artifacts are separate from the historical 3.5.12 ->
+# 3.5.13 update rehearsal, so raising the Fresh pin cannot turn it into downgrade.
+fresh=s.UpdateReleases.release(policy.http.api('/releases/tags/'+s.BASELINE_VERSION))|{'version':s.BASELINE_VERSION}
+for arch in ('x86_64','aarch64'):
+    directory=root/('fresh-'+arch); directory.mkdir(mode=0o700)
+    frozen=policy.freeze(fresh,arch)
+    assert frozen['commit_sha']==s.BASELINE_COMMIT
+    assert frozen['tag_object_sha']=='210883304cae6a9aed583631634081087baaa4da'
+    assert frozen['asset']['sha256']==s.BASELINE_HASHES[arch][0]
+    policy.recheck(frozen,require_latest=False)
+    binary=policy.download(frozen,directory)
+    assert s.update_hash(binary)['sha256']==s.BASELINE_HASHES[arch][1]
+    receipt=s.UpdateReceipt.create(binary,'3'*32,'4'*32,arch=arch)
+    assert receipt['installed_version']==s.BASELINE_VERSION and receipt['origin']=='reviewed-baseline'
+    s.update_write_json(directory/'frozen.json',frozen)
+    s.update_write_json(directory/'receipt.json',receipt)
+    print('REAL Fresh '+s.BASELINE_VERSION+' '+arch+': signed tag, archive/checksum and ELF pins; reviewed receipt verified',flush=True)
+
+# Reuse the existing root bootstrap barrier fixture with actual verified ELFs.
+sys.path.insert(0,str(ROOT/'tests'))
+from update_bootstrap import verify_reviewed_bootstrap
+verify_reviewed_bootstrap(root)

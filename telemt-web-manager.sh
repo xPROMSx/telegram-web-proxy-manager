@@ -10,10 +10,10 @@ readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1
 readonly UPDATE_GATE_SCHEMAS=1
 export UPDATE_JOURNAL_SCHEMAS UPDATE_RECEIPT_SCHEMAS UPDATE_GATE_SCHEMAS
-readonly SUPPORTED_TELEMT_VERSION=3.5.12
-readonly SUPPORTED_TELEMT_COMMIT=c4555e25f39dd5be200ccf6353f7d82bfcf89131
-readonly TELEMT_SHA256_X86_64=92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3
-readonly TELEMT_SHA256_AARCH64=16bfd0e78b746171b0434c935ca953358c88b43cfb0091d7b74cb982424202a3
+readonly SUPPORTED_TELEMT_VERSION=3.5.16
+readonly SUPPORTED_TELEMT_COMMIT=84e5b827a6619fb2e09ad3d09f253cdffe04bc2f
+readonly TELEMT_SHA256_X86_64=e6f46b2f3becf29bfd555cec8a059e429f7c082c1af402499b3a7940cf8ebd34
+readonly TELEMT_SHA256_AARCH64=1e1bc87f05923b9673cbbaf34a3e50f7fdcf7d496cd24efcdb34c278ed18a659
 BASE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HELPER="$BASE_DIR/lib/safety.py"
 BIN=/usr/local/bin/telemt
@@ -340,8 +340,13 @@ binary_version() {
 }
 
 candidate_healthcheck() {
+    # 3.5.16 permits absent decoy assets during healthcheck. Preserve the
+    # manager's pre-issuance readiness contract independently of that CLI.
+    local working=${3:-$DATA}
+    [[ -d $working/public && -f $working/public/index.html ]] || return 1
+    helper safe-path "$working/public/index.html" >/dev/null 2>&1 || return 1
     # Its diagnostics can quote TOML secrets. Keep neither stdout nor stderr.
-    (cd "${3:-$DATA}" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
+    (cd "$working" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
 }
 
 candidate_compatibility() {

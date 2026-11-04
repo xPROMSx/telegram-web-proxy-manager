@@ -31,7 +31,7 @@ offline documentation/pin consistency and CI meta-tests. `tests/suites.json` and
 workflow calls and helper reachability. They do not replace runtime assertions.
 No Live VPS, real ACME, nightly or release workflow is introduced in Phase 1.
 
-Supported Telemt: **3.5.12** (fresh Install baseline). Manager 1.1.0 Update selects
+Supported Telemt: **3.5.16** (fresh Install baseline). Manager 1.1.0 Update selects
 the newest verified official stable release by compatibility, without a major/minor
 restriction. This inventory describes `.github/workflows/checks.yml`.
 R = REAL operation; M = MOCKED/synthetic operation; — = not exercised. R/M means
@@ -375,3 +375,24 @@ profile, using its existing verified baseline artifacts. The real Nginx test del
 owned SNI include for the same verified TLS refusal/reload/acceptance contract as
 legacy. Its origin is a Python fixture; it does not prove real Telegram traffic,
 live ACME issuance or production systemd behavior.
+
+## Fresh baseline 3.5.16 and retained 3.5.12 state
+
+The existing provenance verifier retains historical 3.5.12 and both 3.5.13 update
+artifacts, and separately verifies `fresh-x86_64`/`fresh-aarch64` 3.5.16 signed-tag,
+commit, archive/checksum and ELF pins. Native download/strict parser/staging/runtime
+scripts follow the current 3.5.16 pin. The existing ARM job checks both historical
+3.5.13 and current 3.5.16. No new workflow, matrix or framework is added.
+
+Existing QEMU historical update, rollback and hard-power-loss assertions remain
+3.5.12 -> 3.5.13. After completing them, the same disposable guest performs a real
+Fresh Install 3.5.16, writes baseline receipt/generation/gate, starts the service,
+verifies WEB/Check and repeats Install without changing managed controls. Only
+DNS/GitHub transport is adapted; the certificate is an independently trusted local
+fixture. `TWM_FRESH_3516_OK` is required by the host evidence checker.
+
+`test_baseline_versions.py` covers both architectures and both validators, crossed
+or unknown identities, exact-hash creation, read-only receiptless recognition and
+explicit migration for both versions. State schemas and historical evidence remain
+unchanged. No public VPS, live ACME issuance or real Telegram client result is
+implied by these isolated checks.
