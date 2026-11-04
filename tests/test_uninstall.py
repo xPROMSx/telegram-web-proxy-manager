@@ -245,7 +245,7 @@ class UninstallTests(unittest.TestCase):
         os.close(slave)
         output=b''
         try:
-            os.write(master,b'7\nCANCEL\n')
+            os.write(master,b'1\n7\nCANCEL\n')
             deadline=time.monotonic()+10
             while p.poll() is None and time.monotonic()<deadline:
                 if select.select([master],[],[],0.1)[0]:
@@ -257,7 +257,7 @@ class UninstallTests(unittest.TestCase):
                 except OSError: break
             self.assertEqual(p.returncode,0,output)
             self.assertIn(b'7. Uninstall Telegram proxy',output)
-            self.assertIn(b'8. Exit',output)
+            self.assertIn(b'0. Exit',output)
             self.assertIn(b'Type UNINSTALL',output)
             self.assertIn(b'Uninstall cancelled.',output)
             self.assertNotIn(b'UNEXPECTED_BACKUP',output)

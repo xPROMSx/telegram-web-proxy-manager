@@ -215,7 +215,7 @@ are filesystem/orchestration regressions, not a claim of VPS live acceptance.
 TOML domain/secret identity without printing random fixture credentials.
 `sudo python3 tests/web_link_fixture.py` uses real root ownership, safe private
 paths, real PTYs and shared/exclusive locks. It covers the exact eight-entry menu,
-read-only file hashes/modes, default ANSI colors, NO_COLOR/TERM=dumb and both TTY
+read-only file hashes/modes, default ANSI colors, NO_COLOR/TERM=dumb and stdin/stdout/stderr TTY
 gates. Missing files, symlinks/hardlinks/FIFO, wrong owner/mode, unsafe ancestors,
 malformed URL/manifest and domain/secret mismatch refuse without secret output.
 
@@ -398,3 +398,24 @@ or unknown identities, exact-hash creation, read-only receiptless recognition an
 explicit migration for both versions. State schemas and historical evidence remain
 unchanged. No public VPS, live ACME issuance or real Telegram client result is
 implied by these isolated checks.
+
+## Bilingual terminal presentation
+
+`test_ui.py` uses actual PTYs for both language menus, all seven one-shot routes,
+Install questions, cancellation/EOF/Ctrl+C, CLI/import silence, color policy and
+localized success/refusal/manual-review results. Operation dispatch is mocked;
+these tests do not install services. Existing dependency/uninstall PTYs retain
+consent/cancellation and no-mutation assertions after language selection.
+
+`web_link_fixture.py` retains root-owned files, exact link/TOML/manifest validation,
+all hostile-file negatives and no-secret assertions. Both languages cover warning
+and error presentation, color/NO_COLOR/dumb/unknown terminals and committed Fresh
+link display. Redirected stdin, stdout or stderr cannot disclose the link. Fresh
+service/readiness operations remain mocked; no captured credentials enter reports.
+
+`test_update_progress.py` preserves the deadline/sleep assertions and checks all
+five Russian stages, 150/45 display, plain dumb terminals, English redirected
+output and real transaction-fixture success/equal-version/rollback/CRITICAL
+results. Filesystem journal authority is real; release/service/isolation and
+acceptance timing are fixture-controlled. Existing Update and lifecycle suites
+remain required. No workflow, matrix, framework or dependency is added.

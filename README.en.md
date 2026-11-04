@@ -45,7 +45,9 @@ Run as root:
 bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telegram-web-proxy-manager/main/install.sh)
 ```
 
-The interactive menu opens. Choose **Install** and follow the prompts. When installation finishes, the manager displays a `tg://webproxy?...` connection link to add the proxy to Telegram. Your domain serves a cover site over HTTPS.
+When the manager opens, select **English** or **Русский**, then **Install Telegram proxy** and follow the prompts. The language applies to this invocation only and is never saved. Item **0** exits. Invocations with CLI flags retain English output without a language prompt.
+
+When installation finishes, the manager displays a `tg://webproxy?...` connection link to add the proxy to Telegram. Your domain serves a cover site over HTTPS.
 
 For later management, run `telegram-web-proxy-manager`.
 

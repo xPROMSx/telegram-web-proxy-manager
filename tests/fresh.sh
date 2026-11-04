@@ -131,6 +131,7 @@ if [[ ${FIXTURE_LINK_UX:-0} == 1 ]]; then
     }
     (set -Eeuo pipefail; trap cleanup EXIT
      INTERACTIVE_INSTALL=${FIXTURE_MENU_INSTALL:-1}
+     if [[ -n ${FIXTURE_UI_LANGUAGE:-} ]]; then UI_LANG=$FIXTURE_UI_LANGUAGE UI_INTERACTIVE=1; fi
      install_manager)
     exit 0
 fi

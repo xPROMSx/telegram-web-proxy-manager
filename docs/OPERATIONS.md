@@ -764,16 +764,41 @@ The common supported platforms remain Ubuntu 24.04 / 26.04, not Debian 13.
 
 ## Current WEB link (manager 0.1.4)
 
+The no-argument manager first asks `1. English / 2. Русский / 0. Exit / Выход`.
+The selected language applies to this single menu action and is never saved.
+The main menu has the same seven actions in both languages, with Exit at 0:
+
 ```text
-1. Install
-2. Update
-3. Check
-4. Repair
-5. Show current WEB link
+1. Install Telegram proxy
+2. Update Telemt
+3. Check status
+4. Check and restart services
+5. Show connection link
 6. Change cover site
 7. Uninstall Telegram proxy
-8. Exit
+0. Exit
 ```
+
+Russian main menu:
+
+```text
+1. Установить Telegram-прокси
+2. Обновить Telemt
+3. Проверить состояние
+4. Проверить и перезапустить службы
+5. Показать ссылку подключения
+6. Сменить сайт-прикрытие
+7. Удалить Telegram-прокси
+0. Выход
+```
+
+Menu invocation requires terminal stdin/stdout. Invalid input, EOF and Ctrl+C do
+not start an operation. There is no operation loop: completion returns control
+to the caller, including a 3X-UI menu. Explicit CLI flags keep English output,
+without language selection; sourcing Bash or importing Python starts no UI.
+Machine values and external technical diagnostics are not translated. Errors and
+results have localized summaries; the existing manual-review and rollback evidence
+remains visible. No public flags, locale files or persisted preferences are added.
 
 Item 5 uses a shared manager lock and reads the existing private
 `/var/lib/telemt-web-manager/web-link.txt` (root, 0600). It validates safe paths,
@@ -782,17 +807,17 @@ the managed TOML domain and web-user secret. It does not require service or
 certificate health, mutate state, regenerate a secret or repair a missing link.
 Unsafe/missing/mismatched state fails without printing credentials.
 
-The link is a bearer secret; store it privately. Both input and output must be
-interactive terminals. The same presentation follows a committed fresh Install
+The link is a bearer secret; store it privately. Input, stdout and stderr must all be
+interactive terminals; redirecting either output stream refuses secret display. The same presentation follows a committed fresh Install
 selected from the menu, never a CLI `--install` or failed/rolled-back Install.
 Redirected/unattended Install reports the saved path only. Colors require stdout
-TTY and are disabled by nonempty `NO_COLOR` or `TERM=dumb`. No public CLI prints
+TTY and are disabled by any `NO_COLOR`, empty/unknown TERM or `TERM=dumb`. No public CLI prints
 the secret. Config, journals and backups also require secret-safe handling.
 
 ## Managed uninstall
 
 Managed uninstall was introduced in 0.1.2 as `--uninstall --confirm-uninstall`.
-In the 1.0.0 menu, Uninstall is item 7 and Exit is item 8.
+Historically the 1.0.0 menu used Uninstall at 7 and Exit at 8; the current bilingual menu keeps Uninstall at 7 and Exit at 0.
 The interactive confirmation is the exact word `UNINSTALL`;
 only then is certificate deletion offered with default N. `--delete-certificate`
 requires both uninstall and explicit confirmation. This removes Telemt, not the
@@ -902,7 +927,8 @@ and does not create an Update transaction. Normal full-DATA Update preserves cov
 
 TTY Update shows five stages and elapsed stability/restart progress, without hiding
 the cursor or using a background process. NO_COLOR disables ANSI colors; TERM=dumb
-and non-TTY keep line-oriented diagnostics. The renderer does not change 150s + 45s
+and non-TTY keep line-oriented diagnostics. Interactive Russian uses localized
+stage/results/recovery messages; noninteractive diagnostics remain English. The renderer does not change 150s + 45s
 acceptance, validation samples, WEB probes, transaction order or rollback decisions.
 Failure ends the progress line and retains stage/error/rollback information.
 Owner live acceptance of these 1.0.0 paths completed on Ubuntu 26.04 x86_64 after

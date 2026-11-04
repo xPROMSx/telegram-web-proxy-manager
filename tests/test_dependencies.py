@@ -81,12 +81,15 @@ main "$@"
         return {p.name:hashlib.sha256(p.read_bytes()).digest() for p in self.managed.iterdir()
                 if p.name != 'action'}
 
-    def run_action(self, missing=('conntrack',), answer=b'1\ny\n', args=(), **settings):
+    def run_action(self, missing=('conntrack',), answer=b'1\ny\n', args=(), language='en', **settings):
         for tool in missing: (self.tools/tool).unlink()
         env = dict(self.env, FIXTURE_MISSING=' '.join(missing), **settings)
         command = ['/bin/bash','-c',self.code,'fixture',str(ROOT/'telemt-web-manager.sh'),*args]
+        if not args: answer=(b'2\n' if language=='ru' else b'1\n')+answer
         result, output = terminal(command, answer, env)
-        text = output.decode()
+        # Message assertions are independent of the separately tested ANSI style.
+        import re
+        text = re.sub(r'\x1b\[[0-9;]*m','',output.decode())
         trace = self.trace.read_text() if self.trace.exists() else ''
         self.assertEqual(self.hashes(),self.original)
         self.assertNotIn('tg://',text)
@@ -270,10 +273,19 @@ dependency_commands show-web-link
         (self.tools/'conntrack').unlink()
         result,text=terminal(['/bin/bash','-c',self.code,'fixture',str(ROOT/'telemt-web-manager.sh')],
                              b'1\ny\n',self.env,output_tty=False)
-        trace=self.trace.read_text(); self.refused(result,trace)
+        trace=self.trace.read_text() if self.trace.exists() else ''; self.refused(result,trace)
         self.assertNotIn('apt ',trace)
         self.assertNotIn(b'Install missing packages now?',text)
-        self.assertIn((MANUAL+' conntrack').encode(),text)
+        self.assertIn(b'No interactive terminal; specify an action',text)
+        self.assertNotIn(b'SELECT LANGUAGE',text)
+
+    def test_russian_dependency_consent_keeps_mandatory_recheck(self):
+        result,text,trace=self.run_action(language='ru')
+        self.assertEqual(result,0)
+        self.assertIn('Установить недостающие пакеты сейчас?',text)
+        self.assertIn('Зависимости установлены',text)
+        self.assertIn('apt install -y --no-install-recommends conntrack frontend=noninteractive',trace)
+        self.assertIn('action install ',trace)
 
 
 if __name__ == '__main__':
