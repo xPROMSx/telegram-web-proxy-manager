@@ -28,7 +28,7 @@ CERT_ROOT="$SANDBOX/certs"
 RENEW_HOOK="$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager"
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 mkdir "$TMP"
-cp -rp "${1:-$ROOT/tests/fixtures/nginx}" "$NGINX_ROOT"
+cp -r --preserve=mode "${1:-$ROOT/tests/fixtures/nginx}" "$NGINX_ROOT"
 mkdir -p "$NGINX_ROOT/conf.d"
 stream_file="$NGINX_ROOT/stream.conf"
 if [[ -f $NGINX_ROOT/stream-enabled/stream.conf ]]; then stream_file="$NGINX_ROOT/stream-enabled/stream.conf"; fi

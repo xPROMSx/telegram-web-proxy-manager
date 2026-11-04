@@ -281,8 +281,8 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     chmod 0755 "$case_dir/bin/telemt-web-manager"
     DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 EMAIL=operator@example.com AGREE_TOS=1
     kind=webroot
-    if [[ $scenario == preserve-standalone ]]; then kind=standalone; cp -rp tests/fixtures/nginx "$NGINX_ROOT";
-    else cp -rp "${TWM_TEST_NGINX_FIXTURE:-tests/fixtures/nginx-3x-ui}" "$NGINX_ROOT"; fi
+    if [[ $scenario == preserve-standalone ]]; then kind=standalone; cp -r --preserve=mode tests/fixtures/nginx "$NGINX_ROOT";
+    else cp -r --preserve=mode "${TWM_TEST_NGINX_FIXTURE:-tests/fixtures/nginx-3x-ui}" "$NGINX_ROOT"; fi
     mkdir -p "$NGINX_ROOT/conf.d"
     set +e
     (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$case_dir/install.log" 2>&1

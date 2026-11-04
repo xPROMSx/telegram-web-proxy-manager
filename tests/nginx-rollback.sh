@@ -11,9 +11,9 @@ for failure in write test reload; do
         trap 'rm -rf -- "$sandbox"' EXIT
         NGINX_ROOT="$sandbox/nginx" TMP="$sandbox/tmp" BACKUP_ROOT="$sandbox/backups"
         DOMAIN=proxy.example.com
-        cp -rp "$fixture" "$NGINX_ROOT"
+        cp -r --preserve=mode "$fixture" "$NGINX_ROOT"
         mkdir "$TMP"
-        cp -rp "$NGINX_ROOT" "$sandbox/original"
+        cp -r --preserve=mode "$NGINX_ROOT" "$sandbox/original"
         nginx_plan
         eval "$(declare -f atomic_copy | sed '1s/atomic_copy/fixture_atomic_copy/')"
         atomic_copy() {

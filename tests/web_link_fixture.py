@@ -247,7 +247,13 @@ install_manager() { [[ $INTERACTIVE_INSTALL == "$1" ]]; }
             result, _ = terminal(['bash','-c',script],answer,env)
             require(result == 0, 'menu versus CLI Install provenance flag')
         passed('only actual menu selection sets interactive Install provenance')
-        fresh = ['bash', str(ROOT/'tests/fresh.sh')]
+        # A root CI command reads a runner-owned checkout. Preserve fixture
+        # permissions when copying it, but never retain the checkout's owner.
+        nginx_source = root/'runner-owned-nginx'
+        shutil.copytree(ROOT/'tests/fixtures/nginx', nginx_source)
+        for path in (nginx_source, *nginx_source.rglob('*')):
+            os.chown(path, 65534, 65534)
+        fresh = ['bash', str(ROOT/'tests/fresh.sh'), str(nginx_source)]
         fresh_env = dict(env,FIXTURE_LINK_UX='1')
         result, output = terminal(fresh, env=fresh_env)
         require(result == 0 and output.count(b'tg://webproxy?server=') == 1
