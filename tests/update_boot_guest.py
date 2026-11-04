@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import secrets
 import shutil
 import signal
@@ -222,6 +223,7 @@ def fresh_baseline_acceptance():
         if edit['content'] is None: path.unlink()
         else: s.update_write(path,edit['content'].encode(),0o644)
     layout.path('/etc/systemd/system/telemt.service').unlink()
+    layout.binary.unlink()
     # These roots were created only by setup() in this disposable QEMU guest.
     for path in (layout.config.parent,layout.data): shutil.rmtree(path)
     for path in layout.state.iterdir():
@@ -232,7 +234,8 @@ def fresh_baseline_acceptance():
     s.update_run(['systemctl','restart','nginx'])
     source=ARTIFACTS/'fresh-x86_64/candidate'
     assert s.update_hash(source)['sha256']==s.BASELINE_HASHES['x86_64'][1]
-    code='''source "$1"
+    code='''exec >/root/fresh-install-private.log 2>&1
+source "$1"
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 CANDIDATE_SOURCE=$2
 TMP=$(mktemp -d)
@@ -245,7 +248,17 @@ take_lock
 install_manager
 check_manager
 '''
-    s.update_run(['bash','-c',code,'fresh-guest',str(MANAGER/'telemt-web-manager.sh'),str(source)],timeout=240)
+    try:
+        s.update_run(['bash','-c',code,'fresh-guest',str(MANAGER/'telemt-web-manager.sh'),str(source)],timeout=240)
+    except s.UpdateCommandFailed:
+        # Emit only fixed failure strings from the trusted manager source;
+        # captured output, TOML, WEB links and arbitrary exception text stay private.
+        raw=s.update_read(Path('/root/fresh-install-private.log'),s.UPDATE_CHUNK)
+        messages=re.findall(r"\bdie '([^'\n]+)'",(MANAGER/'telemt-web-manager.sh').read_text())
+        for message in messages:
+            if ('ERROR: '+message).encode() in raw:
+                print('TWM_FRESH_FAILURE_CATEGORY '+message,flush=True)
+        raise
     receipt=s.UpdateReceipt.read(layout.receipt)
     assert receipt['installed_version']=='3.5.16' and receipt['origin']=='reviewed-baseline'
     engine=s.UpdateEngine(); engine.ownership(); engine.systemd.identity(receipt); engine.systemd.path_health()
