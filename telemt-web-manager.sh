@@ -1175,7 +1175,11 @@ uninstall_final() {
     uninstall_firewall_absent && nginx_test && systemctl is-active --quiet nginx || return 1
     PLAN_MODE=web
     build_nginx_plan "$TMP/absent-plan.json" || return 1
-    [[ $(jq '.edits | length' "$TMP/absent-plan.json") == 2 ]] || return 1
+    # Both formats must plan a fresh HTTPS vhost after complete removal.
+    # The stream format determines whether there are two or three edits.
+    jq -e --arg vhost "$NGINX_ROOT/conf.d/telemt-web-manager.conf" \
+        'any(.edits[]; .path == $vhost and .old == null and .content != null)' \
+        "$TMP/absent-plan.json" >/dev/null || return 1
     [[ -x $BASE_DIR/telemt-web-manager.sh && -f $HELPER ]] || return 1
     helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT"
 }

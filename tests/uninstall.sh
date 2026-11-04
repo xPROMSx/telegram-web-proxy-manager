@@ -456,3 +456,11 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     if [[ $scenario == lock ]]; then flock -u 8; exec 8>&-; fi
     rm -rf "$case_dir"
 done
+
+# The lifecycle CI already supplies root, mount isolation and verified baseline
+# artifacts. Reuse its complete removal/refusal/rollback suite for PR #93 too;
+# the Nginx-only job deliberately runs without those privileges/artifacts.
+if [[ -z ${TWM_TEST_NGINX_FIXTURE:-} ]]; then
+    python3 tests/three_x_ui.py "$sandbox/includes" --script x-ui-latest.sh --profile includes
+    TWM_TEST_NGINX_FIXTURE="$sandbox/includes" bash "$0" --inside
+fi

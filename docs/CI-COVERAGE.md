@@ -369,7 +369,9 @@ configuration, inherited map include context, install/idempotence, exact owned
 fragment hashes, legacy retention when extension points appear, reverse planning
 and byte-identical neighbor preservation, plus partial/changed/duplicate/misplaced
 refusals. `three-x-ui.sh` adds the pinned include profiles to the existing
-Fresh/rollback/ACME/real-Nginx chain. The real Nginx test delays activation of the
+Fresh/rollback/ACME/real-Nginx chain. The root lifecycle `uninstall.sh` also runs
+its complete deletion/certificate/refusal/rollback suite on the pinned include
+profile, using its existing verified baseline artifacts. The real Nginx test delays activation of the
 owned SNI include for the same verified TLS refusal/reload/acceptance contract as
 legacy. Its origin is a Python fixture; it does not prove real Telegram traffic,
 live ACME issuance or production systemd behavior.

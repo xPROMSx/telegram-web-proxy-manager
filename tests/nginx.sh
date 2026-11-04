@@ -77,11 +77,16 @@ planned = route.read_text()
 route.write_text(re.sub(r'^.*proxy\.example\.com.*\n', '', planned, flags=re.M))
 if (t/'nginx/sites-enabled').exists():
     # Inert stand-in for Xray's existing PROXY-to-TLS REALITY forwarding only.
-    stream.write_text(stream.read_text() +
-        '\nserver { listen 127.0.0.1:18443 proxy_protocol; proxy_pass 127.0.0.1:19443; }\n')
+    # PR #93's REALITY TLS fallback also expects PROXY; historical profiles
+    # terminate it at Xray. Model the emitted backend's actual boundary.
+    forward_proxy = any(re.search(r'listen\s+[^;]*:19443[^;]*\bproxy_protocol\b', p.read_text())
+                        for p in (t/'nginx/sites-enabled').iterdir() if p.is_file())
+    forwarding = ('\nserver { listen 127.0.0.1:18443 proxy_protocol; '
+                  + ('proxy_protocol on; ' if forward_proxy else '')
+                  + 'proxy_pass 127.0.0.1:19443; }\n')
+    stream.write_text(stream.read_text() + forwarding)
     if route == stream:
-        (t/'planned-stream').write_text(planned +
-            '\nserver { listen 127.0.0.1:18443 proxy_protocol; proxy_pass 127.0.0.1:19443; }\n')
+        (t/'planned-stream').write_text(planned + forwarding)
 else:
     for name, port in (('panel', 18443), ('reality', 19443)):
         (t/f'nginx/conf.d/fixture-{name}.conf').write_text(
