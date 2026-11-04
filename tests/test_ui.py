@@ -155,5 +155,24 @@ p.finish('Update completed',russian='Обновление завершено')
         result=subprocess.run(['bash','-c','source ./telemt-web-manager.sh; UI_LANG=ru UI_INTERACTIVE=1; helper version-compare 3.5.16 3.5.16'],cwd=ROOT,capture_output=True)
         self.assertEqual((result.returncode,result.stdout,result.stderr),(0,b'0\n',b''))
 
+    def test_cover_and_uninstall_cancel_in_both_languages_before_mutation(self):
+        code='''source ./telemt-web-manager.sh
+UI_INTERACTIVE=1 UI_LANG=$1
+need() { :; }; load_installation() { :; }
+uninstall_load() { DOMAIN=proxy.example.com; }
+helper() { printf UNEXPECTED_MUTATION; exit 99; }
+backup_begin() { printf UNEXPECTED_MUTATION; exit 99; }
+case $2 in cover) change_cover_site;; uninstall) uninstall_manager;; esac
+'''
+        for language in ('en','ru'):
+            for action,answer,english,russian in (
+                    ('cover',b'3\n','Cover change cancelled.','Смена сайта-прикрытия отменена.'),
+                    ('uninstall',b'CANCEL\n','Uninstall cancelled.','Удаление отменено.')):
+                result,output,_=terminal(code,answer,args=(language,action))
+                self.assertEqual(result,0)
+                self.assertTrue((russian if language=='ru' else english).encode() in output)
+                self.assertTrue(b'UNEXPECTED_MUTATION' not in output)
+                if action=='uninstall': self.assertTrue(b'UNINSTALL' in output)
+
 
 if __name__ == '__main__': unittest.main()
