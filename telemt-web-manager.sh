@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=1.1.2
+readonly SCRIPT_VERSION=1.2.0
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1
@@ -82,7 +82,7 @@ ui_die() {
 }
 ui_header() {
     printf '%s\n' '============================================================'
-    msg_inf '                  TELEGRAM WEB PROXY MANAGER'
+    msg_inf "            TELEGRAM WEB PROXY MANAGER v${SCRIPT_VERSION}"
     printf '%s\n' '============================================================'
     msg_inf "  $1"
     printf '%s\n' '------------------------------------------------------------'

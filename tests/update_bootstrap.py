@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('bootstrap_transaction_fixture',ROOT/'tests/update_transactions.py')
@@ -14,7 +15,7 @@ s=t.s
 
 
 class BootstrapBarrier(unittest.TestCase):
-    def fixture(self):
+    def fixture(self,manager_version=None):
         f=t.Fixture(); self.addCleanup(f.close)
         f.source=f.root/'candidate-pair'; f.source.mkdir(0o700)
         f.destination=f.root/'opt/telemt-web-manager'; f.destination.parent.mkdir(0o700)
@@ -25,6 +26,7 @@ class BootstrapBarrier(unittest.TestCase):
         (f.source/'safety.py').write_text((ROOT/'lib/safety.py').read_text()+
             '\nopen('+repr(str(f.marker))+', "w").write("EXECUTED")\n')
         for path in f.source.iterdir(): path.chmod(0o600)
+        if manager_version is not None: self.candidate_version(f,manager_version)
         self.invoke(f,success=True)
         f.before=self.files(f)
         return f
@@ -32,7 +34,13 @@ class BootstrapBarrier(unittest.TestCase):
         paths=[f.launcher,f.launcher.with_name('telegram-web-proxy-manager'),*f.destination.rglob('*')]
         return {str(p):(p.stat().st_uid,p.stat().st_gid,p.stat().st_mode,
                        p.read_bytes() if p.is_file() else None) for p in paths if p.exists()}
-    def invoke(self,f,success=False,tag='v1.1.2',explicit=''):
+    def candidate_version(self,f,version,previous='1.2.0'):
+        for name,old,new in (('telemt-web-manager.sh','SCRIPT_VERSION='+previous,'SCRIPT_VERSION='+version),
+                            ('safety.py',"UPDATE_MANAGER_VERSION = '"+previous+"'","UPDATE_MANAGER_VERSION = '"+version+"'")):
+            path=f.source/name; text=path.read_text()
+            self.assertEqual(text.count(old),1,'version mutation must change the candidate')
+            path.write_text(text.replace(old,new))
+    def invoke(self,f,success=False,tag='v1.2.0',explicit=''):
         code=('source "$1"; BOOTSTRAP_TMP=$2; INSTALL_DIR=$3; LAUNCHER=$4; BOOTSTRAP_LOCK=$5; '
               'MANAGER_TAG=$6; VERSION=$7; MANAGER_STATE=$8; MANAGER_SYSTEMD_ROOT=$9; commit_manager_pair')
         result=subprocess.run(['bash','-c',code,'fixture',str(ROOT/'install.sh'),str(f.source),
@@ -46,12 +54,38 @@ class BootstrapBarrier(unittest.TestCase):
         self.assertEqual(self.files(f),f.before)
     def test_actual_candidate_downgrade_refuses_even_with_higher_source_tag(self):
         f=self.fixture()
-        path=f.source/'telemt-web-manager.sh'
-        path.write_text(path.read_text().replace('SCRIPT_VERSION=1.1.2','SCRIPT_VERSION=1.1.1'))
-        path=f.source/'safety.py'
-        path.write_text(path.read_text().replace("UPDATE_MANAGER_VERSION = '1.1.2'",
-                                               "UPDATE_MANAGER_VERSION = '1.1.1'"))
+        self.candidate_version(f,'1.1.1')
         self.invoke(f,tag='v99.0.0')
+
+    def test_112_upgrade_and_equal_120_preserve_old_receipt_recovery_and_data(self):
+        f=self.fixture(manager_version='1.1.2')
+        # Model the installed manager's original release receipt and terminal
+        # journal; updating program files must not migrate either record.
+        old=f.old|{'manager_version':'1.1.2'}
+        s.update_write_json(f.layout.receipt,old)
+        s.update_write_json(f.layout.generation,s.update_generation_value(old))
+        journal=s.UpdateJournal(f.layout); journal.begin(old)
+        journal.value['new']=journal.value['old']; journal.publish()
+        journal.value['phase']='PREPARED'; journal.publish()
+        journal.intent('COMMIT'); journal.result('COMMITTED')
+        # Historical engine update under the old manager also leaves LKG and
+        # recovery data. Pair replacement must preserve these bytes as well.
+        with patch.object(s,'UPDATE_MANAGER_VERSION','1.1.2'):
+            f.engine.update()
+        def state():
+            paths=[p for name in ('etc','var','root','usr','run/controller.json')
+                   for p in [f.root/name,*(f.root/name).rglob('*')]]
+            return {p:(p.read_bytes() if p.is_file() else None,
+                       p.stat().st_uid,p.stat().st_gid,p.stat().st_mode) for p in paths}
+        before=state()
+        self.candidate_version(f,'1.2.0',previous='1.1.2')
+        for _ in range(2):
+            self.invoke(f,success=True)
+            self.assertEqual((f.destination/'telemt-web-manager.sh').read_bytes(),(f.source/'telemt-web-manager.sh').read_bytes())
+            self.assertEqual((f.destination/'lib/safety.py').read_bytes(),(f.source/'safety.py').read_bytes())
+            self.assertEqual(state(),before,'manager update changed Telemt state or recovery')
+            self.assertEqual(s.UpdateReceipt.read(f.layout.receipt)['manager_version'],'1.1.2')
+            s.update_service_gate(f.layout)
     def test_pending_critical_and_incomplete_cleanup_refuse_before_pair_staging(self):
         for phase in ('PREPARED','ROLLING_BACK','CRITICAL','COMMITTED'):
             with self.subTest(phase=phase):
@@ -71,8 +105,8 @@ class BootstrapBarrier(unittest.TestCase):
                 else: s.update_write_json(f.layout.generation,s.update_generation_value(f.old)|{'receipt_sha256':'f'*64})
                 self.invoke(f)
     def test_explicit_legacy_downgrade_cannot_remove_recovery_interpreter(self):
-        f=self.fixture(); path=f.source/'telemt-web-manager.sh'
-        text=path.read_text().replace('SCRIPT_VERSION=1.1.2','SCRIPT_VERSION=0.1.4')
+        f=self.fixture(); self.candidate_version(f,'0.1.4'); path=f.source/'telemt-web-manager.sh'
+        text=path.read_text()
         path.write_text('\n'.join(line for line in text.splitlines() if 'UPDATE_' not in line)+'\n')
         self.invoke(f,tag='v0.1.4',explicit='v0.1.4')
     def test_semantically_corrupt_receipt_journal_binary_and_marker_refuse(self):

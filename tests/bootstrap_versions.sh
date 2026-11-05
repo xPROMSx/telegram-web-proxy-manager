@@ -45,7 +45,7 @@ prefix = '\n'.join(Path('telemt-web-manager.sh').read_text().split('\n')[:6]) + 
 script.write_text(prefix+'readonly SCRIPT_VERSION=0.1.1\ntouch '+str(marker)+'\n')
 assert manager_version(script) == '0.1.1' and not marker.exists()
 # Real manager declarations and variable references remain supported.
-assert manager_version('telemt-web-manager.sh') == '1.1.2'
+assert manager_version('telemt-web-manager.sh') == '1.2.0'
 for bad in ('', '# readonly SCRIPT_VERSION=0.1.1', 'readonly SCRIPT_VERSION=01.1.1',
             'readonly SCRIPT_VERSION="0.1.1"', ' readonly SCRIPT_VERSION=0.1.1',
             'readonly SCRIPT_VERSION=0.1.1 # comment', 'SCRIPT_VERSION=0.1.1',
@@ -145,7 +145,7 @@ for explicit in 'v1.2.3-01' '../../other' 'v1.2.3-rc.1+build'; do
     select_release valid '' "$explicit"
 done
 # Run this explicit pre-publication check before creating a release/tag.
-bash tests/bootstrap_versions.sh --release-tag v1.1.2
+bash tests/bootstrap_versions.sh --release-tag v1.2.0
 if bash tests/bootstrap_versions.sh --release-tag v1.1.1 >"$SANDBOX/release-check.log" 2>&1; then
     bootstrap_die 'Release target/content mismatch accepted'
 fi

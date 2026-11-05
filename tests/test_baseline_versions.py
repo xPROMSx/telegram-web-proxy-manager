@@ -58,7 +58,9 @@ class BaselineVersions(unittest.TestCase):
             for arch, (_,digest) in pins.items():
                 with patch.object(s,'update_hash',return_value=dict(sha256=digest,size=123)):
                     value=s.UpdateReceipt.create(Path('/fixture'), '1'*32,'2'*32, arch=arch)
-                self.assertEqual(value,receipt(version,arch)|{'installed_at':value['installed_at']})
+                self.assertEqual(value,receipt(version,arch)|{'installed_at':value['installed_at'],
+                                                            'manager_version':'1.2.0'})
+                bootstrap_validator()(value)
         with patch.object(s,'update_hash',return_value=dict(sha256='f'*64,size=123)):
             with self.assertRaises(ValueError): s.UpdateReceipt.create(Path('/fixture'),'1'*32,'2'*32,arch='x86_64')
 
