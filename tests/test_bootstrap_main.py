@@ -35,9 +35,11 @@ class MainInstall(unittest.TestCase):
         f = self.root / 'fixtures'
         text = (ROOT / 'telemt-web-manager.sh').read_text()
         import re
-        text = re.sub(r'^readonly SCRIPT_VERSION=.*$', 'readonly SCRIPT_VERSION='+version, text, flags=re.M)
+        text, count = re.subn(r'^readonly SCRIPT_VERSION=.*$', 'readonly SCRIPT_VERSION='+version, text, flags=re.M)
+        self.assertEqual(count, 1, 'fixture must change exactly one shell declaration')
         f.joinpath('shell').write_text(text+'\ntouch "'+str(self.root / 'executed')+'"\n')
-        text = re.sub(r"^UPDATE_MANAGER_VERSION = .*$", "UPDATE_MANAGER_VERSION = '"+version+"'", (ROOT / 'lib/safety.py').read_text(), flags=re.M)
+        text, count = re.subn(r"^UPDATE_MANAGER_VERSION = .*$", "UPDATE_MANAGER_VERSION = '"+version+"'", (ROOT / 'lib/safety.py').read_text(), flags=re.M)
+        self.assertEqual(count, 1, 'fixture must change exactly one helper declaration')
         f.joinpath('helper').write_text(text+'\nopen('+repr(str(self.root / 'executed'))+', "w").write("executed")\n')
 
     def run_install(self, success=True, *args):
@@ -162,6 +164,22 @@ shift 2; bootstrap_main --no-start "$@"
         result = self.run_install(True, '--version', 'v1.1.1')
         self.assertIn(b'Installed manager 1.1.0', result.stdout)
         self.assertNotIn(b'Installed manager v1.1.1', result.stdout)
+
+    def test_112_upgrade_to_current_120_and_equal_reinstall(self):
+        self.candidate('1.1.2'); self.run_install()
+        self.candidate('1.2.0')
+        for _ in range(2):
+            result = self.run_install()
+            self.assertIn(b'Installed manager 1.2.0', result.stdout)
+        before = self.snapshot()
+        # A valid shell paired with an older helper must refuse before commit.
+        helper = self.root / 'fixtures/helper'
+        text = helper.read_text()
+        self.assertEqual(text.count("UPDATE_MANAGER_VERSION = '1.2.0'"), 1)
+        helper.write_text(text.replace("UPDATE_MANAGER_VERSION = '1.2.0'", "UPDATE_MANAGER_VERSION = '1.1.2'"))
+        self.run_install(False); self.assertEqual(before, self.snapshot())
+        self.candidate('1.1.2')
+        self.run_install(False); self.assertEqual(before, self.snapshot())
 
     def test_release_preparation_rejects_original_111_vs_110_mismatch(self):
         repo = self.root / 'release-prep'; repo.mkdir()

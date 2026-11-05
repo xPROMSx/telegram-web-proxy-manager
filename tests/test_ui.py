@@ -77,6 +77,9 @@ class ManagerUI(unittest.TestCase):
                     self.assertEqual(result,0)
                     self.assertTrue(title.encode() in output and last.encode() in output,'localized eight-entry menu')
                     self.assertEqual(output.count(b'SELECT LANGUAGE /'),1)
+                    self.assertEqual(output.count(b'TELEGRAM WEB PROXY MANAGER v1.2.0'),2,
+                                     'language and main menu each show the current version once')
+                    self.assertEqual(output.count(b'v1.2.0'),2)
                     self.assertTrue(('ROUTE:'+action).encode() in output,'operation/provenance preserved')
                     self.assertEqual(output.count(b'ROUTE:'),1)
 
@@ -86,7 +89,9 @@ class ManagerUI(unittest.TestCase):
             self.assertEqual(result,0)
             self.assertTrue(b'SELECT LANGUAGE' not in output and b'\x1b' not in output+error)
             if args==('--install',): self.assertTrue(b'ROUTE:install:0:0' in output)
-            else: self.assertTrue(b'Usage:' in output)
+            else:
+                self.assertTrue(b'Usage:' in output)
+                self.assertEqual(output.count(b'Telegram Web Proxy Manager 1.2.0'),1)
         result = subprocess.run(['bash','-c','source ./telemt-web-manager.sh'],cwd=ROOT,capture_output=True)
         self.assertEqual((result.returncode,result.stdout,result.stderr),(0,b'',b''))
         result = subprocess.run(['python3','-c',"import importlib.util; s=importlib.util.spec_from_file_location('ui_import','lib/safety.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)"],cwd=ROOT,capture_output=True)
@@ -117,6 +122,20 @@ class ManagerUI(unittest.TestCase):
             self.assertEqual(result,1); self.assertTrue(b'\x1b' not in output+error)
             result,_,error=terminal(code,args=(language,),error_tty=False)
             self.assertEqual(result,1); self.assertTrue(b'\x1b' not in error)
+
+    def test_version_header_keeps_terminal_color_policy_and_uses_source_version(self):
+        for language in (b'1\n0\n',b'2\n0\n'):
+            for env,color in (({},True),({'NO_COLOR':''},False),({'TERM':'dumb'},False)):
+                result,output,_=terminal(ROUTES,language,env=env)
+                self.assertEqual(result,0)
+                self.assertEqual(output.count(b'TELEGRAM WEB PROXY MANAGER v1.2.0'),2)
+                self.assertEqual(b'\x1b[' in output,color)
+        # A fixture source version proves the title is not a second literal pin.
+        code='source <(sed "s/^readonly SCRIPT_VERSION=.*/readonly SCRIPT_VERSION=9.8.7/" ./telemt-web-manager.sh); ui_header TITLE'
+        result,output,error=terminal(code,output_tty=False)
+        self.assertEqual(result,0)
+        self.assertEqual(output.count(b'TELEGRAM WEB PROXY MANAGER v9.8.7'),1)
+        self.assertTrue(b'1.2.0' not in output and b'\x1b' not in output+error)
 
     def test_actual_install_questions_keep_input_values(self):
         code='''source ./telemt-web-manager.sh

@@ -612,9 +612,15 @@ before execution if desired. Unpublished PR testing still requires a reviewed
 immutable checkout. Manager installation is independent from Telemt's fixed
 3.5.16 Install baseline and Universal Update's official release discovery.
 Before publishing a new manager tag, run the explicit pre-publication check:
-`bash tests/bootstrap_versions.sh --release-tag v1.1.2`.
+`bash tests/bootstrap_versions.sh --release-tag vX.Y.Z` with the agreed target tag.
 This compares the intended tag with both source versions; it does not publish
 anything and cannot prevent a tag created without running the check.
+Synchronize `SCRIPT_VERSION` and `UPDATE_MANAGER_VERSION` in the release PR
+before merge, with affected tests and current documentation. The interactive
+language selector and main menu display the manager version from `SCRIPT_VERSION`;
+this is independent of the Fresh Install baseline and installed Telemt version.
+Updating the program pair does not rewrite old receipt manager versions or
+receipt/journal/generation/LKG data, and does not run Universal Update.
 
 Root and Python 3.11+ are required. No packages, firewall, Telemt configuration,
 Nginx, Certbot, Xray or release/tag are changed. Validate both files first, then

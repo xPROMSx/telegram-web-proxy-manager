@@ -29,9 +29,10 @@ and consistent rules. User-authorized scope takes precedence over these defaults
 Source and current workflow establish behavior; historical acceptance records
 prove only their recorded revisions, not every future environment.
 
-At this baseline, manager `SCRIPT_VERSION` and `UPDATE_MANAGER_VERSION` are
-`1.1.2`. Fresh Install pins Telemt `3.5.16`; Universal Update verifies the newest
-official stable compatible version across SemVer series. Do not mass-replace
+The manager version is defined by `SCRIPT_VERSION` in the shell and
+`UPDATE_MANAGER_VERSION` in the helper; these values must agree. Fresh Install
+pins Telemt through the separate shell/helper baseline constants; Universal
+Update verifies the newest official stable compatible version across SemVer series. Do not mass-replace
 historical versions or change pins as part of unrelated work.
 The production preflight requires root, active systemd, Ubuntu 24.04 or 26.04,
 Bash 5+ and Python 3.11+. It accepts x86_64 and aarch64/arm64. Ubuntu 26.04 is the
@@ -119,8 +120,22 @@ Full root discovery runs through `sudo env PYTHONDONTWRITEBYTECODE=1 bash tests/
 in CI. Choose additional relevant suites from `tests/suites.json` and the workflow;
 do not treat mocks as substitutes for required real integration/system tests.
 Use the existing pinned actionlint version/integrity check, not a floating download.
-The release-preparation check is `bash tests/bootstrap_versions.sh --release-tag v1.1.2`
-for that target version; it must precede publication, not stand in for release approval.
+The release-preparation check is `bash tests/bootstrap_versions.sh --release-tag vX.Y.Z`
+with the agreed target version; it must precede publication, not stand in for release approval.
+
+### Manager release versioning
+
+- The owner agrees the target manager version before preparing a release PR task.
+- Change the version in the release PR before merge and publication. Always
+  synchronize `SCRIPT_VERSION` and `UPDATE_MANAGER_VERSION`, and update affected
+  tests and current documentation together.
+- Before publication, run `bash tests/bootstrap_versions.sh --release-tag vX.Y.Z`
+  with that target tag. A tag/source mismatch must fail.
+- Ordinary functional PRs do not bump the manager version without separately
+  agreed release preparation. Manager SemVer, the Fresh Install Telemt baseline
+  and the installed Telemt version are independent.
+- Never rewrite published tags, historical versions or existing state records
+  to make them match the current manager version.
 
 `.github/workflows/checks.yml` runs for PRs and main pushes with exact checkout,
 pinned actions, read-only permissions and no persisted checkout credentials.
@@ -141,12 +156,17 @@ CI/live checks passed. Stop at the requested review boundary; no implicit merge.
 
 ## Independent integration management
 
-Telegram Manager remains an independent project. A future 3X-UI menu entry
-`4. Telegram Web Proxy Manager` may run the installed manager directly, without
-an automatic update, or offer installation through the official `install.sh`
-when absent; source is never copied into the 3X-UI repository. The existing
-bootstrap resolves current `main` to one exact SHA and verifies the components
-before installation. Install, Check, Update, Repair, Uninstall and Telemt updates
+Telegram Manager remains an independent project. The 3X-UI menu entry
+`4. Telegram Web Proxy Manager` downloads the official root `install.sh` from
+current TWPM `main` over HTTPS on each invocation. First installation requires
+confirmation; an existing manager receives a pair update without repeating that
+confirmation. Bootstrap resolves current `main` to one exact SHA and verifies
+both components before installation, then opens the menu with terminal streams
+preserved. Equal manager versions may reinstall. Download/validation/installation
+failure preserves the previous pair and does not automatically launch it;
+manual `telegram-web-proxy-manager` remains available. Preserve this accepted
+HTTPS/current-main trust model without a fixed bootstrap pin, cache or fallback.
+Source is never copied into the 3X-UI repository. Install, Check, Update, Repair, Uninstall and Telemt updates
 remain Telegram Manager functions. Routine manager fixes need no companion 3X-UI
 PR: each project owns its services, certificates, configuration and data.
 No new CLI flags, bootstrap auto-update or synchronized releases are required.
