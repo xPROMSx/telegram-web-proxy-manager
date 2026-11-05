@@ -48,6 +48,14 @@ class SafetyTests(unittest.TestCase):
         self.assertIn("default xray;", content)
         self.assertEqual(self.plan_nginx()["edits"], [])
 
+    def test_fresh_web_backend_reuses_http_connections(self):
+        vhost=next(edit['content'] for edit in self.plan_nginx()['edits']
+                   if Path(edit['path']).name=='telemt-web-manager.conf')
+        self.assertIn('upstream twpm_web_backend {\n    server 127.0.0.1:18080;\n    keepalive 32;\n}',vhost)
+        self.assertIn('proxy_pass http://twpm_web_backend;',vhost)
+        self.assertIn('proxy_http_version 1.1;',vhost)
+        self.assertIn('proxy_set_header Connection "";',vhost)
+
     def test_unknown_map_refused_without_mutation(self):
         path = self.root / "stream.conf"
         path.write_text(path.read_text().replace("$ssl_preread_server_name", "$remote_addr"))

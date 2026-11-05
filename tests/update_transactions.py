@@ -175,7 +175,7 @@ class Transactions(unittest.TestCase):
             self.assertEqual(s.UpdateReceipt.read(f.layout.backup(journal['transaction_id'])/'old-receipt.json'),f.old)
             self.assertFalse((f.layout.backup(journal['transaction_id'])/'rehearsal').exists())
 
-    def managed_host(self, includes=False):
+    def managed_host(self, includes=False, legacy_http=False):
         run=s.update_run; f=self.fixture()
         f.commands.stop()
         f.commands=patch.object(s,'update_run',side_effect=lambda args,**kw:
@@ -196,6 +196,9 @@ class Transactions(unittest.TestCase):
         s.nginx_plan(nginx,host,f.root/'nginx-plan')
         for edit in json.loads((f.root/'nginx-plan').read_text())['edits']:
             s.update_write(Path(edit['path']),edit['content'].encode(),0o644)
+        if legacy_http:
+            s.update_write(nginx/'conf.d/telemt-web-manager.conf',
+                           (ROOT/'tests/fixtures/nginx-vhost-legacy.conf').read_bytes(),0o644)
         s.update_write_json(f.layout.state/'manifest.json',dict(schema=1,domain=host,public_ip='203.0.113.10',
             unit_sha256=s.update_hash(unit)['sha256'],nginx_sha256=s.update_hash(nginx/'conf.d/telemt-web-manager.conf')['sha256'],acme_webroot=''))
         s.update_write(f.layout.state/'web-link.txt',b'fixture private link')
@@ -262,6 +265,33 @@ class Transactions(unittest.TestCase):
         path=nginx/'stream-sni.d/telemt-web-manager.conf'
         path.write_bytes(path.read_bytes()+b'# altered owned file\n')
         with self.assertRaises(ValueError): f.engine.immutable()
+
+    def test_legacy_http_update_preserves_both_stream_formats(self):
+        for includes in (False,True):
+            f=self.managed_host(includes=includes,legacy_http=True)
+            nginx=f.layout.path('/etc/nginx')
+            before={p:p.read_bytes() for p in nginx.rglob('*') if p.is_file()}
+            f.engine.update()
+            self.assertEqual({p:p.read_bytes() for p in before},before)
+            self.assertEqual(f.engine.immutable(),f.controls)
+            # Explicit vhost optimization after a committed engine Update must
+            # not poison its historical immutable record, gate or LKG.
+            records={p:p.read_bytes() for p in (f.layout.receipt,f.layout.journal,f.layout.generation)}
+            lkg={p:p.read_bytes() for p in f.layout.backups.rglob('*') if p.is_file()}
+            manifest=f.layout.state/'manifest.json'; output=f.root/'keepalive-plan.json'
+            s.nginx_keepalive_plan(nginx,'proxy.example.com',output,'/var/lib/telemt-web-manager-acme',manifest)
+            for edit in json.loads(output.read_text())['edits']:
+                s.update_write(Path(edit['path']),edit['content'].encode(),0o644)
+            value=s.update_json(s.update_read(manifest))
+            value['nginx_sha256']=s.update_hash(nginx/'conf.d/telemt-web-manager.conf')['sha256']
+            s.update_write_json(manifest,value)
+            f.engine.recover(); s.update_service_gate(f.layout)
+            self.assertEqual({p:p.read_bytes() for p in records},records)
+            self.assertEqual({p:p.read_bytes() for p in lkg},lkg)
+            optimized=f.engine.immutable()
+            f.engine.update()  # Equal-version provenance/health path.
+            f.engine.releases.version='3.5.16'; f.engine.update()
+            self.assertEqual(f.engine.immutable(),optimized)
 
     def test_foreign_nginx_bytes_may_change_but_owned_fragments_remain_exact(self):
         f=self.managed_host(); nginx=f.layout.path('/etc/nginx')
