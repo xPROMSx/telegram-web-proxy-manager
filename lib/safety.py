@@ -720,7 +720,25 @@ def nginx_owned_stream(parser, host, stream):
     return managed,ranges
 
 
-def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False):
+def nginx_web_backend(http, vhost):
+    """The HTTP connection cache must never be defined or shared by a neighbor."""
+    for node in walk(http.children):
+        if node.path == vhost:
+            continue
+        # Nginx strips quotes and escaped literal characters in upstream names.
+        args = [re.sub(r'\\(.)', r'\1', arg).lower() for arg in node.args]
+        require(not any('twpm_web_backend' in arg for arg in args),
+                'managed HTTP upstream name used outside owned vhost')
+        if args[0] == 'proxy_pass' and len(args) == 2:
+            authority = args[1].split('://', 1)[-1].split('/', 1)[0].split('?', 1)[0]
+            # A fixed host with a variable port/query (the legacy 3X-UI
+            # snippet) cannot name this cache. A variable hostname can.
+            require('$' not in authority.split(':', 1)[0],
+                    'dynamic HTTP upstream hostname needs manual review')
+
+
+def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False,
+               keepalive=False):
     domain(host)
     parser = Nginx(root)
     nodes = parser.read(Path(root) / "nginx.conf")
@@ -788,6 +806,10 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     existing = [n for n in entries if n.args[0] == host]
     vhost = parser.root / "conf.d" / "telemt-web-manager.conf"
     safe_path(vhost)
+    # Legacy checks/removal do not claim a new HTTP symbol. Fresh/new vhosts
+    # and explicit optimization must prove exclusive use before publishing it.
+    if keepalive or not vhost.exists() or vhost.read_text() == render_vhost(host):
+        nginx_web_backend(http, vhost)
     acme = parser.root / "conf.d" / "telemt-web-manager-acme.conf"
     if acme.exists() or acme.is_symlink():
         safe_path(acme)
@@ -816,7 +838,12 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         require(len(existing) == len(owned) == 1 and vhost.exists())
         require(existing[0].args == [host, "twm_frontend"])
         require([n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]])
-        require(vhost.read_text() == render_vhost(host), "managed Nginx vhost differs; manual review required")
+        require(vhost.read_text() in (render_vhost(host), render_vhost(host, keepalive=False)),
+                "managed Nginx vhost differs; manual review required")
+        active = [n for n in expand(http.children) if n.path == vhost]
+        require([n.args[0] for n in active] ==
+                (['upstream', 'server'] if vhost.read_text() == render_vhost(host) else ['server']),
+                'managed HTTP vhost missing, duplicated or misplaced')
         managed, ranges = nginx_owned_stream(parser, host, stream)
         if any(spans is None for spans in ranges.values()):
             require(include_contract, 'managed stream includes inactive')
@@ -836,6 +863,9 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         content = edits[mapping.path]
         edits[mapping.path] = content[:shifted] + "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n" + content[shifted:]
         edits[vhost] = render_vhost(host)
+    if keepalive:
+        require(not uninstall and len(existing) == len(owned) == 1 and vhost.exists())
+        if vhost.read_text() != render_vhost(host): edits[vhost] = render_vhost(host)
     if uninstall:
         require(len(existing) == len(owned) == 1 and vhost.exists())
         require([n for n in entries if n.args[1] == "twm_frontend"] == existing,
@@ -856,6 +886,21 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
             for p, s in edits.items()]}
     Path(output).write_text(json.dumps(plan))
     if uninstall: return managed
+
+
+def nginx_keepalive_plan(root, host, output, acme_root, manifest):
+    # Bind the explicit single-vhost plan to the original manifest as well as
+    # the entire active Nginx include tree. apply_nginx rechecks both snapshots.
+    raw = update_read(Path(manifest), 16384)
+    value = update_json(raw, 16384)
+    update_exact(value, {'schema','domain','public_ip','unit_sha256','nginx_sha256','acme_webroot'})
+    require(type(value['schema']) is int and value['schema'] == 1 and value['domain'] == host)
+    nginx_plan(root, host, output, acme_root, keepalive=True)
+    plan = json.loads(Path(output).read_text())
+    vhost = str(Path(root).resolve() / 'conf.d/telemt-web-manager.conf')
+    require(plan['snapshot'][vhost] == value['nginx_sha256'], 'Nginx manifest hash differs')
+    plan['snapshot'][str(Path(manifest))] = hashlib.sha256(raw).hexdigest()
+    Path(output).write_text(json.dumps(plan))
 
 
 def render_acme(host, webroot):
@@ -958,9 +1003,12 @@ def port80_config(root):
                   and int(n.args[1].rsplit(":", 1)[-1]) == 80 for n in walk(nodes))))
 
 
-def render_vhost(host):
+def render_vhost(host, keepalive=True):
+    upstream = ('upstream twpm_web_backend {\n    server 127.0.0.1:18080;\n    keepalive 32;\n}\n'
+                if keepalive else '')
+    backend = 'twpm_web_backend' if keepalive else '127.0.0.1:18080'
     return f'''# Managed by telemt-web-manager v1. Manual changes require review.
-server {{
+{upstream}server {{
     listen 127.0.0.1:7444 ssl http2 proxy_protocol;
     server_name {host};
     set_real_ip_from 127.0.0.1;
@@ -974,7 +1022,7 @@ server {{
     client_body_timeout 90s;
     send_timeout 90s;
     location / {{
-        proxy_pass http://127.0.0.1:18080;
+        proxy_pass http://{backend};
         proxy_http_version 1.1;
         proxy_set_header Host {host};
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -4489,6 +4537,8 @@ def main():
         nginx_plan(*args)
     elif command == "nginx-uninstall-plan":
         nginx_plan(*args, uninstall=True)
+    elif command == "nginx-keepalive-plan":
+        nginx_keepalive_plan(*args)
     elif command == "acme-plan":
         acme_plan(*args)
     elif command == "port80-config":

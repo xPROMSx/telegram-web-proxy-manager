@@ -46,6 +46,38 @@ escaped directive/include/listen names and ambiguous syntax are refused.
 Re-running does not duplicate mapping/upstream/vhost. New includes or changes
 during staging cause refusal.
 
+New WEB vhosts keep an HTTP `upstream twpm_web_backend` with the single backend
+`127.0.0.1:18080` and `keepalive 32` in the same managed
+`conf.d/telemt-web-manager.conf`, before `server`. HTTP/1.1 and the empty Connection
+and Upgrade headers allow reuse. The cache holds up to 32 idle connections per
+worker; it is not a client/concurrency limit. TLS, PROXY protocol, routing,
+timeouts, buffering and logging contracts are unchanged.
+
+Exactly two WEB vhost byte templates are recognized: the historical direct
+`proxy_pass http://127.0.0.1:18080` and the new cached backend. Each must still
+match its manifest `nginx_sha256`; manual edits are not adopted. Both work with
+inline and include-based stream integration and all lifecycle operations.
+Bootstrap only replaces manager files; Check, Repair, Update and CLI `--install`
+do not optimize an old vhost automatically.
+
+To enable reuse on an existing installation, launch `telegram-web-proxy-manager`,
+select a language and choose **1. Install Telegram proxy** (Russian:
+**1. Установить Telegram-прокси**). After full ownership and health checks, the
+manager offers keepalive for an exact historical vhost. Confirm explicitly;
+cancel/EOF leaves it unchanged, and an optimized installation needs no further
+confirmation or writes. Only the owned vhost and manifest hash change. The
+existing lock, private backup and rollback protect Nginx validation, reload and
+WEB health failures, restoring the previous vhost/manifest without restarting
+Telemt. Catchable-signal recovery uses this same rollback; power loss/SIGKILL
+remain manual recovery boundaries. Secrets, Telemt DATA and certificates are
+not migrated.
+
+Before creating/using the new cache, its name must be absent from all foreign
+HTTP definitions and references, including quoted/escaped/case variants. Dynamic
+HTTP backend hostnames need manual review because exclusive use cannot be proved;
+fixed-host variable ports/query parameters in recognized 3X-UI snippets remain
+supported. The historical direct template does not claim the new HTTP name.
+
 New 3X-UI installations can expose `include /etc/nginx/stream-sni.d/*.conf;`
 inside the active SNI map and `include /etc/nginx/stream-upstreams.d/*.conf;`
 at stream level. With both extension points active, the manager writes only

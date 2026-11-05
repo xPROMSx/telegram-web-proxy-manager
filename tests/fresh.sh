@@ -355,8 +355,18 @@ install_manager >"$SANDBOX/rerun.log" 2>&1
 printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
 # Exercise the public lifecycle entrypoints with the same transport boundaries
 # as Install. Real load_installation and Nginx ownership checks remain active.
+cp -p "$NGINX_ROOT/conf.d/telemt-web-manager.conf" "$SANDBOX/optimized-vhost"
+cp -p "$STATE/manifest.json" "$SANDBOX/optimized-manifest"
+for http_format in keepalive legacy; do
+if [[ $http_format == legacy ]]; then
+    cp "$ROOT/tests/fixtures/nginx-vhost-legacy.conf" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"
+    jq --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
+        '.nginx_sha256=$nginx' "$STATE/manifest.json" >"$SANDBOX/legacy-manifest"
+    cp "$SANDBOX/legacy-manifest" "$STATE/manifest.json"
+fi
 nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
 (
+    INTERACTIVE_INSTALL=0 UI_INTERACTIVE=0
     systemctl() {
         if [[ $* == *MainPID* ]]; then printf '%s\n' "$$"
         elif [[ $* == *FragmentPath* ]]; then printf '%s\n' "$UNIT"; fi
@@ -367,12 +377,16 @@ nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
     # This fixture models certificate transport; real TLS is in nginx.sh.
     openssl() { if [[ $1 == x509 ]]; then return 0; else command openssl "$@"; fi; }
     universal_update() { printf 'fixture Update engine delegation\n'; }
+    install_manager
     check_manager
     update_manager
     repair_manager
-) >"$SANDBOX/lifecycle.log" 2>&1
+) >"$SANDBOX/lifecycle-$http_format.log" 2>&1
 [[ $(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort) == "$nginx_before" ]]
-printf 'ok - Check/Update delegation/Repair validate installed ownership without Nginx migration (runtime transports mocked)\n'
+printf 'ok - Install/Check/Update delegation/Repair preserve %s HTTP and existing stream format (runtime transports mocked)\n' "$http_format"
+done
+cp -p "$SANDBOX/optimized-vhost" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"
+cp -p "$SANDBOX/optimized-manifest" "$STATE/manifest.json"
 before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file")
 set +e
 (set -Eeuo pipefail; installed_compatibility() { return 1; }; load_installation) >"$SANDBOX/isolation-failure.log" 2>&1

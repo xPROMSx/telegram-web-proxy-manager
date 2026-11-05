@@ -25,7 +25,7 @@ main "$@"
 
 
 def terminal(code, answer=b'', args=(), env=None, input_tty=True, output_tty=True,
-             error_tty=True, interrupt=False):
+             error_tty=True, interrupt=False, timeout=10):
     master, slave = pty.openpty()
     environment = dict(os.environ, TERM='xterm', PYTHONDONTWRITEBYTECODE='1')
     environment.pop('NO_COLOR', None)
@@ -41,9 +41,9 @@ def terminal(code, answer=b'', args=(), env=None, input_tty=True, output_tty=Tru
         if input_tty: os.write(master, answer)
         else: child.stdin.close(); child.stdin = None
         if not output_tty:
-            output, error = child.communicate(timeout=10)
+            output, error = child.communicate(timeout=timeout)
             return child.returncode, output, error or b''
-        deadline = time.monotonic()+10
+        deadline = time.monotonic()+timeout
         sent = False
         while time.monotonic() < deadline:
             readable, _, _ = select.select([master], [], [], .05)

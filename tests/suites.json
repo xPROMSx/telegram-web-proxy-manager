@@ -204,6 +204,11 @@
   ],
   "helpers": [
     {
+      "path": "tests/nginx_keepalive_fixture.py",
+      "called_by": "tests/runtime.sh",
+      "reference": "tests/nginx_keepalive_fixture.py"
+    },
+    {
       "path": "tests/account_fixture.py",
       "called_by": "tests/fresh.sh",
       "reference": "tests/account_fixture.py"
@@ -272,6 +277,7 @@
     }
   ],
   "fixtures": [
+    "tests/fixtures/nginx-vhost-legacy.conf",
     "tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl",
     "tests/fixtures/nginx/nginx.conf",
     "tests/fixtures/nginx/stream.conf",

@@ -31,6 +31,28 @@ offline documentation/pin consistency and CI meta-tests. `tests/suites.json` and
 workflow calls and helper reachability. They do not replace runtime assertions.
 No Live VPS, real ACME, nightly or release workflow is introduced in Phase 1.
 
+Upstream keepalive regressions use the existing discovery/Lifecycle/Regression
+paths: exact historical/current HTTP templates with both stream formats, explicit
+PTY consent/cancel, manifest drift, foreign upstreams, and write/test/reload/health
+rollback. Fresh fixtures run Install/Check/Repair/Update delegation on both HTTP
+formats; transactions and Uninstall also retain historical HTTP cases. Runtime
+and both Ubuntu boot suites call `nginx_keepalive_fixture.py` against the already
+running official Telemt. It verifies TLS plus authenticated WEB sessions through
+real Nginx and counts distinct loopback TCP SYNs to port 18080 for the same 192
+HTTP requests before/after keepalive. This controlled sequence is not Telegram
+iOS traffic, live ACME issuance or evidence about carrier blocking. Captured
+credentials and HTTP payloads are never printed.
+
+Targeted local acceptance on 5 November 2026 used the official Telemt 3.5.16
+binary in isolated container/network namespaces. Stock Ubuntu 24.04 Nginx 1.24.0
+and Ubuntu 26.04 Nginx 1.28.3 both passed config/TLS/WEB checks and measured
+**192 → 1** distinct backend TCP SYNs (**99.48%** reduction) for those same 192
+requests. Telemt was not restarted between each pair of measurements. This
+complements the owner's production iOS measurement of 681 → 5 over 30 seconds;
+it does not reproduce that client workload or establish a link to ISP blocking.
+These local containers did not provide real systemd/boot acceptance; the existing
+Ubuntu QEMU jobs retain that responsibility.
+
 Supported Telemt: **3.5.16** (fresh Install baseline). Manager 1.1.0 Update selects
 the newest verified official stable release by compatibility, without a major/minor
 restriction. This inventory describes `.github/workflows/checks.yml`.

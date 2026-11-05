@@ -32,7 +32,7 @@ LOCK=/run/lock/telemt-web-manager.lock
 TMP='' BACKUP='' DOMAIN='' PUBLIC_IP='' SOCKS='' CANDIDATE=''
 ARMED=0 INSTALLING=0 NGINX_CHANGED=0 UNINSTALLING=0
 CONFIRM_UNINSTALL=0 DELETE_CERTIFICATE=0 CERT_CLEANUP_RUNNING=0 UNINSTALL_ENABLED='' UNINSTALL_ACTIVE=''
-CERT_ONLY=0 PLAN_MODE=web
+CERT_ONLY=0 NGINX_ONLY=0 PLAN_MODE=web
 FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0 FRESH_GATE_CREATED=0
 INTERACTIVE_INSTALL=0 MENU_ACTION=0
 # Invocation-only presentation. Never inherit or persist a language preference.
@@ -225,7 +225,7 @@ rollback() {
     if (( INSTALLING && FRESH_GATE_CREATED )) && [[ -d ${UNIT}.d ]]; then
         helper safe-path "${UNIT}.d" && rmdir -- "${UNIT}.d" || failed=1
     fi
-    if (( CERT_ONLY )); then
+    if (( CERT_ONLY || NGINX_ONLY )); then
         :
     elif (( INSTALLING )); then
         systemctl daemon-reload || failed=1
@@ -233,6 +233,7 @@ rollback() {
         restart_service && wait_ready 90 || failed=1
     fi
     if (( NGINX_CHANGED )); then nginx_test && nginx_reload || failed=1; fi
+    if (( NGINX_ONLY && ! failed )); then path_health || failed=1; fi
     if (( INSTALLING && ! CERT_ONLY )) && [[ -n $FRESH_JOURNAL ]]; then
         if (( ! failed )) && helper fresh-cleanup-dirs "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
             helper fresh-cleanup-account "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE" || failed=1
@@ -664,6 +665,8 @@ build_nginx_plan() {
         helper nginx-uninstall-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     elif [[ $PLAN_MODE == acme ]]; then
         helper acme-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
+    elif [[ $PLAN_MODE == keepalive ]]; then
+        helper nginx-keepalive-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
     else
         helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     fi
@@ -987,6 +990,36 @@ change_cover_site() {
     fi
 }
 
+optimize_nginx_keepalive() {
+    local answer expected actual
+    PLAN_MODE=keepalive
+    nginx_plan
+    if [[ $(jq '.edits | length' "$TMP/nginx-plan.json") == 0 ]]; then PLAN_MODE=web; return; fi
+    ui_info 'The verified Nginx vhost can reuse connections to Telemt. Only this vhost and its manifest hash will change; Telemt will keep running.' \
+        'Проверенный vhost Nginx можно оптимизировать для повторного использования соединений с Telemt. Изменятся только этот vhost и его хеш в manifest; Telemt продолжит работать.'
+    if ! read -r -p "$(ui_text 'Enable Nginx upstream keepalive? [y/N]: ' 'Включить Nginx upstream keepalive? [д/Н]: ')" answer; then answer=''; fi
+    case $answer in
+        y|Y|yes|Yes|YES|д|Д|да|Да|ДА) ;;
+        *) ui_info 'Nginx optimization cancelled; no changes made.' 'Оптимизация Nginx отменена; изменений не внесено.'; PLAN_MODE=web; return;;
+    esac
+    expected=$(jq -rj '.edits[0].content' "$TMP/nginx-plan.json" | sha256sum | cut -d' ' -f1)
+    jq --arg nginx "$expected" '.nginx_sha256 = $nginx' "$STATE/manifest.json" >"$TMP/manifest-keepalive.json"
+    chmod 0600 "$TMP/manifest-keepalive.json"
+    backup_begin
+    backup_nginx_context
+    track_file "$STATE/manifest.json"
+    NGINX_ONLY=1 ARMED=1
+    apply_nginx
+    actual=$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf")
+    [[ ${actual%% *} == "$expected" ]] || ui_die 'Nginx changed during optimization; restoring backup' \
+        'Конфигурация Nginx изменилась во время оптимизации; восстанавливаем резервную копию'
+    atomic_copy "$TMP/manifest-keepalive.json" "$STATE/manifest.json"
+    path_health || ui_die 'WEB health check failed; restoring the previous Nginx vhost and manifest' \
+        'Проверка WEB не пройдена; восстанавливаем прежний vhost Nginx и manifest'
+    ARMED=0 NGINX_ONLY=0 PLAN_MODE=web
+    ui_ok 'Nginx upstream keepalive enabled. Telemt was not restarted.' 'Nginx upstream keepalive включён. Telemt не перезапускался.'
+}
+
 install_manager() {
     if [[ -f $STATE/manifest.json ]]; then
         local requested_domain=$DOMAIN
@@ -994,6 +1027,7 @@ install_manager() {
         [[ -z $requested_domain || $requested_domain == "$DOMAIN" ]] || ui_die 'Different domain requested; manual review required' 'Запрошен другой домен; автоматическое изменение остановлено, требуется ручная проверка'
         ui_info 'Already installed; checking without rewriting configuration.' 'Установка уже существует; проверяем её без перезаписи конфигурации.'
         path_health
+        if (( INTERACTIVE_INSTALL && UI_INTERACTIVE )) && [[ -t 0 && -t 1 ]]; then optimize_nginx_keepalive; fi
         return
     fi
     [[ -n $DOMAIN && -n $PUBLIC_IP ]] || prompt_install

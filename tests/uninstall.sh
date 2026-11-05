@@ -256,7 +256,7 @@ runtime_refusals() {
         printf 'ok - runtime %s refusal: no deletion; DATA/static/Nginx/account/certificate intact; prior service restored\n' "$variation"
     done
 }
-for scenario in preserve-standalone preserve-webroot stopped expired delete delete-failure \
+for scenario in preserve-standalone preserve-webroot preserve-legacy-http preserve-legacy-http-includes stopped expired delete delete-failure \
     failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
     runtime-churn runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
@@ -281,7 +281,12 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     chmod 0755 "$case_dir/bin/telemt-web-manager"
     DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 EMAIL=operator@example.com AGREE_TOS=1
     kind=webroot
-    if [[ $scenario == preserve-standalone ]]; then kind=standalone; cp -r --preserve=mode tests/fixtures/nginx "$NGINX_ROOT";
+    if [[ $scenario == preserve-legacy-http-includes ]]; then
+        cp -r --preserve=mode tests/fixtures/nginx-3x-includes "$NGINX_ROOT"
+        for directory in stream-sni.d stream-upstreams.d snippets/x-ui-auto-optional; do
+            mkdir -p "$NGINX_ROOT/$directory"; chmod 0755 "$NGINX_ROOT/$directory"
+        done
+    elif [[ $scenario == preserve-standalone ]]; then kind=standalone; cp -r --preserve=mode tests/fixtures/nginx "$NGINX_ROOT";
     else cp -r --preserve=mode "${TWM_TEST_NGINX_FIXTURE:-tests/fixtures/nginx-3x-ui}" "$NGINX_ROOT"; fi
     mkdir -p "$NGINX_ROOT/conf.d"
     set +e
@@ -294,6 +299,12 @@ for scenario in preserve-standalone preserve-webroot stopped expired delete dele
     fi
     if [[ $scenario == *-generation ]]; then python3 "$ROOT/tests/update_state_fixture.py" create "$case_dir"; fi
     [[ -f $STATE/manifest.json && -f $STATE/certificate.json && $(cat "$case_dir/issuance") == issued ]]
+    if [[ $scenario == preserve-legacy-http* ]]; then
+        cp "$ROOT/tests/fixtures/nginx-vhost-legacy.conf" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"
+        jq --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
+            '.nginx_sha256=$nginx' "$STATE/manifest.json" >"$case_dir/legacy-manifest"
+        cp "$case_dir/legacy-manifest" "$STATE/manifest.json"
+    fi
     if [[ $scenario == runtime-* ]]; then runtime_fixture seed "$DATA"; fi
     if [[ $scenario == runtime-churn-rollback ]]; then
         for object in "$BIN" "$CONFIG_DIR" "$UNIT" "$STATE" "$NGINX_ROOT"; do

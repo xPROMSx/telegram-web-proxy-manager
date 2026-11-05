@@ -103,6 +103,7 @@ except Exception:
     raise SystemExit('REAL Fresh WEB protocol probe failed; private configuration withheld') from None
 print('ok - REAL authenticated WEB bootstrap/session/Hello/uplink replay/close: PASS')
 PY
+    python3 "$ROOT/tests/nginx_keepalive_fixture.py" "$fixture/runtime.toml"
     # Static assets are cached at config load. Atomic replacement is visible only
     # after the same graceful restart used by Change cover site.
     cp "$fixture/http-body" "$fixture/old-cover"

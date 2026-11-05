@@ -264,6 +264,10 @@ check_manager
     receipt=s.UpdateReceipt.read(layout.receipt)
     assert receipt['installed_version']=='3.5.16' and receipt['origin']=='reviewed-baseline'
     engine=s.UpdateEngine(); engine.ownership(); engine.systemd.identity(receipt); engine.systemd.path_health()
+    keepalive=subprocess.run(['python3',str(ROOT/'tests/nginx_keepalive_fixture.py'),str(layout.config)],
+                             capture_output=True,timeout=120)
+    assert keepalive.returncode==0,'real Fresh Telemt HTTPS/keepalive fixture failed'
+    for line in keepalive.stdout.decode().splitlines(): print('TWM_REAL_KEEPALIVE '+line,flush=True)
     before=engine.immutable()
     preserved=(layout.binary,layout.receipt,layout.journal,layout.generation,
                layout.data/'.telemt-web-manager-generation.json',
