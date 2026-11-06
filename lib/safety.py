@@ -4038,8 +4038,9 @@ def uninstall_update_paths(paths):
     if not any(os.path.lexists(state/name) for name in names): return []
     require(all(os.path.lexists(state/name) for name in names) and state.name=='telemt-web-manager')
     layout=UpdateLayout(state.parents[2])
-    require(paths==[str(layout.binary),str(layout.config.parent),
-                   str(layout.path('/etc/systemd/system/telemt.service')),str(layout.data),str(layout.state)])
+    require(paths[:5]==[str(layout.binary),str(layout.config.parent),
+                       str(layout.path('/etc/systemd/system/telemt.service')),str(layout.data),str(layout.state)]
+            and (len(paths)==5 or (len(paths)==6 and paths[5]==str(layout.path(SITE_ROOT)))))
     update_pending(layout); update_gate_contract(layout); update_generation(layout)
     return [str(layout.dropin.parent),str(layout.recovery_unit)]
 

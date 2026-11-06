@@ -271,8 +271,8 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
     if [[ $scenario == *-generation ]]; then
         BIN="$case_dir/usr/local/bin/telemt" CONFIG_DIR="$case_dir/etc/telemt" CONFIG="$CONFIG_DIR/telemt.toml"
         UNIT="$case_dir/etc/systemd/system/telemt.service" DATA="$case_dir/var/lib/telemt" STATE="$case_dir/var/lib/telemt-web-manager"
-        BACKUP_ROOT="$case_dir/root/telemt-backups"
-        mkdir -p "$case_dir/usr/local/bin" "$case_dir/etc/systemd/system" "$case_dir/var/lib" "$case_dir/root"
+        BACKUP_ROOT="$case_dir/root/telemt-backups" SITE_ROOT="$case_dir/var/www/telemt-web-manager"
+        mkdir -p "$case_dir/usr/local/bin" "$case_dir/etc/systemd/system" "$case_dir/var/lib" "$case_dir/root" "$case_dir/var/www"
     fi
     mkdir -p "$TMP" "$case_dir/bin" "$case_dir/manager/lib"
     cp "$ROOT/telemt-web-manager.sh" "$case_dir/manager/telemt-web-manager.sh"
