@@ -1408,7 +1408,7 @@ main() {
         (( ! DELETE_CERTIFICATE || CONFIRM_UNINSTALL )) || die '--delete-certificate requires --confirm-uninstall'
     fi
     if [[ $action == show-web-link ]]; then show_current_web_link; return; fi
-    if [[ $action == change-cover ]]; then preflight --repair; else preflight "$action"; fi
+    preflight "$action"
     TMP=$(mktemp -d /tmp/telemt-web-manager.XXXXXXXX)
     trap cleanup EXIT
     trap 'exit 130' INT
