@@ -275,7 +275,8 @@ check_manager
     for line in keepalive.stdout.decode().splitlines(): print('TWM_REAL_KEEPALIVE '+line,flush=True)
     # Real new-mode candidate isolation, including two process lifetimes and
     # quota readback. Historical 3.5.12 -> 3.5.13 activation remains unchanged.
-    private=Path('/root/fresh-http-isolation'); private.mkdir(mode=0o700)
+    s.update_private_directory(layout.stash)
+    private=layout.stash/'.fresh-http-isolation'; private.mkdir(mode=0o700)
     probe=engine.isolation.prepare(private/'root',layout.binary)
     engine.isolation.run(probe,'3.5.16',rehearsal=True)
     engine.discard_private(private)
