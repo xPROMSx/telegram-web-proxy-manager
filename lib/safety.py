@@ -799,6 +799,14 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     require(len({n.args[1] for n in upstreams}) == len(upstreams))
     for upstream in upstreams:
         members = list(expand(upstream.children))
+        # 3X-UI PR #99: the reviewed REALITY primary/cover fallback pair.
+        # All other stream upstreams retain the historical single-server rule.
+        if (upstream.args == ["upstream", "xray"]
+                and [n.args for n in members] ==
+                [["server", "127.0.0.1:8443", "max_fails=0"],
+                 ["server", "127.0.0.1:9443", "backup"]]
+                and all(n.children is None for n in members)):
+            continue
         require(len(members) == 1 and members[0].children is None
                 and len(members[0].args) == 2 and members[0].args[0] == "server"
                 and re.fullmatch(r"127\.0\.0\.1:[0-9]{1,5}", members[0].args[1])
