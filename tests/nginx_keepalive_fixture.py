@@ -89,6 +89,9 @@ def check_site(probe, directory):
     # exercise Nginx's native slash redirect without changing production assets.
     redirect=directory/'redirect-test'; redirect.mkdir(mode=0o755)
     (redirect/'index.html').write_bytes((directory/'index.html').read_bytes())
+    # The boot guest uses UMask=0077; real unprivileged Nginx workers need to
+    # traverse/read this inert fixture, just like the eleven public assets.
+    redirect.chmod(0o755); (redirect/'index.html').chmod(0o644)
     try:
         status,headers,body=probe.request('GET','/redirect-test')
         s.require(status==301 and headers.get('location')=='/redirect-test/')
