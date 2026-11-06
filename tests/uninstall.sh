@@ -259,7 +259,7 @@ runtime_refusals() {
 }
 for scenario in preserve-standalone preserve-webroot preserve-legacy-http preserve-legacy-http-includes stopped expired delete delete-failure \
     failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost site-change site-extra stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
-    runtime-churn runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
+    runtime-churn runtime-churn-legacy runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     export UNINSTALL_FIXTURE_ROOT=$case_dir FIXTURE_ACCOUNTS="$case_dir/accounts"
     BIN="$case_dir/bin/telemt" CONFIG_DIR="$case_dir/config" CONFIG="$CONFIG_DIR/telemt.toml"
@@ -301,7 +301,7 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
     fi
     if [[ $scenario == *-generation ]]; then python3 "$ROOT/tests/update_state_fixture.py" create "$case_dir"; fi
     [[ -f $STATE/manifest.json && -f $STATE/certificate.json && $(cat "$case_dir/issuance") == issued ]]
-    if [[ $scenario == preserve-legacy-http* ]]; then
+    if [[ $scenario == preserve-legacy-http* || $scenario == runtime-churn-legacy ]]; then
         python3 tests/legacy_site_fixture.py "$CONFIG" "$DATA" "$NGINX_ROOT" "$STATE" "$SITE_ROOT"
     fi
     if [[ $scenario == runtime-* ]]; then runtime_fixture seed "$DATA"; fi
@@ -377,7 +377,7 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
     result=$?
     set -e
     case $scenario in
-        runtime-churn)
+        runtime-churn|runtime-churn-legacy)
             [[ $result == 0 && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $CONFIG_DIR && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json ]]
             [[ ! -e $case_dir/active && ! -e $case_dir/enabled ]]

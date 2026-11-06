@@ -2244,7 +2244,9 @@ def site_resources():
 def site_identity(directory):
     directory = Path(directory); safe_path(directory)
     info = directory.lstat()
-    require(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0
+    # Production requires root:root; inert fixtures follow safe_path's CI EUID convention.
+    group = 0 if os.geteuid() == 0 else os.getegid()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and info.st_gid == group
             and stat.S_IMODE(info.st_mode) == 0o755, 'unsafe site directory')
     names = set()
     with os.scandir(directory) as entries:
@@ -2253,8 +2255,8 @@ def site_identity(directory):
     require(any(names == SITE_COMMON | articles for articles in SITE_FILES.values()), 'unknown site files')
     rows = []
     for name in sorted(names):
-        require((directory/name).lstat().st_gid == 0, 'unsafe site file group')
-        raw = update_read(directory/name, 180000, (0o644,))
+        require((directory/name).lstat().st_gid == group, 'unsafe site file group')
+        raw = web_link_read(directory/name, {0o644}, 180000, owner=os.geteuid())
         require(raw, 'empty site file')
         rows.append((name, hashlib.sha256(raw).hexdigest()))
     return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()

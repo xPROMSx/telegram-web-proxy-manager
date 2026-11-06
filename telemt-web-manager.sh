@@ -411,13 +411,13 @@ candidate_healthcheck() {
     # 3.5.16 permits absent decoy assets during healthcheck. Preserve the
     # manager's pre-issuance readiness contract independently of that CLI.
     local working=${3:-$DATA} mode site=$SITE_ROOT
-    mode=$(helper decoy-mode "$2") || return 1
+    mode=$(helper decoy-mode "$2" 2>/dev/null) || return 1
     if [[ $mode == static_directory ]]; then
         [[ -d $working/public && -f $working/public/index.html ]] || return 1
         helper safe-path "$working/public/index.html" >/dev/null 2>&1 || return 1
     else
         if [[ $working == "$TMP/compat-data" ]]; then site="$TMP/site"; fi
-        [[ -n $SITE_DIGEST && $(helper site-identity "$site") == "$SITE_DIGEST" ]] || return 1
+        [[ -n $SITE_DIGEST && $(helper site-identity "$site" 2>/dev/null) == "$SITE_DIGEST" ]] || return 1
     fi
     # Its diagnostics can quote TOML secrets. Keep neither stdout nor stderr.
     (cd "$working" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1

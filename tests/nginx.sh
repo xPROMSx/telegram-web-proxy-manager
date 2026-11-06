@@ -134,7 +134,16 @@ certificate_route unknown.example.com reality
 # Only lifecycle identity and port/address transport are fixture adapters.
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
-DOMAIN=proxy.example.com
+DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
+CONFIG="$test_dir/managed.toml"
+generate_config 00000000000000000000000000000000 >"$CONFIG"
+python3 - "$CONFIG" <<'PY_LEGACY'
+from pathlib import Path
+import sys
+sys.path.insert(0,'tests')
+from legacy_site_fixture import legacy_config
+p=Path(sys.argv[1]); p.write_bytes(legacy_config(p.read_bytes()))
+PY_LEGACY
 nginx_test() { /usr/sbin/nginx -t -p "$test_dir/" -c "$test_dir/nginx/nginx.conf" >/dev/null 2>&1; }
 service_active() { return 0; }
 listener_ready() { return 0; }

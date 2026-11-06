@@ -20,10 +20,10 @@ def legacy_config(raw):
 def write_legacy_public(data,gid=None):
     public=Path(data)/'public'; public.mkdir(mode=0o750,parents=True,exist_ok=True)
     gid=public.stat().st_gid if gid is None else gid
-    os.chown(public,0,gid); public.chmod(0o750)
+    os.chown(public,os.geteuid(),gid); public.chmod(0o750)
     for source,name in (('site-02.html','index.html'),('cover.css','cover.css')):
         path=public/name; path.write_bytes((ROOT/'assets/fake-sites'/source).read_bytes())
-        os.chown(path,0,gid); path.chmod(0o440)
+        os.chown(path,os.geteuid(),gid); path.chmod(0o440)
 
 
 def convert(config,data,nginx,state,site,form='direct'):

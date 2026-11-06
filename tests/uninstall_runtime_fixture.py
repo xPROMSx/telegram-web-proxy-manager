@@ -47,8 +47,9 @@ def churn(root, plan, active, marker):
     root = Path(root)
     value = json.loads(Path(plan).read_text())
     assert value['phase'] == 'pre-stop' and Path(active).exists()
-    assert {r['path'] for r in value['objects'] if Path(r['path']).is_relative_to(root)} == {
-        str(root), str(root / 'public'), str(root / 'public/index.html')}
+    anchors = {str(root), str(root / 'public')}
+    if len(value['roots']) == 5: anchors.add(str(root / 'public/index.html'))
+    assert {r['path'] for r in value['objects'] if Path(r['path']).is_relative_to(root)} == anchors
     # This already-running child verifies the completed ownership plan and active
     # service before touching DATA. Its synchronous completion is the barrier.
     Path(marker).write_text('ownership validated; service active\n')
@@ -114,8 +115,9 @@ def check_pre_backup(root, backup):
     assert (backup / 'service-state').read_text() == 'enabled\nactive\n'
     assert json.loads((backup / 'certificate-ownership.json').read_text()) == value['certificate']
     assert (backup / 'nginx-plan.json').is_file() and (backup / 'nginx-snapshot').is_dir()
-    assert {r['path'] for r in value['objects'] if Path(r['path']).is_relative_to(root)} == {
-        str(root), str(root / 'public'), str(root / 'public/index.html')}
+    anchors = {str(root), str(root / 'public')}
+    if len(value['roots']) == 5: anchors.add(str(root / 'public/index.html'))
+    assert {r['path'] for r in value['objects'] if Path(r['path']).is_relative_to(root)} == anchors
     for index, record in enumerate(value['objects']):
         if not record['directory']:
             assert hashlib.sha256((backup / 'objects' / str(index)).read_bytes()).hexdigest() == record['sha256']
