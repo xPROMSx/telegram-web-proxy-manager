@@ -175,7 +175,7 @@ class Transactions(unittest.TestCase):
             self.assertEqual(s.UpdateReceipt.read(f.layout.backup(journal['transaction_id'])/'old-receipt.json'),f.old)
             self.assertFalse((f.layout.backup(journal['transaction_id'])/'rehearsal').exists())
 
-    def managed_host(self, includes=False, legacy_http=False):
+    def managed_host(self, includes=False, legacy_http=False, origin=False):
         run=s.update_run; f=self.fixture()
         f.commands.stop()
         f.commands=patch.object(s,'update_run',side_effect=lambda args,**kw:
@@ -217,12 +217,45 @@ class Transactions(unittest.TestCase):
             s.update_write(renewal,('version = '+str(number)+'\narchive_dir = '+str(archive)+'\n'+
                 ''.join(part+' = '+str(cert/'live'/host/(part+'.pem'))+'\n' for part in ('cert','chain','fullchain','privkey'))+
                 '[renewalparams]\nauthenticator = standalone\n').encode())
+        if origin:
+            site=f.layout.path(s.SITE_ROOT); site.parent.mkdir(mode=0o755,parents=True)
+            digest=s.site_generate(site)
+            raw=subprocess.check_output(['bash','-c',
+                'source "$1"; DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 DATA=$2; generate_config 00000000000000000000000000000000',
+                'new-origin',str(ROOT/'telemt-web-manager.sh'),str(f.layout.data)])
+            s.update_write(f.layout.config,raw,0o640)
+            vhost=nginx/'conf.d/telemt-web-manager.conf'
+            s.update_write(vhost,s.render_vhost(host,site_digest=digest).encode(),0o644)
+            manifest=s.update_json(s.update_read(f.layout.state/'manifest.json'))
+            manifest['nginx_sha256']=s.update_hash(vhost)['sha256']
+            s.update_write_json(f.layout.state/'manifest.json',manifest)
         rotate(1); f.rotate=rotate
         s.certificate_record_stage(f.layout.state/'certificate.json',host,cert,f.layout.path('/var/lib/telemt-web-manager-acme'),nginx)
         f.engine.immutable=lambda:s.UpdateEngine.immutable(f.engine)
         f.engine.external_contract=lambda:s.UpdateEngine.external_contract(f.engine)
         f.controls=f.engine.immutable(); f.engine.external_contract()
         return f
+
+    def test_origin_site_survives_mocked_update_activation_and_rollback(self):
+        # Real immutable/site/backup/state validation, simulated releases,
+        # candidate execution, service transport and acceptance timers.
+        for includes in (False,True):
+            for rollback in (False,True):
+                with self.subTest(includes=includes,rollback=rollback):
+                    f=self.managed_host(includes=includes,origin=True)
+                    before=s.site_identity(f.layout.path(s.SITE_ROOT))
+                    f.controller.fail_new=rollback
+                    if rollback:
+                        with self.assertRaises(ValueError): f.engine.update()
+                        f.assert_old()
+                    else: f.engine.update()
+                    self.assertEqual(s.site_identity(f.layout.path(s.SITE_ROOT)),before)
+                    self.assertEqual(f.engine.immutable(),f.controls)
+        f=self.managed_host(origin=True)
+        (f.layout.path(s.SITE_ROOT)/'robots.txt').write_bytes(b'changed')
+        with self.assertRaises(ValueError): f.engine.update()
+        self.assertEqual(f.controller.show()['ActiveState'],'active')
+        self.assertFalse(f.engine.isolation.calls)
 
     def test_valid_foreign_firewall_and_certificate_rotation_do_not_poison_recovery(self):
         for change in ('firewall','certificate'):

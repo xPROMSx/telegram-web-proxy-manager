@@ -195,6 +195,7 @@ uninstall_remove_account() {
 }
 files_snapshot() {
     for extra in "$case_dir/original-toml" "$case_dir/foreign-owned"; do if [[ -f $extra ]]; then sha256sum "$extra"; fi; done
+    if [[ -d $SITE_ROOT ]]; then command find "$SITE_ROOT" -type f -exec sha256sum {} +; fi
     command find "$CONFIG_DIR" "$DATA" "$STATE" "$NGINX_ROOT" -type f -exec sha256sum {} +; sha256sum "$BIN" "$UNIT" "$RENEW_HOOK"
     if [[ -d ${UNIT}.d ]]; then command find "${UNIT}.d" -type f -exec sha256sum {} +; fi
     if [[ -f ${UNIT%/*}/telemt-web-manager-recovery.service ]]; then sha256sum "${UNIT%/*}/telemt-web-manager-recovery.service"; fi; }
@@ -209,7 +210,7 @@ runtime_refusals() {
         case $variation in
             drift-binary) drift_target=$BIN;; drift-config) drift_target=$CONFIG;; drift-unit) drift_target=$UNIT;;
             drift-manifest) drift_target=$STATE/manifest.json;; drift-link) drift_target=$STATE/web-link.txt;;
-            drift-index) drift_target=$DATA/public/index.html;; drift-certificate) drift_target=$STATE/certificate.json;;
+            drift-index) drift_target=$SITE_ROOT/index.html;; drift-certificate) drift_target=$STATE/certificate.json;;
             drift-vhost) drift_target=$NGINX_ROOT/conf.d/telemt-web-manager.conf;;
             drift-stream) drift_target=${managed_stream_file:-$NGINX_ROOT/stream-enabled/stream.conf};;
         esac
@@ -257,8 +258,8 @@ runtime_refusals() {
     done
 }
 for scenario in preserve-standalone preserve-webroot preserve-legacy-http preserve-legacy-http-includes stopped expired delete delete-failure \
-    failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
-    runtime-churn runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
+    failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost site-change site-extra stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
+    runtime-churn runtime-churn-legacy runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     export UNINSTALL_FIXTURE_ROOT=$case_dir FIXTURE_ACCOUNTS="$case_dir/accounts"
     BIN="$case_dir/bin/telemt" CONFIG_DIR="$case_dir/config" CONFIG="$CONFIG_DIR/telemt.toml"
@@ -266,11 +267,12 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
     NGINX_ROOT="$case_dir/nginx" CERT_ROOT="$case_dir/certs" ACME_ROOT="$case_dir/acme"
     RENEW_HOOK="$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager" BACKUP_ROOT="$case_dir/backups"
     LOCK="$case_dir/lock" TMP="$case_dir/tmp"
+    SITE_ROOT="$case_dir/site" SITE_DIGEST='' FRESH_SITE=0
     if [[ $scenario == *-generation ]]; then
         BIN="$case_dir/usr/local/bin/telemt" CONFIG_DIR="$case_dir/etc/telemt" CONFIG="$CONFIG_DIR/telemt.toml"
         UNIT="$case_dir/etc/systemd/system/telemt.service" DATA="$case_dir/var/lib/telemt" STATE="$case_dir/var/lib/telemt-web-manager"
-        BACKUP_ROOT="$case_dir/root/telemt-backups"
-        mkdir -p "$case_dir/usr/local/bin" "$case_dir/etc/systemd/system" "$case_dir/var/lib" "$case_dir/root"
+        BACKUP_ROOT="$case_dir/root/telemt-backups" SITE_ROOT="$case_dir/var/www/telemt-web-manager"
+        mkdir -p "$case_dir/usr/local/bin" "$case_dir/etc/systemd/system" "$case_dir/var/lib" "$case_dir/root" "$case_dir/var/www"
     fi
     mkdir -p "$TMP" "$case_dir/bin" "$case_dir/manager/lib"
     cp "$ROOT/telemt-web-manager.sh" "$case_dir/manager/telemt-web-manager.sh"
@@ -299,11 +301,8 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
     fi
     if [[ $scenario == *-generation ]]; then python3 "$ROOT/tests/update_state_fixture.py" create "$case_dir"; fi
     [[ -f $STATE/manifest.json && -f $STATE/certificate.json && $(cat "$case_dir/issuance") == issued ]]
-    if [[ $scenario == preserve-legacy-http* ]]; then
-        cp "$ROOT/tests/fixtures/nginx-vhost-legacy.conf" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"
-        jq --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
-            '.nginx_sha256=$nginx' "$STATE/manifest.json" >"$case_dir/legacy-manifest"
-        cp "$case_dir/legacy-manifest" "$STATE/manifest.json"
+    if [[ $scenario == preserve-legacy-http* || $scenario == runtime-churn-legacy ]]; then
+        python3 tests/legacy_site_fixture.py "$CONFIG" "$DATA" "$NGINX_ROOT" "$STATE" "$SITE_ROOT"
     fi
     if [[ $scenario == runtime-* ]]; then runtime_fixture seed "$DATA"; fi
     if [[ $scenario == runtime-churn-rollback ]]; then
@@ -351,6 +350,8 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
         missing) rm "$STATE/manifest.json";;
         malformed) printf 'bad json' >"$STATE/manifest.json";;
         schema) jq '.schema=99' "$STATE/manifest.json" >"$case_dir/m"; cp "$case_dir/m" "$STATE/manifest.json";;
+        site-change) printf '\n# manual\n' >>"$SITE_ROOT/robots.txt";;
+        site-extra) printf foreign >"$SITE_ROOT/foreign.txt";;
         vhost) printf '# manual\n' >>"$NGINX_ROOT/conf.d/telemt-web-manager.conf";;
         stream) sed -i 's/127.0.0.1:7444/127.0.0.1:7445/' "$managed_stream_file";;
         unit) printf '# changed\n' >>"$UNIT";;
@@ -376,7 +377,7 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
     result=$?
     set -e
     case $scenario in
-        runtime-churn)
+        runtime-churn|runtime-churn-legacy)
             [[ $result == 0 && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $CONFIG_DIR && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json ]]
             [[ ! -e $case_dir/active && ! -e $case_dir/enabled ]]
@@ -386,7 +387,7 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
             helper acme-state "$NGINX_ROOT" "$DOMAIN" "$ACME_ROOT"
             printf 'ok - deterministic ACTIVE runtime rewrite/create/atomic replace/nested create/delete; complete STOPPED backup incl final shutdown write; uninstall succeeds without retry/sleep\n';;
         preserve-*|legacy-preserve|stopped|expired)
-            [[ $result == 0 && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
+            [[ $result == 0 && ! -e $SITE_ROOT && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json && -f $RENEW_HOOK ]]
             if [[ $scenario == preserve-generation ]]; then
                 [[ ! -e $STATE/telemt-release.json && ! -e $STATE/telemt-generation.json && ! -e $STATE/update-journal.json && ! -e ${UNIT}.d && ! -e ${UNIT%/*}/telemt-web-manager-recovery.service ]]
@@ -405,7 +406,7 @@ for scenario in preserve-standalone preserve-webroot preserve-legacy-http preser
                 printf 'ok - managed install -> uninstall keep %s certificate -> fresh same-domain install; ZERO new issuance, same key/serial/renewal; WEB contract recreated\n' "$kind"
             else printf 'ok - managed %s deployment uninstalled without Telemt health/certificate-expiry gate\n' "$scenario"; fi;;
         delete|delete-generation|delete-failure)
-            [[ ! -e $BIN && ! -e $STATE/manifest.json && ! -e $FIXTURE_ACCOUNTS/passwd ]]
+            [[ ! -e $SITE_ROOT && ! -e $BIN && ! -e $STATE/manifest.json && ! -e $FIXTURE_ACCOUNTS/passwd ]]
             if [[ $scenario == delete || $scenario == delete-generation ]]; then
                 [[ $result == 0 && ! -e $CERT_ROOT/live/$DOMAIN && ! -e $STATE && ! -e $ACME_ROOT && ! -e $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf ]]
                 [[ ! -e $RENEW_HOOK ]]

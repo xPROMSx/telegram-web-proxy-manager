@@ -18,7 +18,6 @@ update_manager() { printf 'ROUTE:update\\n'; }
 check_manager() { printf 'ROUTE:check\\n'; }
 repair_manager() { printf 'ROUTE:repair\\n'; }
 show_current_web_link() { printf 'ROUTE:link\\n'; }
-change_cover_site() { printf 'ROUTE:cover\\n'; }
 uninstall_manager() { printf 'ROUTE:uninstall\\n'; }
 main "$@"
 '''
@@ -69,13 +68,13 @@ def terminal(code, answer=b'', args=(), env=None, input_tty=True, output_tty=Tru
 
 
 class ManagerUI(unittest.TestCase):
-    def test_language_menus_and_all_seven_one_shot_routes(self):
+    def test_language_menus_and_all_six_one_shot_routes(self):
         for language, title, last in [('1','MAIN MENU','0. Exit'),('2','ГЛАВНОЕ МЕНЮ','0. Выход')]:
-            for item, action in enumerate(('install:1:1','update','check','repair','link','cover','uninstall'),1):
+            for item, action in enumerate(('install:1:1','update','check','repair','link','uninstall'),1):
                 with self.subTest(language=language,item=item):
                     result, output, _ = terminal(ROUTES,(language+'\n'+str(item)+'\n').encode())
                     self.assertEqual(result,0)
-                    self.assertTrue(title.encode() in output and last.encode() in output,'localized eight-entry menu')
+                    self.assertTrue(title.encode() in output and last.encode() in output,'localized seven-entry menu')
                     self.assertEqual(output.count(b'SELECT LANGUAGE /'),1)
                     self.assertEqual(output.count(b'TELEGRAM WEB PROXY MANAGER v1.2.0'),2,
                                      'language and main menu each show the current version once')
@@ -174,19 +173,18 @@ p.finish('Update completed',russian='Обновление завершено')
         result=subprocess.run(['bash','-c','source ./telemt-web-manager.sh; UI_LANG=ru UI_INTERACTIVE=1; helper version-compare 3.5.16 3.5.16'],cwd=ROOT,capture_output=True)
         self.assertEqual((result.returncode,result.stdout,result.stderr),(0,b'0\n',b''))
 
-    def test_cover_and_uninstall_cancel_in_both_languages_before_mutation(self):
+    def test_uninstall_cancel_in_both_languages_before_mutation(self):
         code='''source ./telemt-web-manager.sh
 UI_INTERACTIVE=1 UI_LANG=$1
 need() { :; }; load_installation() { :; }
 uninstall_load() { DOMAIN=proxy.example.com; }
 helper() { printf UNEXPECTED_MUTATION; exit 99; }
 backup_begin() { printf UNEXPECTED_MUTATION; exit 99; }
-case $2 in cover) change_cover_site;; uninstall) uninstall_manager;; esac
+uninstall_manager
 '''
         for language in ('en','ru'):
             for action,answer,english,russian in (
-                    ('cover',b'3\n','Cover change cancelled.','Смена сайта-прикрытия отменена.'),
-                    ('uninstall',b'CANCEL\n','Uninstall cancelled.','Удаление отменено.')):
+                    ('uninstall',b'CANCEL\n','Uninstall cancelled.','Удаление отменено.'),):
                 result,output,_=terminal(code,answer,args=(language,action))
                 self.assertEqual(result,0)
                 self.assertTrue((russian if language=='ru' else english).encode() in output)

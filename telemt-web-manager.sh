@@ -35,6 +35,7 @@ CONFIRM_UNINSTALL=0 DELETE_CERTIFICATE=0 CERT_CLEANUP_RUNNING=0 UNINSTALL_ENABLE
 CERT_ONLY=0 NGINX_ONLY=0 PLAN_MODE=web
 FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0 FRESH_GATE_CREATED=0
 INTERACTIVE_INSTALL=0 MENU_ACTION=0
+SITE_ROOT=/var/www/telemt-web-manager SITE_DIGEST='' FRESH_SITE=0
 # Invocation-only presentation. Never inherit or persist a language preference.
 UI_LANG=en UI_INTERACTIVE=0
 # Reviewed Ubuntu tools only; no user input is used as an apt package name.
@@ -104,8 +105,8 @@ ui_select_language() {
 }
 ui_main_menu() {
     ui_header "$(ui_text 'MAIN MENU' 'ГЛАВНОЕ МЕНЮ')"
-    ui_text $'  1. Install Telegram proxy\n  2. Update Telemt\n  3. Check status\n  4. Check and restart services\n  5. Show connection link\n  6. Change cover site\n  7. Uninstall Telegram proxy\n  0. Exit\n' \
-        $'  1. Установить Telegram-прокси\n  2. Обновить Telemt\n  3. Проверить состояние\n  4. Проверить и перезапустить службы\n  5. Показать ссылку подключения\n  6. Сменить сайт-прикрытие\n  7. Удалить Telegram-прокси\n  0. Выход\n'
+    ui_text $'  1. Install Telegram proxy\n  2. Update Telemt\n  3. Check status\n  4. Check and restart services\n  5. Show connection link\n  6. Uninstall Telegram proxy\n  0. Exit\n' \
+        $'  1. Установить Telegram-прокси\n  2. Обновить Telemt\n  3. Проверить состояние\n  4. Проверить и перезапустить службы\n  5. Показать ссылку подключения\n  6. Удалить Telegram-прокси\n  0. Выход\n'
     printf '%s\n' '------------------------------------------------------------'
 }
 ui_helper() {
@@ -200,6 +201,8 @@ track_file() {
 
 rollback() {
     local index failed=0
+    local -a fresh_roots=("$CONFIG_DIR" "$DATA" "$STATE")
+    if (( FRESH_SITE )); then fresh_roots+=("$SITE_ROOT"); fi
     # In an EXIT trap, bare return can reuse the pre-trap signal status.
     if (( UNINSTALLING )); then uninstall_rollback; return "$?"; fi
     ui_warn 'Rolling back managed changes.' 'Восстанавливаем состояние до изменений.' >&2
@@ -210,7 +213,7 @@ rollback() {
                 return 1
             fi
         fi
-        if [[ -n $FRESH_JOURNAL ]] && ! helper fresh-verify "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
+        if [[ -n $FRESH_JOURNAL ]] && ! helper fresh-verify "$FRESH_JOURNAL" "${fresh_roots[@]}"; then
             ui_err "CRITICAL: fresh ownership/process/mount validation failed; state retained. Review $FRESH_JOURNAL" "КРИТИЧЕСКАЯ ОШИБКА: не подтверждена принадлежность объектов установки, процессов или точек монтирования. Состояние сохранено; проверьте вручную: $FRESH_JOURNAL" >&2
             return 1
         fi
@@ -235,8 +238,8 @@ rollback() {
     if (( NGINX_CHANGED )); then nginx_test && nginx_reload || failed=1; fi
     if (( NGINX_ONLY && ! failed )); then path_health || failed=1; fi
     if (( INSTALLING && ! CERT_ONLY )) && [[ -n $FRESH_JOURNAL ]]; then
-        if (( ! failed )) && helper fresh-cleanup-dirs "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"; then
-            helper fresh-cleanup-account "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE" || failed=1
+        if (( ! failed )) && helper fresh-cleanup-dirs "$FRESH_JOURNAL" "${fresh_roots[@]}"; then
+            helper fresh-cleanup-account "$FRESH_JOURNAL" "${fresh_roots[@]}" || failed=1
         else failed=1; fi
     fi
     if (( failed )); then ui_err "CRITICAL: rollback incomplete; review $BACKUP/files.tsv and ${FRESH_JOURNAL:-the backup} for manual recovery" "КРИТИЧЕСКАЯ ОШИБКА: восстановление не завершено. Для ручного восстановления проверьте $BACKUP/files.tsv и ${FRESH_JOURNAL:-$BACKUP}" >&2; fi
@@ -407,9 +410,15 @@ binary_version() {
 candidate_healthcheck() {
     # 3.5.16 permits absent decoy assets during healthcheck. Preserve the
     # manager's pre-issuance readiness contract independently of that CLI.
-    local working=${3:-$DATA}
-    [[ -d $working/public && -f $working/public/index.html ]] || return 1
-    helper safe-path "$working/public/index.html" >/dev/null 2>&1 || return 1
+    local working=${3:-$DATA} mode site=$SITE_ROOT
+    mode=$(helper decoy-mode "$2" 2>/dev/null) || return 1
+    if [[ $mode == static_directory ]]; then
+        [[ -d $working/public && -f $working/public/index.html ]] || return 1
+        helper safe-path "$working/public/index.html" >/dev/null 2>&1 || return 1
+    else
+        if [[ $working == "$TMP/compat-data" ]]; then site="$TMP/site"; fi
+        [[ -n $SITE_DIGEST && $(helper site-identity "$site" 2>/dev/null) == "$SITE_DIGEST" ]] || return 1
+    fi
     # Its diagnostics can quote TOML secrets. Keep neither stdout nor stderr.
     (cd "$working" && timeout 60 "$1" healthcheck "$2") >/dev/null 2>&1
 }
@@ -506,9 +515,8 @@ carrier = "https"
 host = "$DOMAIN"
 public_addr = "$PUBLIC_IP:443"
 [web.vhosts.decoy]
-mode = "static_directory"
-directory = "$data_root/public"
-index = "index.html"
+mode = "http_upstream"
+upstream = "http://127.0.0.1:18081"
 [[web.vhosts.profiles]]
 user = "web-user"
 secret_mode = "dd"
@@ -524,22 +532,12 @@ EOF
     fi
 }
 
-write_managed_decoy() {
-    local directory=$1
-    helper safe-path "$directory/index.html" || return 1
-    helper safe-path "$directory/cover.css" || return 1
-    [[ -d $directory && ! -L $directory && ! -e $directory/index.html && ! -L $directory/index.html ]] || return 1
-    [[ ! -e $directory/cover.css && ! -L $directory/cover.css ]] || return 1
-    ui_helper cover-initial "$directory" "${2:-}"
-}
-
 prepare_compatibility_data() {
     local root=$1
     # Only a new private child of this transaction's temporary directory.
     [[ $root == "$TMP/compat-data" && ! -e $root && ! -L $root ]] || return 1
     helper safe-path "$root" || return 1
     install -d -m 0700 "$root" "$root/state" "$root/public" || return 1
-    write_managed_decoy "$root/public"
 }
 
 generate_unit() {
@@ -637,7 +635,12 @@ wait_https_ready() {
 }
 
 path_health() {
+    local mode
     nginx_test && service_active && listener_ready && process_identity || return 1
+    mode=$(helper decoy-mode "$CONFIG") || return 1
+    if [[ $mode == http_upstream ]]; then
+        nginx_port_owned 18081 && http_ok http://127.0.0.1:18081/ || return 1
+    fi
     http_ok -H "Host: $DOMAIN" http://127.0.0.1:18080/ || return 1
     # Traverse stream on :443 too: internal :7444 requires a PROXY preamble.
     if [[ ${1:-} == fresh ]]; then
@@ -667,6 +670,8 @@ build_nginx_plan() {
         helper acme-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     elif [[ $PLAN_MODE == keepalive ]]; then
         helper nginx-keepalive-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
+    elif [[ -n $SITE_DIGEST ]]; then
+        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" || status=$?
     else
         helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     fi
@@ -969,27 +974,6 @@ show_current_web_link() {
     present_web_link
 }
 
-change_cover_site() {
-    local choice since
-    load_installation
-    if (( UI_INTERACTIVE )); then ui_header "$(ui_text 'COVER SITE' 'САЙТ-ПРИКРЫТИЕ')"; fi
-    ui_text $'1. Random new cover\n2. Restore Service Status\n3. Cancel\n' $'1. Другой случайный сайт-прикрытие\n2. Восстановить Service Status\n3. Отмена\n'
-    read -r -p "$(ui_text '> ' 'Выберите вариант: ')" choice
-    case $choice in 1) choice=random;; 2) choice=default;; 3) ui_warn 'Cover change cancelled.' 'Смена сайта-прикрытия отменена.'; return;; *) ui_die 'Invalid selection' 'Неверный выбор; операция остановлена';; esac
-    helper cover-change "$STATE" "$CONFIG" "$DATA" "$choice" "$TMP/cover-previous" || ui_die 'Cover change refused; manual review required' 'Смена сайта-прикрытия остановлена; требуется ручная проверка'
-    # Telemt caches static_directory assets at config load, so verified restart is necessary.
-    since=$(now)
-    if restart_service && wait_ready 90 && path_health && recent_logs "$since"; then
-        ui_ok 'Cover site changed successfully.' 'Сайт-прикрытие изменён.'
-    else
-        helper cover-change "$STATE" "$CONFIG" "$DATA" restore "$TMP/cover-previous" || ui_die 'Cover restoration failed; manual review required' 'Восстановить сайт-прикрытие не удалось; требуется ручная проверка'
-        if ! restart_service || ! wait_ready 90 || ! path_health; then
-            ui_die 'Previous cover restored; service requires manual review' 'Прежний сайт-прикрытие восстановлен; служба требует ручной проверки'
-        fi
-        ui_die 'Cover activation failed; previous cover restored' 'Новый сайт-прикрытие не прошёл проверку; прежний сайт восстановлен'
-    fi
-}
-
 optimize_nginx_keepalive() {
     local answer expected actual
     PLAN_MODE=keepalive
@@ -1032,7 +1016,7 @@ install_manager() {
     fi
     [[ -n $DOMAIN && -n $PUBLIC_IP ]] || prompt_install
     local path secret since
-    for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR"; do
+    for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$SITE_ROOT"; do
         helper safe-path "$path" || ui_die 'Unsafe install path' 'Небезопасный путь установки; операция остановлена'
         [[ ! -e $path && ! -L $path ]] || ui_die 'Existing Telemt files found; automatic adoption not possible; manual review required' 'Найдены существующие файлы Telemt. Автоматическое подключение остановлено; требуется ручная проверка'
     done
@@ -1048,12 +1032,14 @@ install_manager() {
         ui_die 'Existing telemt account/group needs manual review' 'Существующая учётная запись или группа telemt требует ручной проверки'
     fi
     [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || ui_die 'Existing Telemt unit found' 'Найден существующий unit Telemt; автоматическое подключение остановлено'
-    [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || ui_die 'Private ports already occupied' 'Внутренние порты уже заняты; установка остановлена'
+    [[ -d $(dirname "$SITE_ROOT") ]] || ui_die 'Site parent directory missing' 'Родительский каталог сайта отсутствует; требуется ручная проверка'
+    [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444 or sport = :18081') ]] || ui_die 'Private ports already occupied' 'Внутренние порты уже заняты; установка остановлена'
     dns_preflight
     socks_probe || ui_die 'Telegram HTTPS through SOCKS failed' 'Проверка HTTPS Telegram через SOCKS не пройдена'
     nginx_test || ui_die 'Existing Nginx configuration invalid' 'Текущая конфигурация Nginx не прошла проверку'
     systemctl is-active --quiet nginx || ui_die 'Nginx must be active' 'Для установки Nginx должен работать'
     nginx_runtime_identity || ui_die 'Nginx process/config/443 ownership is ambiguous' 'Не удалось однозначно подтвердить процессы, конфигурацию и владельца порта 443 Nginx; требуется ручная проверка'
+    SITE_DIGEST=$(helper site-generate "$TMP/site") || ui_die 'Approved site resources failed validation; no configuration changed' 'Ресурсы сайта не прошли проверку; конфигурация не изменена'
     nginx_plan
     download_candidate
     secret=$(openssl rand -hex 16)
@@ -1069,7 +1055,8 @@ install_manager() {
         ui_die 'Existing telemt account/group needs manual review' 'Существующая учётная запись или группа telemt требует ручной проверки'
     fi
     FRESH_JOURNAL="$BACKUP/fresh-ownership.json"
-    helper fresh-init "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE"
+    FRESH_SITE=1
+    helper fresh-init "$FRESH_JOURNAL" "$CONFIG_DIR" "$DATA" "$STATE" "$SITE_ROOT"
     helper fresh-account-create "$FRESH_JOURNAL" "$DATA"
     for path in "$CONFIG_DIR" "$DATA" "$DATA/public" "$DATA/state"; do
         helper fresh-mkdir "$FRESH_JOURNAL" "$path" 0750
@@ -1077,11 +1064,12 @@ install_manager() {
         else chown root:telemt "$path"; fi
     done
     if [[ ! -e $STATE ]]; then helper fresh-mkdir "$FRESH_JOURNAL" "$STATE" 0700; fi
-    track_file "$DATA/public/index.html"
-    track_file "$DATA/public/cover.css"
-    write_managed_decoy "$DATA/public" "$TMP/compat-data/public/index.html" || ui_die 'Unable to create managed decoy' 'Не удалось создать сайт-прикрытие'
-    chown root:telemt "$DATA/public/index.html" "$DATA/public/cover.css"
-    chmod 0440 "$DATA/public/index.html" "$DATA/public/cover.css"
+    helper fresh-mkdir "$FRESH_JOURNAL" "$SITE_ROOT" 0755
+    for path in "$TMP/site/"*; do
+        track_file "$SITE_ROOT/${path##*/}"
+        atomic_copy "$path" "$SITE_ROOT/${path##*/}"
+    done
+    [[ $(helper site-identity "$SITE_ROOT") == "$SITE_DIGEST" ]] || ui_die 'Published site integrity failed' 'Целостность опубликованного сайта не подтверждена; выполняется восстановление'
     track_file "$CONFIG"
     generate_config "$secret" "$DATA" >"$CONFIG" || ui_die 'Unable to create final managed config' 'Не удалось создать итоговую конфигурацию'
     track_file "$STATE/web-link.txt"
@@ -1140,6 +1128,7 @@ load_installation() {
     [[ ${actual%% *} == "$expected" ]] || ui_die 'Nginx vhost changed; manual review required' 'Vhost Nginx изменён; требуется ручная проверка'
     helper config-info "$CONFIG" >"$TMP/config-info" || ui_die 'automatic update/migration not possible; manual review required' 'Автоматическое обновление или перенос состояния остановлены; требуется ручная проверка'
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Runtime/write paths require manual review; existing TOML was not changed' 'Рабочие пути или пути записи требуют ручной проверки; существующий TOML не изменён'
+    SITE_DIGEST=$(helper site-bound "$CONFIG" "$DATA" "$NGINX_ROOT" "$SITE_ROOT") || ui_die 'Site ownership/hash differs; manual review required' 'Принадлежность или целостность сайта не подтверждена; требуется ручная проверка'
     installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
@@ -1213,7 +1202,7 @@ uninstall_load() {
         ui_info 'No manager-owned Telemt installation found. Unmanaged Telemt is not removed automatically.' 'Установка Telemt, принадлежащая менеджеру, не найдена. Чужие установки автоматически не удаляются.'
         return 2
     }
-    helper uninstall-plan "$TMP/uninstall-plan.json" "$BIN" "$CONFIG" "$UNIT" "$DATA" "$STATE" "$NGINX_ROOT" "$CERT_ROOT" "$ACME_ROOT" ||
+    helper uninstall-plan "$TMP/uninstall-plan.json" "$BIN" "$CONFIG" "$UNIT" "$DATA" "$STATE" "$NGINX_ROOT" "$CERT_ROOT" "$ACME_ROOT" "$SITE_ROOT" ||
         ui_die 'Managed ownership/identity cannot be proven; no uninstall changes made' 'Принадлежность установки менеджеру не подтверждена; удаление не выполнялось'
     DOMAIN=$(jq -er '.certificate.domain' "$TMP/uninstall-plan.json")
     if [[ $(systemctl show telemt.service -p FragmentPath --value) != "$UNIT" ]] || ! managed_dropins; then
@@ -1412,29 +1401,26 @@ main() {
         ui_main_menu
         read -r -p "$(ui_text '  Select an option: ' '  Выберите пункт: ')" choice || return 0
         MENU_ACTION=1
-        case $choice in 1) action=--install; INTERACTIVE_INSTALL=1;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=show-web-link;; 6) action=change-cover;; 7) action=--uninstall;; 0) return;; *) ui_die 'Invalid selection' 'Неверный пункт меню; операция не запускалась';; esac
+        case $choice in 1) action=--install; INTERACTIVE_INSTALL=1;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=show-web-link;; 6) action=--uninstall;; 0) return;; *) ui_die 'Invalid selection' 'Неверный пункт меню; операция не запускалась';; esac
     fi
     if (( CONFIRM_UNINSTALL || DELETE_CERTIFICATE )); then
         [[ $action == --uninstall ]] || die 'Uninstall flags require --uninstall'
         (( ! DELETE_CERTIFICATE || CONFIRM_UNINSTALL )) || die '--delete-certificate requires --confirm-uninstall'
     fi
     if [[ $action == show-web-link ]]; then show_current_web_link; return; fi
-    if [[ $action == change-cover ]]; then preflight --repair; else preflight "$action"; fi
+    preflight "$action"
     TMP=$(mktemp -d /tmp/telemt-web-manager.XXXXXXXX)
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
-    if [[ $action == change-cover ]]; then
-        take_lock
-        pending_update || ui_die 'Pending/critical Update; cover change refused' 'Обновление не завершено или требует вмешательства; смена сайта-прикрытия остановлена'
-    elif [[ $action == --check ]]; then
+    if [[ $action == --check ]]; then
         take_lock shared
         pending_update || ui_die 'Pending/critical Update; Check remains read-only' 'Обновление не завершено или требует вмешательства; проверка состояния не изменяет установку. Требуется ручная проверка'
     else
         take_lock
         recover_update || ui_die 'Pending Update recovery requires manual review' 'Восстановление незавершённого обновления требует ручной проверки; выбранная операция остановлена'
     fi
-    case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; change-cover) change_cover_site;; --uninstall) uninstall_manager;; esac
+    case $action in --install) install_manager;; --update) update_manager;; --check) check_manager;; --repair) repair_manager;; --uninstall) uninstall_manager;; esac
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

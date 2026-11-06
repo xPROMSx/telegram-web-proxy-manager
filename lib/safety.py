@@ -2,6 +2,8 @@
 """Strict, read-only parsers and staged Nginx plans. Python 3.11+ stdlib only."""
 # This canonical header is also the install.sh downloaded-pair identity marker.
 import base64
+import types
+import zlib
 import glob
 import hashlib
 import ipaddress
@@ -120,7 +122,7 @@ def fresh_ledger(path):
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
             and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600)
     value = json.loads(Path(path).read_text())
-    require(value['schema'] == 1 and len(value['roots']) == 3)
+    require(value['schema'] == 1 and len(value['roots']) in (3,4))
     return value
 
 
@@ -138,7 +140,7 @@ def fresh_save(path, value):
 
 
 def fresh_init(path, *roots):
-    require(len(roots) == 3 and len(set(roots)) == 3)
+    require(len(roots) in (3,4) and len(set(roots)) == len(roots))
     for root in roots:
         safe_path(root)
         require(Path(root).is_absolute())
@@ -200,10 +202,11 @@ def fresh_account_create(path, home):
 def fresh_mkdir(path, directory, mode):
     with fresh_signal_window():
         value = fresh_ledger(path)
-        config, data, state = map(Path, value['roots'])
-        allowed = {config, data, data / 'public', data / 'state', state}
+        config, data, state = map(Path, value['roots'][:3])
+        allowed = {config, data, data / 'public', data / 'state', state, *map(Path,value['roots'][3:])}
         directory = Path(directory)
-        require(directory in allowed and directory.is_absolute() and mode in ('0750', '0700'))
+        require(directory in allowed and directory.is_absolute() and mode in ('0750', '0700', '0755'))
+        require(mode != '0755' or str(directory) in value['roots'][3:])
         safe_path(directory)
         # mkdir, never install -d: existing objects are not adopted or chmod'd.
         os.mkdir(directory, int(mode, 8))
@@ -305,6 +308,7 @@ def fresh_cleanup_account(path, *roots):
         require(all(not os.path.lexists(root) for root in roots[:2]))
         if value.get("preserved_state"): certificate_only_state(roots[2])
         else: require(not os.path.lexists(roots[2]))
+        if len(roots) == 4: require(not os.path.lexists(roots[3]))
         account = value['account']
         if account is None: return
         if not value['user_removed']:
@@ -738,7 +742,7 @@ def nginx_web_backend(http, vhost):
 
 
 def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False,
-               keepalive=False):
+               keepalive=False, site_digest=None):
     domain(host)
     parser = Nginx(root)
     nodes = parser.read(Path(root) / "nginx.conf")
@@ -795,6 +799,14 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     require(len({n.args[1] for n in upstreams}) == len(upstreams))
     for upstream in upstreams:
         members = list(expand(upstream.children))
+        # 3X-UI PR #99: the reviewed REALITY primary/cover fallback pair.
+        # All other stream upstreams retain the historical single-server rule.
+        if (upstream.args == ["upstream", "xray"]
+                and [n.args for n in members] ==
+                [["server", "127.0.0.1:8443", "max_fails=0"],
+                 ["server", "127.0.0.1:9443", "backup"]]
+                and all(n.children is None for n in members)):
+            continue
         require(len(members) == 1 and members[0].children is None
                 and len(members[0].args) == 2 and members[0].args[0] == "server"
                 and re.fullmatch(r"127\.0\.0\.1:[0-9]{1,5}", members[0].args[1])
@@ -806,9 +818,10 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     existing = [n for n in entries if n.args[0] == host]
     vhost = parser.root / "conf.d" / "telemt-web-manager.conf"
     safe_path(vhost)
+    owned_site = site_vhost_digest(vhost.read_text()) if vhost.exists() else None
     # Legacy checks/removal do not claim a new HTTP symbol. Fresh/new vhosts
     # and explicit optimization must prove exclusive use before publishing it.
-    if keepalive or not vhost.exists() or vhost.read_text() == render_vhost(host):
+    if keepalive or site_digest or owned_site or not vhost.exists() or vhost.read_text() == render_vhost(host):
         nginx_web_backend(http, vhost)
     acme = parser.root / "conf.d" / "telemt-web-manager-acme.conf"
     if acme.exists() or acme.is_symlink():
@@ -832,17 +845,21 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
             require(re.fullmatch(r"[0-9]+|[0-9.]+:[0-9]+|\[[0-9a-fA-F:]+\]:[0-9]+|unix:/[^\s\\$]+", address),
                     "ambiguous Nginx listen address")
             if not address.startswith("unix:"):
-                require(int(address.rsplit(":", 1)[-1]) not in (443, 7444, 18080))
+                require(int(address.rsplit(":", 1)[-1]) not in
+                        ((443,7444,18080,18081) if site_digest or owned_site else (443,7444,18080)))
     edits = {}
     if existing or owned or vhost.exists():
         require(len(existing) == len(owned) == 1 and vhost.exists())
         require(existing[0].args == [host, "twm_frontend"])
         require([n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]])
-        require(vhost.read_text() in (render_vhost(host), render_vhost(host, keepalive=False)),
+        require(vhost.read_text() in (render_vhost(host), render_vhost(host, keepalive=False),
+                                     render_vhost(host,site_digest=owned_site)),
                 "managed Nginx vhost differs; manual review required")
+        if site_digest: require(owned_site == site_digest, 'site creation cannot migrate an existing vhost')
         active = [n for n in expand(http.children) if n.path == vhost]
         require([n.args[0] for n in active] ==
-                (['upstream', 'server'] if vhost.read_text() == render_vhost(host) else ['server']),
+                (['upstream','server','server'] if owned_site else
+                 ['upstream','server'] if vhost.read_text() == render_vhost(host) else ['server']),
                 'managed HTTP vhost missing, duplicated or misplaced')
         managed, ranges = nginx_owned_stream(parser, host, stream)
         if any(spans is None for spans in ranges.values()):
@@ -853,7 +870,7 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         for path, literal in stream_files:
             safe_path(path)
             edits[path] = literal
-        edits[vhost] = render_vhost(host)
+        edits[vhost] = render_vhost(host,site_digest=site_digest)
     elif not (existing or owned or vhost.exists()):
         source = parser.sources[mapping.path]
         require(mapping.path == stream.path or mapping.path.is_relative_to(parser.root))
@@ -862,10 +879,10 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         shifted = mapping.close + len(f"    {host} twm_frontend; # telemt-web-manager\n") + 1
         content = edits[mapping.path]
         edits[mapping.path] = content[:shifted] + "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n" + content[shifted:]
-        edits[vhost] = render_vhost(host)
+        edits[vhost] = render_vhost(host,site_digest=site_digest)
     if keepalive:
         require(not uninstall and len(existing) == len(owned) == 1 and vhost.exists())
-        if vhost.read_text() != render_vhost(host): edits[vhost] = render_vhost(host)
+        if vhost.read_text() == render_vhost(host,keepalive=False): edits[vhost] = render_vhost(host)
     if uninstall:
         require(len(existing) == len(owned) == 1 and vhost.exists())
         require([n for n in entries if n.args[1] == "twm_frontend"] == existing,
@@ -1003,9 +1020,40 @@ def port80_config(root):
                   and int(n.args[1].rsplit(":", 1)[-1]) == 80 for n in walk(nodes))))
 
 
-def render_vhost(host, keepalive=True):
+def render_site_server(directory=None):
+    directory = str(directory or SITE_ROOT)
+    require(re.fullmatch(r'/[A-Za-z0-9_./-]+',directory) and '..' not in Path(directory).parts)
+    return f'''server {{
+    listen 127.0.0.1:18081;
+    server_name _;
+    root {directory};
+    index index.html;
+    absolute_redirect off;
+    server_tokens off;
+    autoindex off;
+    charset utf-8;
+    access_log off;
+    error_log /dev/null crit;
+    default_type application/octet-stream;
+    types {{
+        text/html html;
+        text/css css;
+        image/svg+xml svg;
+        image/x-icon ico;
+        text/plain txt;
+    }}
+    add_header Content-Security-Policy "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" always;
+    error_page 404 /404.html;
+    location / {{ try_files $uri $uri/ =404; }}
+}}
+'''
+
+
+def render_vhost(host, keepalive=True, site_digest=None):
+    require(site_digest is None or (keepalive and re.fullmatch(r'[0-9a-f]{64}',site_digest)))
     upstream = ('upstream twpm_web_backend {\n    server 127.0.0.1:18080;\n    keepalive 32;\n}\n'
                 if keepalive else '')
+    if site_digest: upstream = f'# TWPM original site v0.3 sha256: {site_digest}\n'+upstream
     backend = 'twpm_web_backend' if keepalive else '127.0.0.1:18080'
     return f'''# Managed by telemt-web-manager v1. Manual changes require review.
 {upstream}server {{
@@ -1036,7 +1084,7 @@ def render_vhost(host, keepalive=True):
         proxy_next_upstream off;
     }}
 }}
-'''
+'''+(render_site_server() if site_digest else '')
 
 
 def read_config(path):
@@ -1099,9 +1147,12 @@ def managed_web_contract(c, data):
     require(port == "443" and not public.is_unspecified and not public.is_loopback
             and not public.is_multicast, "unsupported public address")
     decoy = vhosts[0].get("decoy", {})
-    require(decoy.get("mode") == "static_directory"
-            and decoy.get("directory") == str(Path(data) / "public")
-            and decoy.get("index", "index.html") == "index.html", "decoy contract changed")
+    if decoy.get('mode') == 'static_directory':
+        require(decoy.get('directory') == str(Path(data)/'public')
+                and decoy.get('index','index.html') == 'index.html', 'decoy contract changed')
+    else:
+        require(decoy == {'mode':'http_upstream','upstream':'http://127.0.0.1:18081'},
+                'decoy contract changed')
     profiles = vhosts[0].get("profiles", [])
     require(len(profiles) == 1 and profiles[0].get("user") == "web-user"
             and profiles[0].get("secret_mode") == "dd", "WEB profile binding changed")
@@ -1357,7 +1408,9 @@ def uninstall_static_objects(paths, account):
     """Controls plus stable DATA anchors, without enumerating runtime children."""
     data = Path(paths[3])
     records = uninstall_objects([p for p in paths if p != str(data)] + uninstall_update_paths(paths), account)
-    anchors = uninstall_objects([str(data), str(data / 'public'), str(data / 'public/index.html')],
+    anchor_paths = [str(data),str(data/'public')]
+    if len(paths) == 5: anchor_paths.append(str(data/'public/index.html'))
+    anchors = uninstall_objects(anchor_paths,
                                 account, recursive=False)
     for record, directory, mode in zip(anchors, (True, True, False), (0o750, 0o750, 0o440)):
         require(record['directory'] == directory and record['uid'] in (0, os.geteuid())
@@ -1368,7 +1421,7 @@ def uninstall_static_objects(paths, account):
     return records + anchors
 
 
-def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_root, webroot):
+def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_root, webroot, site_root=None):
     paths = [binary, str(Path(config).parent), unit, data, state]
     require(len(set(paths)) == 5 and all(Path(p).is_absolute() and '..' not in Path(p).parts for p in paths))
     require(not any(Path(a).is_relative_to(b) for a in paths for b in paths if a != b))
@@ -1387,6 +1440,11 @@ def uninstall_plan(output, binary, config, unit, data, state, nginx_root, cert_r
     require(stat.S_IMODE(Path(config).stat().st_mode) == 0o640)
     c = read_config(config)
     require(managed_web_contract(c, data)[0] == host)
+    if site_bound_identity(config,data,nginx_root,site_root or SITE_ROOT):
+        site_root = str(Path(site_root or SITE_ROOT))
+        require(all(not Path(site_root).is_relative_to(p) and not Path(p).is_relative_to(site_root)
+                    for p in paths), 'site root overlaps managed objects')
+        paths.append(site_root)
     require(c['general']['data_path'] == data)
     require(managed_web_contract(c, data)[2] == manifest['public_ip'])
     account = fresh_identity(data)
@@ -1468,7 +1526,7 @@ def uninstall_refresh(backup):
     uninstall_quiet(backup)
     actual = uninstall_objects(value['roots'] + uninstall_update_paths(value['roots']), value['account'])
     by_path = {r['path']: r for r in actual}
-    data, state = map(Path, value['roots'][3:])
+    data, state = map(Path, value['roots'][3:5])
     for record in value['objects']:
         require(by_path.get(record['path']) == record, 'managed identity changed before removal')
     require(set(by_path) - {r['path'] for r in value['objects']} <=
@@ -1496,7 +1554,7 @@ def uninstall_remove(backup):
     require(value['phase'] == 'stopped' and value['object_directory'] == 'objects-stopped',
             'complete stopped backup required before removal')
     uninstall_quiet(backup)
-    binary, config, unit, data, state = value['roots']
+    binary, config, unit, data, state = value['roots'][:5]
     # After quiescence every object must still match the authoritative backup.
     extra=uninstall_update_paths(value['roots'])
     require(uninstall_objects(value['roots'] + extra, value['account']) == value['objects'])
@@ -1505,7 +1563,7 @@ def uninstall_remove(backup):
               or r['path'] in (str(Path(state,'manifest.json')),str(Path(state,'web-link.txt')),
                               str(Path(state,'telemt-release.json')),str(Path(state,'telemt-generation.json')),
                               str(Path(state,'update-journal.json')))
-              or any(Path(r['path']).is_relative_to(p) for p in extra)}
+              or any(Path(r['path']).is_relative_to(p) for p in extra + value['roots'][5:])}
     value['removal_started'] = True
     fresh_save(Path(backup) / 'uninstall.json', value)
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -1522,8 +1580,9 @@ def uninstall_remove(backup):
 
 def uninstall_account_remove(backup):
     value = strict_json(Path(backup) / 'uninstall.json')
-    binary, config, unit, data, state = value['roots']
+    binary, config, unit, data, state = value['roots'][:5]
     require(all(not os.path.lexists(p) for p in (binary,config,unit,data,Path(state,'manifest.json'),Path(state,'web-link.txt'))))
+    require(all(not os.path.lexists(p) for p in value['roots'][5:]))
     uninstall_quiet(backup)
     account = value['account']
     with fresh_signal_window():
@@ -1781,535 +1840,484 @@ def display_web_link(state, config):
     print(f'{saved}\n  {Path(state) / "web-link.txt"}\n\n{rule}')
 
 
-COVER_BUNDLE = {
-    'schema': 1,
-    'sites': [
-        {
-            'id': 'site-02',
-            'size': 778,
-            'sha256': '545f968667de782c2321ee29cd9eca2339c6848103593a5e0a47411dc28b6935',
-            'html': '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BuildRight Co. — Under Construction</title>
-<link rel="stylesheet" href="/cover.css">
-</head>
-<body class="cover-site-02">
-  <div class="card">
-    <div class="icon">&#128679;</div>
-    <h1>Under Construction</h1>
-    <p class="subtitle">
-      We're working hard to build something great for you.
-      Our team is putting the finishing touches on our new website.
-    </p>
-    <div class="tape">Work in progress</div>
-    <div class="progress-bar"><div class="progress-fill"></div></div>
-    <p class="progress-label">68% complete</p>
-    <p class="brand">BuildRight Co. &mdash; Building Better Together</p>
-  </div>
-</body>
-</html>
-''',
-        },
-        {
-            'id': 'site-03',
-            'size': 838,
-            'sha256': '29f941452f86844c67f8a49e33f9eb7bac5862bffe2e97da3090e92f8e9577d4',
-            'html': '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GreenLeaf Tech — Launching Soon</title>
-<link rel="stylesheet" href="/cover.css">
-</head>
-<body class="cover-site-03">
-  <div class="leaf">&#127807;</div>
-  <p class="brand">GreenLeaf Tech</p>
-  <h1>We're Launching<br><span>Soon</span></h1>
-  <p class="body-text">
-    We're building a greener future through sustainable technology.
-    Our platform is almost ready — join us as we grow something remarkable.
-  </p>
-  <div class="badge-row">
-    <span class="badge">Sustainable Cloud</span>
-    <span class="badge">Carbon Neutral</span>
-    <span class="badge">Open Source</span>
-  </div>
-  <p class="footer-line">GreenLeaf Tech &copy; 2025 &mdash; Growing Tomorrow, Today</p>
-</body>
-</html>
-''',
-        },
-        {
-            'id': 'site-04',
-            'size': 878,
-            'sha256': 'd789d647bad8e04bca91047692ac9d77306e261150f395715781cead92d63dd8',
-            'html': '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Alex Chen — Portfolio Coming Soon</title>
-<link rel="stylesheet" href="/cover.css">
-</head>
-<body class="cover-site-04">
-  <div class="left">
-    <p class="eyebrow">Portfolio</p>
-    <h1>Alex Chen &mdash;<br><em>Designer</em></h1>
-    <p class="role">UI / UX &nbsp;&bull;&nbsp; Brand Identity &nbsp;&bull;&nbsp; Motion</p>
-    <div class="divider"></div>
-    <p>
-      Something carefully crafted is on the way. A new portfolio showcasing
-      the intersection of form, function, and feeling. Coming soon.
-    </p>
-    <span class="status"><span class="dot"></span>Currently in development</span>
-  </div>
-  <div class="right">
-    <div class="art">
-      <div class="art-label">Work preview</div>
-    </div>
-  </div>
-</body>
-</html>
-''',
-        },
-    ],
+# Approved v0.3 generator/templates are embedded so bootstrap still ships one
+# immutable Bash/Python pair. This payload contains no examples or previews.
+SITE_ARCHIVE_SHA256 = 'aad702e7f8a5a5caf1095d69304d9705e568717ea8ad8c0f502a44fb9eefbab5'
+SITE_SOURCE_SHA256 = 'f4fba7a138b2986f1516271a356c0ccd085f719deab65b8189a65b9d8b3f48a6'
+SITE_SOURCE_B85 = (
+    'c-ri}TW=#tvL^Uf;#8qVQWeGIRkuv#j51SsIi-}cC1uytsVXFbWKfJ2$zVqWrDSUpI8XDun3ur-voHIwgMC|If&Bry|D=D(+Gl3&'
+    ';T{o`l+}IC9$>aFRU#STS9805W`6h0RWy&%Fprvx)i(#<eESbimRb5_5YL}P^P6C?$|uRZ`|JGIZ}8u<G`@=G;WWtdFpr19Fu94+'
+    '?JUltU>MFv@rc^Vf^m`tmp^@Y-=xPz(|8ah^XckoFi(Pcl;0-lbr24RQI<8S+4&poKBK21v^$v6ztG|$N`rWQlMJb=WZnpF<9re<'
+    '=kcGHQ4kN4c@|KYL737&=#_awZ8U?+Nt^}rzc3g@S$s7Q7HN_v`DzjI)2C;b^zUEi@tk^^PNTFDTt?GqmIsS4A5I#<EWS#$Kbl22'
+    '&*N=sftKScxLSrOeGx@XvmDgUY>}in4dQAMrdedanB=pm{qUzOncEL(@lX~G(<sl1&y!^y(`(~2nPEH=teyV$fj(ln-X5PH2Z#J|'
+    '^V6qsJdHkm+G?gzmP~J=&8;R4Bbw)U^3~Dh5j}bL>pY<UYz&e-oX5j(x^ZB>lkaIxql~`%W#e^}&Vzp!{1nee$?ZlX*tncT!ATU3'
+    'gY)Pr&hjY5mw#BsQ69Vu=gDG)&u`Kwng{P`3F7%iqiEUr&&DZDVd6A=66ZPX*-P5QD7^{uB;}^wCs{@Vc%P)SL04u3AEvbG!O?UU'
+    '&corl9^OpDESn_DjGhm#q6{xzB;!25r10U75hfZ2r=Syjah@bOb#@Y8P4acEzD#DbWX@}VSKgxi1rO&RlVwT=fxC%9+Tdsu@JisD'
+    'Bb{pSCQL{4)o)Jo8^dIpq`csp8{f9~x`S?Kqp|VrxI6AdA^wV5(cWkmf9(zWJKbnwt3gk8c6&Yg8&B?yd(jAgjdr7*(U70q@ArBw'
+    'da`yN^m@15>vsnHdVk!G_PC>6>Zrx9cl$#c26xmR_I7%GezHx^^6#U)Xea9NlRN!>uXA5V-QG^ejI%G}jE2!j#<}0=@Ab5!&VFyu'
+    '<K}7RQMAJy4Wr%Bj?TT;+uztKtsT)Et(@Qa=ElX04s(#k`7)eljo=C!LEIxvl3CW29a*H|FbDky<2ag*f<MUyGP9Z{$u&-RI3^ko'
+    'a-uoj<c$6d^I#TU6Z7E4f^ig0gK2z2yB*KDW#TCBULFTOy*;`NUcNm#eRF(KS)ENfBt#9&z|i^>G#9LrWiSbEB5vm8Gzy6s&4`wk'
+    'DYYJsZsK7?JTZuf#jZx-O2$NdHjTgwL0?%+vyMI!ql{+}#tRmgF*(xACgC8?W%`$IkAves9-sgG>gea-&C&U*<I|c!9tGg4@hHLo'
+    's5k1LS0|!DN;?<Cjp*Da139*_VZv!NjhS($39+!b$^eX!{v~TE{F{Cz7E4<}&yM5I+U)t++56z~EO>K%_EXKc_{av#6|s87+;wZ|'
+    'L`|b1MiV6CfR5;RIh9_wv05S;sDGl5oLCixhIW#4M6xVhVb-HqCPVLs^Wv9DGK;j6KYV<5e0h8x{P^zlRdDv2#(G@4h;Nc)L<E@J'
+    'f}lvqq_i!(@idBfNMAOE0TKn!kVx>+u4hR+<#oicGN$El^rvN(%dRpNPNL}|m{<ms(LOT|RWig5^N=9oj$fRe{a89W3+9T<b!h#f'
+    '&rOIZI%sccihLfKD9yLR74bC>5yRGBe$vnUqYTCT#Ed%QANY)Ii%iyEU-Pl!uZp34(SL8u(cyM>y;?7xj&CA}h2TB)KZ--*v>T^<'
+    'kdAU<{`3jLLZs7KN~BNU9PxpEwal*R!`Xs1|KfU8h!T}c7qm-8F4W6`7gN$Xi2J7j&tgFQ0u7=U5+QGsH2zCs$1}$Mo$(QY#N0sh'
+    '(>OPBY2zg+99bUI2}PgMR(-da&`)$8gHsVw8?QoAo-l>;C>%-S*Q;9+GKD-MAxi2Nok3lYvw;<{I>+_WXgCV@cbOx%!gjyY#b51S'
+    'XQ#W5zrwv?d(;=+9qtVFMIf|>^dyUu_FiYN$KUNoqwc78kC2F3gWWwA2<>)zr^5oU)9(zs{N124+%X;PkB0k0?!L9(9&}hPwRgLn'
+    'Zm2`r8IJDhXt+O65k?(#J1ki``<-5|%^mFxcA~Cy6zvU0dpwYKtG%y78g#o|p4(tBYK;bultw4CrNMI11Yr?(S*9@^Tf?iu>5Pwh'
+    'A&;(>*y23l)6eH1pmWd=hBuDWEN8x)N7JdYTzz&p3FlXQB52FG{nzh~PhK$xxCmaK6H`5U4W9Mt=={f8et!#QACO8;Co>$7G9Tzb'
+    'N#h}1a0QCLr8$Je*Ofil0SZ?mH8mzCRTT-Dh>GaX%Xk4cCi6cH&R$#`pOYy1>p%b3i{Rzi`wvH_@6PHNDTo){q!9=l8a?UD#Hm?Y'
+    'Hw(qfte|uYh7a~XPmCoJ&R4K3bQ>^Dl0mm%so`Ql)67)tXG>B>WtbmNU(u?8rCuDpr+@tTbItf(6C0Hk8c-{=4W^+Hu^XA~93n6x'
+    'wll&KiQZv%8?u3<(sW6ZCRj|uOlN>aCaD2YWb_i9)O2N8{pq_mZ!b@N4rIgMe0=xnxK42LUQyGuc(ZVUCP^a*l3SscBeud~$n7x8'
+    '(`25^R?fmL=aXfc#-s~G!g({A={zFKgPI#cU%~zuC5R~Q?3CB+?eWnck54ZiDSyt0N#4ZKEuX?XnY&Wx4T(4_MxzlwG6Sva?;sJ-'
+    'KL6mK5%UQ1b|O;Rn7N3if+F>iWAjCgSh|kMDkKeltx&=cj*W(P2^|PxhfKz~ktiD%;S^FrsMQlwKWghFI!SU8gFcCJwz7!P$J13n'
+    '>edV&>!riRasd;WTBc>=ZUfPSNe<_R{X@Kyoka|(kPs{uAPl8fRsu+8%Y%1w(ws*)&ub+it2bn1gBo56d1{L~88wzRcr9pfmy^{@'
+    '2PYgsh7CC=#?^T=j2F>8QfY709duX(jK|~sv9TC-#YQ6W6!mvhSnT$OYE6yDdl3thF>!b?a(dCupx?hoSnTe0hg}w6<KcKW5+kM+'
+    '^+#+s^#=5Ms2#QYd!3Q(NQ|6)vZh!*^>=o{-rhYOh3#J0>)IKKvDKw<j`{WWPT1d*j!2*mx?;AC$ewEHkhG)Tn1=LN8|jG54%QfF'
+    'NgAmc!L|jA4pF6r3>sjJX%don!4?jc2^EaNs>g9bFU-0I%WP$tg|v7^{PQJgqwh}NG}!wBmVff@<<aHws~V2=9=29SG@DP@<pOGB'
+    'IjG`<zc#Xz<if0^{98jLkA@R=6%mWI77=mYP)2Hvs+6fObGR7GP4KbHqZcQ~wPI7b0t6>9!(lSRSYay=Ul##lS*Ny-LCl5KF65{e'
+    'V=0vW?3#=k*XlHDPmjh?%1ysHJ9`zprhi~LgV!G~F4h?#*jBJ?QV~Q}52%%4R+yV+a6Ae%o6OY2cqCJr*ge~W#%eNhl&3p1qWCEI'
+    'aDMcXEa9UQ9$fH`XCKc`k4|dFX1S$9J<Z?+bH0EGiwt)iBe)h1oTarfmm4rhNjZT~*FoFOmc5<-DOvGY(<oa`b1O8N7<E^_&Nebs'
+    'qTdV45^*BiX-y#Es4UAY1zK@szu^ajEDK2`AAKS81)jX4b6VJwV|C_LJ$bI_cCab7oA^Md)_F>&7oWpH#1lLF3HJ8+@zJZ`D1iCB'
+    '(Xb3-lZ9qpxGQeeZ&$R;+QJn?#&DWsR(ZXG6HcjVNd&zLU<+jd3E1H^eF}#uJbb)0NixH(gE$8(YaG*76SWZ;(2D0!$!N$VYKd0('
+    't(kZR#qkSeYtEW)L1de-PlxJdVZVj7OXXNmyHR|D5hsQpiZ>=1!#6+^i}?M7t*TJxPL}#4hF^L)8u8&svk5DV#E#hY9gM;m5s~&u'
+    ')_b@hg@x6;30Z2*;3af*I{Zndo`$P59Pt|Y!~dAU*QDHz21~paMt2H_I1Oa(Y>2KBI3KSEnD*y*MzSA%f|Q*Z#X@2T(eOH$N4M;r'
+    'fELH<Y8Z^^tJ^5L2D2DLI1ulVRZejD9bZHf)ER7?%?-yYoKFX|IX4))xT!+3x=bLcp%5Lp_>3?)8tN@8r8F+klP=(h81yt*n6)W+'
+    'Ar3ah4S_fU3!^L3{vyeR)|pj>Q&PRdl(ml+$CogLej>qhPQr+Y{^RAl(_@eBU&FgcCxnK?OnI4(!y#)@$x?}mI$)J_7Jn}0SiF)a'
+    '3!>N+@oG9(BVzN~Mi5THuSN;YjfY2yDswcVcV1&X6M66#JU5RbB6^;5g}V9SgbcE)$&{?b9Nc=8hH$=byc-wZOScgkaf9{;K72h$'
+    'G<*nZ97@p66cdO(!ydp=@-CS9HiP5YB40rZpYvLClOmSMmZCpN_0DMk%(&gr3dQkOSQi^_h71r#Kjp(GM-U@nnI6U|(clW~-E<aa'
+    'GVxHxpM@lSvIX(sh?zqOQN-b#5$nv#Up~-+X7OJ{F0hv^k3Q#1CUKTG#0He6kN61CdJK8c#N<S{JZ0O7$cQ~C`ixmrJVx7T$<+0S'
+    '9l%7qF`FUsR5b<`V4^v{JAHL_b{>2<IXb=ctT~r1X&RG6R&G3vKC>E;)0R&$1Zkg{TaG2*SXvmQ%x_@vi5IrmfoAXq<BG8X${*bI'
+    '2m9ltVtT<^rJ<5&2<ItCg}DQmWeny*D>hnABY*EN7VKN#(ZS4P_6o*BivZ#mjYPKJ9|wsAdW`ve9xpOxuMqsCLXqk~YTPiSt;uL('
+    'ZjyLZctKdF6TOkvBAE|MBl@R*vZEo3iFAWvhD1Twopciag+#uHFo}yoh%LzaCfc?KhYkpi_8`h{5&AO3P$K>h5zhUT>^N*QwXUp9'
+    '1kH#Dbb-?kdWMgOk1`H5F~$WM*(5z~<7uu$2Dy}FM2^Mgjp<j`%!<upb(whq$)eJB%%M-3`5!?(v7XEa1BYK-*5F&?G>W#l8O!OI'
+    'UuU4Xxhe+s2*AV6CIvjytc@|9q-1Ba*JGJw?DghTCb7JE$cvm>1&$4TCgvn&b?|5SRTdoET~0|;or=GFk;p_j7L(-&e~cm;#|&av'
+    'SSZII?18NKp%0+Hi|jHHAZXed8$_ySgIw85b#(de>@+z0Bgu`Ui;Iu%Kj5=>GJld|S4e6Y{X7zc!W**S4Mz{-lZ7Z!Lm2N|DVEPK'
+    'lX5g_2A8+cPUd!zM45`_ppTM3z<VrF5`EnezlehnWH%005soeC^KxcLzaYgpoJXX|Q^O>=WekxSFwvk2x>!~`95L&sb3m(39F+td'
+    'I~!ow&^|%wknUy3vXB_mk`(HcMTbA|OIGLRISDc9jXgl@5?FA=#!*s=qbO6cj7;c|J#Y~`?9`uv0N#@2lTTJ=L711z5~|jv)OeY~'
+    'PKdJudNP3?3)!ps3w3)PMGL4$)WbFyKW*a`5C)cP#l8?#TYXGM(<ZfO%$gU`g&{}wDpeyLzSoNgl!;#)ziLd&DvIQT+Yl`5lFWkO'
+    ';{DOdiLb-JEg2H|rPs7K;W&~=9t#g~+F`AO5N=%-;YLLy4ihN{&iE|LF(jRZrvz;Rv9UNyrp%py(SUFqhcluGoY4f{>;*y;VA+GH'
+    'mS9h!T=#6niZWD7xcb1=itlsMDV;H@oXCa<><W9HhBJ&1L7{-P8d3mniQy16$Ma<#iQHf-ddysl7tSF}HaW^%vM_u=3a~w9G#`#$'
+    '@v_><ni0Xhn6M?CT+QRZgks?{DKvu<mGi98&#$IYNo6NnV<``?XPs0NyWxXnJSFXoh<!|QRAiZ`Da7)(h2>}J9_8~%y)N_wh{Qy^'
+    'kR%s}p=4#nb$=6QabYw${?vm_>rl048B&ofm_;OX%^&IX!xsE_dUPH*e6qwBSH`D3ftwx5>DzERhC-5?PJq;zPM5S_Oi%+c+Am<M'
+    'yvD8{(`HP_^n&Ea(v6AxK%@W=W1_XpH{Dhy=q1dGUXqkGuVqO*%h`vcDCJj^RQ;F(ggQb;zKe$*9t$kAEaH&#QIhBhoYQ3B5o;x_'
+    'C7vfNt%UT5sYOs$z#HkSLYP5+ga$OnVdU{o9g!uY)9_&sUWG7y6B4i~o8TAMk+E;FkxXt_XK;PB2?_;SP9&ct>?zPTLz0g-8pWY8'
+    'pYkDKBMfi33rT!9G<0D2<;3(RdavxzU;p{PX1WS&LM-xNv=r4q*De}PNs%k0a-FN5sPBWi>79T#Or&{u6JLo(`v|cZMBmSkUmu?z'
+    'pT0Z}KAgQfy}a;<4>mMrGqG`5>t|r)Ui=I(En{&U(Gd)_X5d8(j0j<tAPyUn<}~hnITGbbR(C8bS{8Bf{2IC?pCB-8jts(+rUrhP'
+    'vYIYoerm+wD%Kd!)0G;yvuK7H!HoP%B;?PUl;7()GZi+9)P83%tJKYO;jMoW2Fsl@hG}IuN4&+bHpn2)+(00oQx;WT>~BDvaK=6i'
+    '<8>Vp8D3lVwIIr1@quNg)n(jUvYd_}FlMkm#BahJtI(UEPTBRggj9;<5DmSs?oNdHLKxZ+$>0U3=jGe8vkTb%7w_JGI5`e3&(2Ot'
+    'lrs;B+m1vAu>{7ZvAdC#BO3cKUeKJpjWSML4#R4|ooP%*VMj@Jc1B`~41-COY3Ot))1r-~2Y9mnc9yt`m8yIiXcxl~Sq{K6TtzB;'
+    '$auz+84k7bu87R@sru+0!8M#NVOD2Q`jsNH<%02sFu!pE{lOd=iz{QxAS97Dj%AA^);1vN2vbHhjbuUGMPZt(ktnI)WwW(bHB*b6'
+    'O$jz3plr+_!7^|xud`sjoDJAF0;2jUVgnVuCd-kk2h93JPA<r1U222?s=_p$#To+ECC$L+i=K-OgTuzt-bw*M-!se-lvEUU6NsP?'
+    'H$SrvHd=_XF)32GGi7Md;E12SeD~qF!0xz2c|ym24sjIX%tIQ4OqV}#_#>PHdMH1Vo}5oLFrNUW7Lc_8A3kZvL)`{-S&45cAhjmW'
+    'Ci2D<{RDr37mfi6L~_$;MGSGlV)Ta9Cir1ML_~Kbwxd7YL{|};mYLDdua+r>`;tzA^CMiNv=1=upiz)%GE73%KkXb87L}rH(t*kJ'
+    'psthKIjf>0=zSx$L|9e|9$^ZBDV;Wmg42P*5yEMiJ10bOiL?(Hm?g^vh*)TZRPscas97;yN-~2Wjm?W$POMFRaG5%u(3T9<4DX0u'
+    'BHb=UQ$$%KuvMtjI*YNh2Lsa8ugQ2oh*YWj+yrUTsB9-61UVMnND6bb#9o79&C{k)4`VW!R=Q^F04rQpPW-|#jx|cfuI+@620N?X'
+    'oFBh>cT55|xCG$w_~@Kt{_og>_0soRy%d|udaP*h#9<%?&uNXwHm0$Mh~{9iu>V5Jvb^eq5xSOB%5sG`-O3SD664~f6F>Ht_{GEv'
+    'E%^+LwqiUbBN$9^8V}fA#vYn8Y%eWebOjt{wxA)>m}W~Xx$M(0&eNp~##q`k66%c^M>Hnp6w3h=_C=~+a*ItKE*FD@S}EHac#Ve+'
+    'i8xm#`Xh`^xR=IBG6KpkoGP6_1df^khe(ZkWy(&{kr#<IdSS*c@s%;)Xs9CTX(=bLW?*D5mg$hybS1VIFgw_o;O$p&k6F@&Ku01L'
+    'v!q3WpOkbNwRY#s=HM29H!3Uqq2(CZfrchcTyx0YHVN=D*^P+UGj$XH`0n!M+vC&V_1VYMS8QVV!kVmn@$=JQ^$aecr02zAT8(GS'
+    'y+SII#GJumV?GiHItN2Z=GGlZjYYEsNCUn>EImZ2*-h<{RN&HnvcALWUam+#P}?jSF-M)zN{W()GYJ-e<-|hBvE+lSCIMtT?eviz'
+    'TPA;1sEK%Up*kX(gyuC|R`fsWPB{W;`?>g;FK~EL<<U?;sV9!=g2({t8N;QBjR?_KG-iLF=2KWp+He@PqK)D+=A01gTIb_HcC6Br'
+    'wSr+%7opnNxI+1P6UoKNF(G|uz4SZi)Q0Jmu)NqQQB@HuX5&Y;!bFT&&Yr*h`SR_1BBpaExbFo$7pW|jRnmo*TopbCVdx@NngO3w'
+    '(ofj^#kz0di4`~7BxceArx`+j70#2XH)j%sH!Grs<*=;6Un~XpqcRGNh&WXm8;n~TXA4izBB!SCs;eqDV%3RpY4j4Ab@2?^xE#F_'
+    'TU_SLnfN4b!Hm$i5$K3YF{YjbD-R^p)j+6*(OD!oMLZRl#@lekA|4SOoT<^O#FKw>@q6J7si&$tDs#_Zt)-;QC-bMO%)t{A<<e6K'
+    '>m2H$!s&$JF6X54q#1_@B=qO#ZX8Pgb^a~HG5Zez2r1xs&^Z(!?%Fe?&(E1wvj{Y)KnQ5?Ci4hQ(wSt34O=Hq0|s!*AxN2g)Z0VC'
+    'pW*1@e-$fxiC|uaBe`5~`c(7R`SE|eJU{v*aFj;{{T1yaUJc_4Qj?sT%o)qTjGY*H#MnZ4W)Nkve%9{^eEw(@t~h{6{E#f3+%%Of'
+    'uMqUl0ykU(A7F+|8_wS<o*0i=GHFQXoP!!cQdp&Ms3@BnrQxlJgE>qRUUx&E4F6~S%uoyB%na9a_`AlHHM(z4qHEEHaKOR0z-|(r'
+    '@`^YU<|(-j>~(-^UKME$3(0X{b4WE17S<X6nDIGvhI&rBlt-NJCb1n+^Oynsc?l3Bv3FSK0=yy#EiBMF?7%h=R8{Xc9XI-00snlq'
+    '$7y)QNCXm5Of}<aa*N}F5lWy+!KFBH;?P#ifiunv<Fl7_V!lu8h(klhLL?a{o<ufU2XLq40S6MNBV~SLGBSXAC>*s=b7^xF3F3&+'
+    'Os1v*FVk_H)3F-E{G!QZ%b59D(?DR#QGZM2C-FEp(P?9#8!xKa@L^;fcnmy<6y*U-M<h%dS{5QoS4=XH7KSzpMur^1kTk=HgUy0z'
+    'f%s%?r6%s}0#KN>3;IB9h;%tm#$z_kH8M{m8;Z+=U5|M#Ve4foi&~1g(?&2mHaZ=xb;xu$AUZ_ks2GL<PMn|^$N5;-m9z+r`WVCp'
+    'Od8#Ljh{C(7H-3&EUATJ_2d%!f{4OWO+j$OG!owcqnKIe!J7L>1{WA$qLoBlVjCRsmRJW49hGcItcoXLfDxg4tQD(BwrrA$c`y`U'
+    'shcbl`W=~=AJUzGiO7p^<_t&=gSRt;=*9I5GGyf~ccN81ethIe73gFFOovr<LQmO2*n0@iGxKA(>gTzejAXnZ;N0AxfQ&}s(4$FR'
+    'B`)tFlU$A#KwbrAyg=G6oZ#yXd$^5=1rxLqhMy={5+B(i2j&bGouzI#*ZeRw<F^f3U11r{(B6?Tk&Ngt7*=M%PiDc0cm`n0xrbe0'
+    '-zw-5;cDeMh)2SgUgU#02vF8snfHQ6T4ygtxnQv*_`sVuP390GoXHF|$r&u$SCZ^Uui1SSlAVc7z?c%FW5di<Z@2oiBuJ=^wh1^~'
+    'o<Q7*6hTOU_~OXmuaxK5oH3Sj1?^Qs*p>i45KB&IEf*7s*fH#ylNA|p7myLl!?jDrvXTX%s4z@O&ESG`fbGF*n{|O0H0Fgcbhk`I'
+    'RzfZuN?Wm8Iwn>>0$|;vMn-pW<^|vyI42=*C_GmnDK>wENll$>IGh?Iu_R~D0lrx;@NF1dBS%BiW*v#LV-+K2FibcC2<1^R_h!<|'
+    'Z<B4JA1J>ZIm4FQP8>bZjUj7PllM4VK@dA0Y!hFc@bb+fxG60-MIEu;$smPC6|h@zV~V`s$dZB)i8~nC3kT;4s*?!(=(G5{Ot_A>'
+    'hL_<s&LYkq31%3gq#&^;Drbw1HXh+dh0Q4x0z~)dIJKoh@mQEhN~Y!qO+&DZ%sK>C1`VFpnWK7n!B!#%(sjK;FwA&#*h@VN7c_D<'
+    'sM2V<GR8WBAuGkzF^@8+DsgOR0LNKtU{5TJxmavOX=Gtt|F~q)NvMx4f*~IyjwC08Khaz>)sRU5!5OEUERY#F=aOnvFm&;jaA3ol'
+    '!Or+zsEN-II0g}lPhAuMLAy|cKy#Te3*u8TXfj)-WWI8cd1c_X&4Bp+n5z*Wny>x_;@ZTGMN9Q4+(mgYTh*|Q9bN$>hZ%u(;c3b_'
+    'I8K}lmb^yZZ2(=u09Oey4-tSS_ThN>mDXXa(kMuHAXZPW4JU?m*8;nKtAwvDLB4dUN}{ts<`~~f5%Fyl;IV9}+pU^GD#}?rQ|lR;'
+    '3=Ck=$gmG4(&JF?I1=%|zH)<BEAk=iQd$oK2iF)xEZm4mk>t^k7XfJy5{A<V9UY;Gm~l*qwAIGf$H5gM#%r)8S|l}Ku7K=voor^7'
+    'q#LL?OF96LqH1t4!;D3n6TWTX0T#!a#=_d|5=;b+gV-u;NRgU~41xJSG*Lok-4ON)=(dN)p-E><AG4x3h=iyZhoAAe8x%1z4w%E='
+    '78raaENhj|c^WU&52&Jz=}@?`kRvlMPm}cmPX*!C#;`333hT3I5z>_=3@|u@(u9L(03(7qDxpb?-Ocb(gDav#JA?vEPY#mQq{U?*'
+    'MaHVT=NIqH7P(QxZ&~N%WIabfLr+t7WFp$eQCP}1RWoA}Gy1(iJ8OVlXp2l8oDkJ0nLA2&7mJ&uZdBLC&%x9)E^(rHh%}?CD9>t5'
+    'h0IN$(==2lEF>N!NR9Y?=9mVKOp@r8WAbMU(Pk$C_?dFXsKlQI^^fDPB<UK?1^j|!ku1+7UVy*6O2b>R{MnQfLn<>dVu5ohl1`2<'
+    'bR9tarV@&~FqnTddlNAcK*!E%BBN;z3K;_bz9h0(6=YeCh!;#zqA@IwAr$y1UD1J1`;<njHZn($0Y)fJ6^jlS1mHd#bdIN1ovrw9'
+    'r`SXr{bilRWPs#wfH4t}kaM@0@n7Z*;WqD$eQIO)#zD;z(u7lo%n>!{9gZ1wC-9i)mUfzv?XEu`-jPUQ`(trchtp*!iKavji@9$P'
+    'd`L+#96F#imL;Gk2GS`MLWzxcUmQ%%@*xY^nMHw4SdiGJUD<~75b)NNeg-~h3`Zmo>j;ku(APZ@VM?0M6j*(DtQ4le$1NtA7Fvvj'
+    'P&dn~c~rNr?4)FMmc<cU&ysJ=dX$2M-W%|Jq$y-&&71Rxfndly4f6h2xur}u1`WM54Rt;yKL>GX8=I5G6xTc)@g_Qg(*|uK6<kj?'
+    '5p6fly`YK{Yhg)IHWDnf%tS3UeaJ+@5D4N`T11Hec%brI6yB|xM&T3z@|8(j8mIB-DsqmvM05>YzsL>DmV*quF)z75Ax@^zI0qZc'
+    '+?XL7_oPfncv*b(9Nki|0OG93jKDBvpf8dN$Qt2gSPHCVCZVLT6jqgyTev^Ox#Q$Q#DSyZcI;$WvBvsBXk%iQMZ$BpVJ2AK;ZlyL'
+    '8?j^-Aplboykqf!S_vHThVF2~kEY8E-ZGH|23KAUWEVafc81WgLTGsr4zD#dcWJCiur~b6u{F--4_RmUQ<xfbNQJ>w%@8&~(kMx<'
+    'LK5mS?@HL$#C#>V?08MB>s6cuR#;7vK_JE&1Q9j{?qJoVlZ5#oFBI)?gWZ{?PgVJeYG)xN3^J>bv6q$!9*iMk=iz)PnZS}}LY&Rr'
+    'p|PAgqt77ZqXB$FZ5j%P`@u^CHWsl3Loub2{jga0qSc`Gh@C@h8n*TxS!H6;$>y2xHJwk<{#c0K8kYjXmM~m27hdyjXd+8-S6wAq'
+    '1Sk<^u$<2$urK(-ZowD|imF7fEmgfz@Mw`C2J9jR<3#1)$bjs?k(7K9MQIpEnmX9{2ue8G)!`&ktsI1i+Z6!dl5(geEN$2TK#mNd'
+    'Bc*C=Bh?^}Ok^AKy~OJztlP`My(E%i_opn5m|E;L&SZSm4O2Tq3HbQxDg#t6PFLF`DR53Xx+&gv8wCZS2odv{XF)cRV16i@h_u2X'
+    'Sy(5CZK%;!NN@v;1h^rG@QU2UxfJd$Tqf6w43{=aT_iIa{l&+~z(1f68G%};tKTFySoz`U+p?ODp_(UGoY+@TlOM9Sq;x?i0Y=!L'
+    'mm$KRHWAnfVtT1ElbDNXff0m5)H?%_F>z}P4*X4>9L7B*u~OD!$Q*IO?~aSi322K}X#8~*WDSo>LfSO2h5)1l+`vdP@j)7>2U7YI'
+    'MiuMcmy!c$C6MFA1;;{(K)+6-2nJGG;Mn2km@YGK7-HQ;Y#qid9YDX^$bF#Iu&!!%zmSTh#u4j~*&^}Wa__~9s@Z<<4Ejm99O|@H'
+    '1?*Uac9DLrkR7NC_)ZoTI32hRn7zZb%?Y5eJq8N9F}2G`%1fv-nlFt?<wUUG6=CZ}z)pS}yAGi%&e?;hg)y@{U9uaPt7Aqh0g{<$'
+    'HjX%&Wd6BW@(POh0?(Bkk2$7`$_iYh6E!&_RxdeR-7q0+E|@un-@a*6);}GcTppjF9({cv8_^77zG{N@+@@or_8XG=e?s=;Pi_*z'
+    '1%0iU4$os{QqH+-P%f%kl)8a$-Ur4^7HN>?Ek<45CPm>3IA9q(9~BWzO@1HE;vztvE$5A(=nb0a0AdD7@nAGW;2Gx<XqvbMWiXHD'
+    'Qhe49lrjsV>DpKek50k((VxXXt<D5yM%*vkyAp=D1&SOIk8(LZb&5!GJPQG4%gc=IMA-rL*KyTBMi(l2AkN)^^VtE#6r5ISdvbO-'
+    'sPXE`Nn8yLLdwk3JE+z_$C)S0VI)dmm>lyd%WMPJ^~d=%V+qFH7_X$!Fid2pS=3uVBnrOiZ4&7M-?q8xq3jPVvSsA~tQ^;c)IgXE'
+    '0p~ENuxaC7%sCyzb$}WVIS1}sC3_+kjqb7T>p&G~&7tPK=aOA02^G9MHI+Dy-J?(hrP-~E=Z`rP1tk_#4yr7d*jdP2xG1s!9gjz$'
+    '@CW1ClROHkH&Bd<te+|8^(h<!y}&Jp5G7flaNEtqJg{WQv*b!u?5%PsiX)qxq^eR_j)I0qIF}$|OrNN@!Bx1(itHWPd~A}&TVZ=-'
+    'O9R(50F^VgklEY}#|`FlQYx!~S*Ia%eq$>~H<FXZnZR*)HBVG`<xrP*7-Cc4MXP&g7LCN<00uN3Sz^0mFb>I_DO^?Okp$tb?#*D8'
+    'tl&G^vaXGXR1mJCD}Y_jxsHJY<S;bM%*#Cs@5aXI!>mQ)Orh;17YVtr5y&De2NCWhaGIJDr5sahe?Nfr_-OM-S&J}G1XGF3)54uX'
+    'WL)RLJpq@+gMw#_Gg_FD*$@<NU~tGH5yg;C^e8p4WR^p$jTTiJ#4U<^b^s+A<!O8tBT}c7OSv&FhBk<oO_zn?A12Vj?AQPihK|Z_'
+    '9ApLsGK*AvCBao<il8bMMfjYBJ4if(wx!5?lvbSb55#(hFdErO!bKpOfmE7M&2i3k6gW{o0$d%KX`CW(e^lBYCaE|rr5?m0@g#y9'
+    'Ct;=x@yQi_n6jZHS^pq*39x^wZ)=SbQ}V*DkC%wc-qaiDV#0;6JFMpx$-GX~-)PJxR~Ln7N19S1YK8+Jv?sz8J{7?zI;=|GBD8L_'
+    'QT78P-aTJcU@!smb+3d3qr@5lk>Z-_jH;TC+-=N#Cm^a&F^trpdl=-9u-{Nn7FgjAXO|bj(dnz;1F1*ImvfKAk8}0o&*IN`_!Z;Y'
+    'K(7hWGJL%Tq+~rq)0OeT4kybws#L<*3kFjLEF*0loKc`tiuH)+u44%`fBAeFG$j2qcauAr+hs2K7?_O(d<9zXnMRg|Lz*(5+M=?;'
+    'sybeFNrTG)qVB-9f{XYs5%Q<78R67lbMz6<$I~VAdQPWGTppz7-yN$PI#YF%({v2h3jSFsp5%aqZ{jNucjj_UkyjjqGRJ-tp$>`T'
+    '?}=xy6yl^Pw=`tUl3lq{<W16^l-Cp`8$8wv+BU)j3`!u7%eiS(aLU#{jKkXyXaVq*cCl2@p<IM#8m~i$*@OH5%1Q$lxkc2-nKt}V'
+    'v)jP}QO9cg#n0PZPFky|6x9BjU04GLmBVVOICE(olUW>cs1@#6)_p7vMOZ3VAxPNx^vjhHBZ^Z&XsPSKM4?dcK|yrljIjkRfKq{Z'
+    'YCP##wq!7MaeM%@a!E_ZZ_B<A%biO>{v+%V*E^UbtFQp;ho(4dgXwnLlr86SFz}`qwM0S_TeUMTK<uU*$#hj{<1R>z>rP})+ZXYu'
+    '(5n4$&&9_&CbH2nr^~^>)Q3^HSGM3vNi3}dXq6c?lk`ZQ^(3;VM!=qFQTuP|%2f}QMUzL+->GRHLOd9(+AQ)8gA@T6tRxy(f=K$s'
+    'jBJX*Q&P)U@~9kB2MA|s_ySh}mwQonJmk_d?0e^ktEkS|aLMUJWQ&y0D^mSkO8RBxQ_VKO+1Zc5(Isa%&?z9^fA*R`d^kUQadQ0L'
+    'Jr7Q;gV0it7KkyTnT+)b2U$6BMHI<~VvlX<LWpalS?QQKTcvO#XbB_~Q&+caeXS5F$x!%mujg7E%;vq>rLU+)ac<#)65cCLx5y!A'
+    'T27f1sVP@@6&nsip3qr@Gq8Yo2+fEpXf-!eA|){;(h8v0LM!;z)THsCNDiLRsBxq%(m3a2P;o=Nbd2?a*F`w8gi1`DRf7hpoGv*<'
+    'O|B5G2&9-1mn>G;9d2Rw(NGdptTK5m2usf>W;6lgp>M=El6oghgmW$|CR!AeCWh;xALYbxs-&X39YuA0<}WXUxQj<_eW`~bkw@&U'
+    '8yJ9%S0>w7O2Puwiqu^2^W&Fi=daxJ@iJUUym(U1yJV^E0}~5qtrRJ;MaR^>vKV}}GX)mKwvz^GobZK&<+K_&JWNx+44etvxJmb>'
+    '2G54%ivr`wp-8E{!TG_$D`?cp&<x^2Ojc4Vq(qP?xVp(6K<sJ2xv55tWl%G;Tum{M*4R*-hvgG$+%j75hgp@oMIIk7760)#t~pa)'
+    'wLoGja1KabHK&Gnk-J$Gf=+Gpj<Mh~xxYvY1c^u2ttja@g#_!S&{57380tBc<C2+NB-1*>iHh+1fM&t>!<g$ukRi?<L<bSZH3p=l'
+    '-rUK>F_2lUq>BqOP{82i?2SvRAK+*YHBy0im83tC6<_#VWc+@Vg0%PS+Lj<RQcjAr>6|!t9=e)~P_)6Bv3tjXklNDV3T^PHKvtW9'
+    'fo4OkYtSh^l~0V{#<z$$E8VTX$k<PZHERe9Oy8|=WjQ{pMMYs))bV6g5}S{t_f`Fvg~_UksmwHT3nzdFM{#~!L9=1aeOt3uVp&|y'
+    '4Yz<;f21o%#pHD=^x1IC(5xAh=dthjvvfF0n2Sf#sY|(Bn?tHLmuff>S77ievsYn5>g9xEAI1**dMqcc3EKP)obZt<LN4f(DV{BL'
+    'a8d=gEmKn7M$Wx8r=a;dx26R(S??GyIhIL7oG#ORg>81U&}@+?DnyDHYYhnN5^M$^$f^RX1n3YYv;^Uz72C)(qA74x1<NOh5vGLe'
+    'mB#M5S_&(y<4`hrDh91`WD*&wyE&zJOa>Mw`Ku{WFb7+f)r(>jfHQ?Bv%^L%b#SnHbVL}3o(<D@AhKWS6g8GikRGKBMlq+xvu3)S'
+    's@Pzb=KE%uErtaP=la(k^4rG_n4(%Zcw;)nTo={6486q_fb3NfC1Ps*{&T-*kyAv+Mar^6)jbbq8pUEQq=fBfLBTjMMj<-DWaP7B'
+    'bIqy>irP5EI0O+{>{3yy%P{u07-XV#$VxD2r>NUC)_G~D_Tuf?xv2(vaeQ&X)wNuzuPdvHqTT?pv;U}JVoj{n8s?eX`b};bF0M{w'
+    'p-YM==8PaA!?~&YtllybZlo7IHBebCod*OjCxkG9(<AptJ!Hd(!=^?#|9}uSFfaxAf*IkNp-q})kFu20D5}G0CZ>yIj7@?_$`ELr'
+    '3LdfWJXC00W)lTL17)ihaCnBQgF_27=xY=`#uCKP?!*h}*Krec9piLeaBmi|w}zd7nE*#M)KZu{CP&239P~Kxr#sc1ED66tu975O'
+    'd3ga6;e(puu8G0ayULKbK3SJ{shnd0$@~Fe{cDQ`V|O^$7Gjl7VN8jrDj(h+5!E6T#aF2O_;Y<E$}Kh)jjkf&inrWP7^@N9HfIbT'
+    '0+0e&y-+q{DatS|mh){~wlpahn=_Tn0+eDU9>-}Wz&P{GGF;qOVEaqC6{RSWR`1?38oe1ccXD4Tt@+4=ZbGT6$A#&zAy?Q{4bN+V'
+    'E(GZWOK-8s;gpl=6}ZmMc!xzg_NI&TwkhEm*9#d+%!z4H!f1?IwgtzBaXK`)VWP$vR6c7dh=JN;W;TeVrA8!8yX^Ai43l(ZsQktt'
+    '3eySco-<#=_VXT0nXCKV0{qDlfeE`LpQ^VlEI7SDVVJ}EMFFfR<`U(gtK6Y$t~-y+Q>@a9cc*7BKb{<&2hI&k_0AN&;m$9NMS3`U'
+    '^~S>L*uRewJ5sk#>PkW_WFK|mh2TX-6+WSi3@0NYWgfzlk#!2oH{3?*`DUt4*$}i|Dxua<iQ$bZH4uX}MG&<PEW(w!c-~`EPfOC7'
+    '{bGnOZNex>-MSSMHyB_cf<hjdLX1jDaz#;mE_N13sn|g3oQO=A4ln?4MXg@uK%9;6W#b5HRAlneEq#&Z(+mXCJ#}IYKy@21_i}E_'
+    'EelA!q-gsZwz+Icd_j^+#F1RyCoSZHVns$LvV&sR3YT%V{*}k3oE-V(H?)j<Iv06ouR!8k!cJd7qyG8qBMRdGyw)oy6v_I5Z?ZEM'
+    'MlD&d6rR*jNKnHa&Vw7iDuh`r!(C$L)y+V$o^e{FJHTzlE29J~wgN-es-z%inw3#Qu{hu+8>+A>Siu*t6l0f6>PfkvU~pv7B-`w^'
+    '9gBCsCeLZzWG^qxsDzb-7<a$`p-V}BwQV-|0)=5z)C|V18&WWNKK23%)#G>*$ueIqTp-2Nt$Y9$lgdJvG&!S9J7qUSo8!C*qG{Tw'
+    'lDn@|9FhrAQhFpbs-&%g=Ba}T#t5~Nhd6c}+_K)#<_3lqlT{{xjsy_gGUOc<WQ}TU)6MvJTA{~c%47uv8yCk%7iXtOCx~?db#~#0'
+    '|51xm{GmnF(nRiwq-l#v0n-}VYHhX4hI{`VBHwDC=~fkdZ4eHxulQA|_rxco4D4`8WXQU|^@dH9N(@;$MolUOMx4gP)V9f17HP-?'
+    'Iv1^#)lMhB$xr-be~BP?Dy~N3xT~lPbvaIAY{Ez+c{&$Rqx#2zbdxf-q$qLmf~j16y3CyXN!K(i8F^R-Tx4fTq&p=0vZ(qfMXa@k'
+    'wUl|Z85=T2lgUIpzhR+N#YBp_uZ+NEY^FsSnBirQNVhsNFBO9Lnv3@5dS8V&>jvRfac?78ddH`i?~YD9%5`;q8V|CQ^m0M1DTqwr'
+    'hRKQ=rA+7I&C!^iRJTdkAy7mIi;PP#42YLxdXofKoq*qJ&U)}7jzn>EE^{nM#H1}771A)}54Ik);hr^ByhmVU1737w4{=8IERbZu'
+    'w6K@V)dFKKwJpd{qig{@m?j*2W0o&!6JKypaYJjBcS$o-m~o)xP(&mfounbrk;r;S9hKsi&3`G5VKIe{d%*hT<R&V6yR^q>1tvLg'
+    'DypqSQ%1B^Oo0I?5>(@(TErwM3_T7c!hBignJX>za)3I-VUdewgq>AYUwr&II3Y@Gn43C-_h;wFB^5zSb(t();Gz_hHwkf2X`i?K'
+    'f~}k@r<%PYON)FO)$EETZt^XGi6*Z_>an0lM^h=Nrq!`+wvgwyH3nwRiBE|p0>CZ720eC_BS>1b%n-gn&spQK!Zv$axbwv>z(g_z'
+    'T1c@7%k@<+lzL%v_y<iS0-P7W&frfJoe<a^Oi686PZ~(nUGkik3z)saci%)Tx33Lqhxr>z7=iRJQ_-qz@mdp%mB@5)tKJ-mky<oY'
+    'fV8DDxq9lvQ!Wx(@BZ-gUQwA@3gRM*ijo|no+Dplt|HP3QU*F{v6kPHGALDc^|Ck?G`4sl4zaB?O2_QotDlaKe>8UxdY*_$%(YWZ'
+    'J-ci{HqdZlF*^)xv9)!jvfh+tGpa49YwPWzf_R)-%RyUJ9~Q230n%$+sk<vzw}YzL4Z+O3$miq2yB?K5Nm;RavEVTkiAStD;GVT1'
+    'lB`SxKQ@p4ybMjRjHO<Li!{Ctiwe2Hxl?La${jWWb4h`u6LNG0Nz77YSG>E_vgB%v&2*gn8+Y7);G_^Op-Zat@S6CYk~hP(xFV*l'
+    'zH5u_))j}fuQ$w%!zjS3V>k7;;9MA9M+mBDW>Bf*uG9#YSxBYhu};mUb+J2eVrDo;*dZxkVzOJpTq@Trr+G?hF_|JuJ~^CISi1eo'
+    '=Bh|^0nx!y(y?ZWN_ks}aEZd82~DIjoE-nhcP}Jz{qBSBjd+W^SQ_ROF+2q?vCI|zhYTHNrmUZg^*34P0kA$K{I9Oe8Ve2aDm4_)'
+    'N;{;bre(1+;Y@<K<QjDB1$XN*bH!*qF;c&h=*_Jmy(x!IssYQ7atY*Yz<2CXr<^Os#ez*i?V_A%xXk~b|J^$Ve(_#=PBo3#P=hU#'
+    'Wpnd|9{iHZ9(F@Y<4W?Q$bThDdugTo<{u)P!DQ~uEULP(6^a9EimT{dr`+teG8-mlttCA#kg(RjQ4l=W(H6KF4a3uvMgJi#Ktsy`'
+    'O_D4<^<3t0Uf}q=L@%k&IgJ`x$Z|}YoTM%nS;;23_@Rv4qasOF88>h+Oz58SgjtoZ7X5H^dU^iynj9bD{h~lggY2|G{6;VawumuP'
+    '@GQwpE-fY%yDmD0)NE%awBTkcM=Q>xM67wjaSx5Z#T?9)``v&GknBpc?G^Zj7NO21HB&1l1-AUQf2*x#C<a{IG>=U&a+49y9L<{H'
+    'l3eT*?zWg3v+Smlu^b}FY~Wg*e+tvA5(3wRT25{i|B4CTNFELHa-+fwmVEa_QP*=xk&@6-x|CusQ@{s~G(Yfa%1J*8G_T%^D6wR='
+    ')?uBa9fLOU{T3#7POsO^Y!=;9ILoztt$U-n?TO$yrt!7O;x84n<`h;<RrV@d+pCHhdnLd{uEGmQfhfZlmuKfkZ;ly#Z7-WF2=@*9'
+    'at6Hec$}$11wQL!(bbX*Jn03ilHo))tK7{APbVkjMbk`@0UG|r#x_GfQxCbZd^zJlG9Tdrov!?Fu2h9VK!j1fBj|6EH7Au?{ac@%'
+    '^5jK2dr?Q5DU*XnlH4S+Oo~nyN&f{u5ib*rO@=L1AajiOF!khdw=7&OcJ=N_SQlE$<i_+YG3ial0=AM_z?-ZJa1u?i`=}k{5**ht'
+    'H_H@fT8@MLOR8`eFmpYD@?*rd;9#my#mL;gTtwnc^@!wl{+MKRQHHBGNUO)cAc>*5ubs39Typ*P7*NqOl<vPg_FWFE0?8?P-+JSA'
+    'lv}7L=cijisjdZnycv85^8)baZVTv#Z*+?d<R>(slA`7!@{>@jL<(;y*q#<kDuH^jE%*8ZO~PiD2ad_}<ht($Y?_%17^0hSk?>8K'
+    'P*S*9II<AsGJv9lyDGbq@2!Q-CBvAD9n_`p*b1`od^jnctlUxZ{o4mzn3+O_*}Y(u1zW1!FI}Vc-Nm8Kx};ZfSL$Apwl%42L@|<z'
+    '+z#YoJiVqw>$cmIBo<krsz~tFR&}pU-V~eH$&)VM&nX4m4Twpc&Thm~($!g>8?OYTnvYIv&_G3|fRrV`;%aWAng}4xtSCsp1<cJA'
+    '&xYVlso4?IYI7-Zpk`tyiWsNB8X7h?V58KXy9P_GA@(_*Ev3*0cs|2$D|v#3*2My4jOE-dC?QrF7gVqXA5EzO);pJT27g2&Q;%e{'
+    '9E#)u)jt(zh#j&%lj}X7T5rO5X4WAi2I16ZBU>DtsT9m!%C%RH1jW74!z3*bpL_`br>R*?vs1-cZscKCXSsxY5kQV-f=HFI7oOdW'
+    'j387cU_ZXzk{yL<sB|TTE>Pc^X&t%Db40K7Vl2)?!12o-F5_T}HW)&-MV|DU+~PKB+Fe|p0<iu?@aF6c@#LSXO08<~Qubaj`ApxY'
+    '-h;iOU~aH!1x(f@L8n@c$#p~U3)MA-TGiD>M=RXymR6&<vfUJQtM#)<X$N*Y$OQ>*5fq6K(}DBrL73w<Le5#LE(-4+3byVve4vTF'
+    'a(qknm@Q+&VN*U?C4jbj7a5zAp}q1=i!~tp`#I;pjH4$RAR1p5r3q5y`WLcEF;~(r1=8GG3m{NH_TUso#brSyN&%M#79CeNS9NyI'
+    'IfC_96q^`JzHL18k^$`l3bJRfYPfPt3-|J#*YD0RE?tU){BUTAqtFQ1DT>m+a6-aKT)IVUYS+pzFr>spA@ovWxr?H3!nop~oR5&q'
+    'O|{<Gm-l)-jfCY`UqWdkmJ2W7rE9nv^vGK2g1)nQBV!vl-uP55beibo-PM<1V<t{`3q654=nhB=I%!oBNMI4?nm*0fRu`*dNQ<~s'
+    'gKt^>OH`;yBHxWPc2#FYrhqgRTT<h)b3vd=u`*UXwDQa~E?~69o-92Ah371}DHby|ZW+e1`?YCVp4dE$`|FT6B}jzBvkkbtfObq>'
+    '(lW6&t#Mw|6cJohj%!>SXbg3yB`?Yr6k(U@a2m!lsV<U6vxGIYu_peTyv^pXbKv7Y5q*=@_3r4TuG$C_ySacU6o4R{0Js)d3Le>L'
+    'g1NQEt$D{$JAo?_alqKioEwP61oRRgwGt@=J)a_57rx2`?$3H@$iNMbQZB!?A2hkBKoFNQ4Yjy-`AQ=mFFXGv(?ZTvku;rEGU;yh'
+    'u4~afnnfP2mx`jPhiZ)*;o>PgK*biN`R!E(;i#y1)HLz$MIs3S=1w2up3=M;ximwo6Szw$a?Yj>XlWWQnG(%7ak{CsU<}-)CbN$#'
+    'N*aF@P(pSBM|Nhur^e>?Nph0TB8!wQDhz^eZ334o5IaS&6a%7(rHlqcSTf(oqlvOYR?36zZIVEv!0M09EhCbR|62vDujhe-gz6sQ'
+    '>sEz|7=QEc(M8QA&_!&xh$LFPk(`I?RWop$bI$#i4YB^pmp$A2kgM45V%;n5K8-0mp?O$+v4V0vXq>I2E5j_x^cWbgk}ff+q*VQV'
+    '%~h;wY*fnYI>{r2U+#J(Q${&+O@WQBBo{d5i|Z6YtL&k`wuD8xB%2(#PZHcClnkxmFwEpOBTm8LnrP;_O$%ZyMt0^*ODaQ~GN?sx'
+    '9|vO*Y2BLy7b&{1V&gP19#hL33iS9>T4M$0ac&LYy&&bs5GWKVzZi84CW05#(r6I_{KaQ{MwK$GPm!c@#)O|MNVbS|ibHnjSeJ0|'
+    'nUuraTtZ*04~qwJM`zA$;O1O=CWs_o7lD-WRfiTFF4{$?7f+cuI13j8^TYcR&@9Fxx0;!nqLRqT`UvZbO~)oEyS~`Hyi9$oz-CtE'
+    'MUX+uvW?`(L8=wqTg}>HY1M%ia}L9(={hb<o`fZM^|w3e=x$v|sjtFLvx<(P`o$<hrJ&&^(lVm01JPrYMZo%Mia%(R6d`@4L23>0'
+    '-NVb2J`|12!<$X`J5dW&g5;&vHa41nO5*wEc;i_ZOwwq4`0F=!=$cr@Wb4bX-)#J_xe?%AiEV9w9)M~?zaT3Mj~yP`0Q{6TWMgCN'
+    'hw;X9ZiQW+TVI|%37>C>Plldv$Tcmrl&_91kAC6t{r1bog6ot1=8WE|FrVOTo^B4vdL7xBkg1#C24IvfB9g|Hry)QR(cvlWTthQ`'
+    '7TA9NrZn^M#>U38e;6ghd_^oAtNQ#I{t3=;MU#x?zkWmCP@B)65vfQ55FJ4JX_=3=_wXx!k5mQvQqr%|{MT>fiV0pRG9_t!1PZXt'
+    '9~uFQ$dKZ;ok8Ruw#)4}!}glu^>luOVBc`mP);hy_<n<tVvkr^=9&j0HXGh`BL>@Uoun$)i4wn*2gQ4Y>q3&$ACxZsFRkDBojfLi'
+    'EL(4OL#nzD^G)9DU%#=N`s+8p{UWrK(Vttt=(hg0^(FY90&ar$8`LAsKAQsIMJJLv&hizVAl&Fi<59Xr$-d?=%P<h<(Rj!!iEYLw'
+    '-0|`xySe(|^K4qYI}UH~T$6ry#Ot58_1n_h^bfrKM5qSj2^~JmaAvRr+xQAkg!cRFI$jhFeG6DSJ#azaDpD0Ijq~$t6yKCuyCrMb'
+    '5GkaJ_hX(cq$h0}n%`&k-Czg3N2kdZk2~X%sg<9$A${ogzy7!X^Vt(TBTqi}_eg%gK#A!H$KZ2LO}&STs(0BlSwFu6V{%NChT%@s'
+    '5dBm;lt@@Py?rDgCKapVH=jjz2(lbR!00v}Q3JZFcUXSv0Uw_~Bdas7teSj@#h~S;VQ|5k@=WE+XN%|V@slH`JdO=bJ$vR@J$tgC'
+    '!AY|is41{u<M62XVbg@|r5}<9-88ea`&q68Kx2N*t0DvW>wo&sycthqMyBT{SOTmO_#JV;g4vRm=CN7BWtqtu9_zE%{}DLs8EM&4'
+    'Jy(*W`0fC)W$1i5xhBBaHf+*W!<uV~nr0RG>-lQ?(R|g~H~(YtRhsbMjjN)qX-K+z&aE-h-Te(;l>1q2ljb-Q4q3-)ORP+qxr(RE'
+    'Pyf4~YJXR1MundFtkY}nPG22=IHrG`nnYPH_!J0N`RhObui9vEbaE0%X26A>{zr4>!dR|w=0$a2a(N@Ye402IOf7T9DX6ULH=hmC'
+    '=l{rdoTk{Z`6s3E(-?_TE9H{B_SI$3eXM*BD{2s?X0@Lmod!pjCr1~2=kd#r=kLxwUKmjC`GqUQyk^K&Vq+)A$$5T$6wqP@uZ~~x'
+    'zu%snzx$`NQ!8b7LBCGKppQbptd*gQ=a*7Q79~c!3wcktG6Wom$dr+_vI4=aJwWY?zo1}H>jc6BVnI#P|6erRBN{UAa*Kw&LY@&M'
+    'zK%U{F>nsB;a^rZ=qCP;B^h+me>dr1+8d{|KV>dtencr1QM~yqbBOab{_zCWJkEb6llNy&iAFG=3)}#v{nvl~uNT4j@zJZ}bDz(Y'
+    'G<?$=zJ6HAw+n&I1&?xfIu^A){z}!|c&aMm;dg4^c5&(J$7<i^QdBv9dS?NBMo6QgZJ+DSGX|PxLPy2X6u@>x&vtS6V5=w*R9s~9'
+    ')oL~zLZ83|j9<n$HIjwv%itK&C*Dqve@+_H#`WPWTx`;!H1N`v`~d4H3l0N67^Kb>c_bdY&BC#UmbGF0$L%zWhAFNi!{|86b8{Na'
+    'H@TOsE!*ClulSAUQonrDX`m4kQGgHOkyh~R(ChnIP_*U@APwPI{v$kE$7!0Rn;Y@`CY;8ja!d^wJI=&8#CFKd{o-^}%$t|t@X!s4'
+    '6}@7w4p|~;kgjACPNFm^pZDUIZD2gsSkC~RfFFbUufGrvI0`P_LoIW4xPLtRcz$|xVhC^2ettJ0I;Vd-y4F-q`rY&k6Sg}P9t7BD'
+    '=5smqI4nswa~S8;)e$&aAQ#iIm7*%-fBG-3IbUuO^X2{=Zd|oRxd`95&LHIjvZz~0RdAmTp10bxSgjtNqvz)8sG&g~<F4c)y-+gU'
+    'oYOvzuMp^~X+BJOpW+!=Yv~Z&(s;~bBZqK_1pQzodvP<g`)pAW(!bt?t6HH88pAMTMFFblyOWcT7nkQpm&dPyi_4F%enx$eH|NL4'
+    'q)a+b@&_6^{h@SNM{?<M8d>oo^(_rV9HkjvkQDLc%Ue=?k3XCo0sHXpm^=8ArJm&V+lsC&UvI~_gy&(J*P3mO;HP(&G>%I$RE{q$'
+    'emXn1L!5M;KO!hihoJ+8|Mv_`I}}r0WRwKYJi+Q68(CSVQNDV>&ZhhP$W)J$)YHMr3E9##x|oL4r<7o}Um{+kmRfPug35~|T`7Gl'
+    'gC9IU{=As#bwKJ1<D)w;=T^t=)t4`Z-=X1it$1hng1s}fO&hkvH&9b%_~y2%MUwkL7WRk~xuf$y^EbtP^)(}Q${`oy?b3LKkeva)'
+    'Cw;UCyg2vXo6){Tz*R%?el1Jj9u=uZVsIOEE4PuPyp6y<j#>7&QLDtaXSV)Cad^f~rl_R?KG$lS84XbVh94zE{=fZh;KX15`G29|'
+    '6>Z(?HDom^1U4w$MkPO6&(LygGc{IZjMPk&M;?|m4oAlR_DkzGN4wzb(m?JFDF;cX_b>5c(=^nulH64ZtboQpnrX!6YE#>RV#sZ6'
+    'HQHN_8X-nzefVgj(2+Mh3wEobEjW;Y$7l;M@9T60^Zho|wOWtRHS+XQt0nyL?4%hKL{YC1u(K*+hg6+bfS*Hw993Obp>p>%t^<LF'
+    '6t05@)B+xfrw`Z)TI{UnOc({Wajhs{6{s>{G|2TSzE)h{(2hW>Pjk*lftcpZWvMr%^@dm{F~uqB_KIHL7Dh|IzI=Oheu*PW`$Fdx'
+    'Ndp%oY>$2S$=bt@_U6fLVbWmzxK{PY4~`JL7l~rT-@gGgiX%1G`JIkzb%hO6|C{upMJ7Bmd}y(%qSqxRM|7cr&*|~e`SHai{hP$_'
+    'i!)b}y;cCBTLl@!XXJwD5?qK%vyM!OA0ZjN8QVw*6nd{-iOtKQ1}RH*Te+A?+?cAKY^y0{<jXkJD3St2FKBwCKe_VmgQ?OXEEG@|'
+    'GovHxhr(4PQeEBetYMMP9;T{55dEI{_;o;vsq}a%5OY7ib2TJ~7J-2<qqkKbgk-pYfhrHkNSf!Sn8Z`J9>p*eD36wJ`HJy>rBEwG'
+    '!T-lXtsJI%NSv(~SA`R)Dze<)>cy6Mf*nOFxn$?xU0i%T4o?5?|HBbsb&{-BY<V4v?do#_-yKu+ajCic{341RBz3`k3by5EmDRMR'
+    'r4p$zVHTl-5B5b^-3%Dt3jqRVj{w5u(FLh{`0MD^KaxSXR{VKuu!#8v!>^TuE*Qj!@j-Gsbrb*j0v4OEU{9`Vu5z-Rbx~d(A?yB$'
+    'yRQ$3Kf4&qf$>$U;Y#K&H4N?skqV!uK=X?r$a&=5Fqv_x7vBTQ7u(_zLhlOO@iJ2m_K5N1d}sGPl;s+EdaVRc-x1oCN(KHUiAHQo'
+    'lA;C3*(<QwWR0fGzPy`OjoHB*%%k6mom8Zm`@#{!efjaji?gHiSI&spL(0|zlYvdU1X$mW7ey(plSM-rfXHWJmUH5eq~>y&{rSj@'
+    '_iPc_D|_)$?T{<S&J}$p?=CM-P&bum@WL54Us=rpS=WtWb&44@<9-{3d80`FH5Kmo&oojv<kG!U%?w=q3U*|^dG{bO+3=^M;t^?I'
+    'Xz<mU$Ng~5f?)nuNN1gz=4NlvSY4aef^Chb?!T-Nk!!`H2?rFy@%IVFuMvtW5bFYz_X$PM5wADJmVEJWGdsR`tcp6d&DF9sp7~@U'
+    'K9IxU7rg@3ARE!#Z;jyl>dmm;6NR_h>!ij{@Be-n)cfjnK<mBrUNZ=dmK^qeH{!B4jXuh0Z|>nOdF(m1*btkyfpm?mAy|t;vxvWV'
+    'UF*W|lUUyG<(=U8Ka!OC#06=+h5V)1u-_gT0x;P*hYlXLIQLa2Cvob9gz;N<u?^fysIH^2SOlx&KntLD>x*+Ni?hWiC2nj^8jCH?'
+    'T$nFsoE^O>(`;{T)j1!kPD@?0`-6gH#sAO2i;xQuxtCY)fiDmVvN;7L0g4;G=dIha8r%n)#8HIQa;ef_uaC%Jpb9cPTHNn;H8Z$M'
+    'W0`?`etu`R2jCd}?wLYFtRGwgE6#<;g(ks6=jU|~9(0G*1}?P6hepq`5yM|Re+gL2(iBH93G#VDO5MNr2U7OYnkyH5;pusyPw?SB'
+    'zv%~cgc>!~vvltDkud}G&>eDSnIehB|I+^Lk>0X<4_1xig;$VHfSxQUn|I(l+%tCXacAuBdAi(@8C$7(Qs9wLfYHW<RLOqe@EqIA'
+    'XaW}ani`>rQIS))$)Z3Tk}JbiO_0y-l=QUq&)1wVcNPxD?Xf3JEcx@}_lR7c-*dDoeKJDKB8dO5;IIGfztjK!H^T?l9xC>nX=rtw'
+    'ujw`W3QS&wIjFUsqsy}M@d1a-g<Cq>H}~q!QQ0hi{0X|}gw&WV(PEvcj^Fg;+{Fj2&ge_AsQ-dess7BEL6y(VdYN?jx5}cQGzV7;'
+    'rB01vn5jpTz9}jMX`m!qcUns0|Ei;McB+=G7`E?^-@kbDiLsjrdr$+`jL&)Cu$0$3nisbAkH^O!OcBV3&@JaBSj!qq^Mf(){_{h|'
+    '-KA?()t#YxwD`xJA&XzXxq>=xRC(Mo%2#SJfR0rAE7ZamvxSI=C7J0)iG4^p{5E)DVE`uV&jq2vTXkg4rI7o@AK!3-Q}$E}bn6(3'
+    'k|q9?JxxdQpf1NG$_{@i`4(fYq=q*(`#)%VWl!Sg!*-|tL;U?t$NzqE*lzcK*o?pLw#}>Gw|BR`Yj<1zgL%9->~&h(lahy02i4@O'
+    '^hRJzm|Xx&*ZaHAUxHr09sJ?$^LDrQCAjPE^tUHZb`F~DF@5^H-QJ~tQOjR`{f5-3DZpg&1l}~h1^61!zB}HVFZL?|Y0?kfU%z?s'
+    'e8V3NuZTZ_?e?DZ@k6)sC3uN1+I{(EyZ@zuQS6&1+Vm`c(`lP;T6_G`5ABYAvnMYVU-aAZj@!>a74x|RL4A4Dj5?2<QP+$`2e;QU'
+    'W9i7?_IhUg{jQ9z_(E5qyJNoT=`wVSN$WRmN8Xgo=`j1Yo#1+cd__MtyPdC?tfN@*JqlL98M>-Ex5ZC=a}|7^P3Mel%Jap+lP9;g'
+    'x6RvbGfA(WbXu*}6LEQ(?shvZgdX{RT>9AG!ABs1UnHODbBnB5dL-cQpFiX4i|>6k#anyMnhdVKU`Efbf=8@{N9)g@>Af;TwAtn6'
+    'hj_iS*F#VEtG&;SKlosKXOAB&=w-JP(9dso`mOi$M$qm5vES_%+c64Jt}zYKOfP7+`0XcG&!6Ffwnb+8>f640JAE_#4lhi~BWPDC'
+    '9*aSe5Zn5Nn=A%J6h@4p|A%gWFX-*Hf}M5?pC3gy{qp)@z_i(gxOm9kh-X|odq%@?$d7cndpYZFm8Ev~e%K_|*>3F@yt7NpbEmtr'
+    '^>lUEZSl`LyY|=J_SSd3erwBbC`}JH+l_X!*XV5h5`WkI&HtG%;wspyO9RAU&A#06VFV4_r7n#X>sZj`U9(LikH710ecx;!G&|!j'
+    '<-@p`#D|-9PWxNiot=N92eESgp5GZBf`!`>((@0_u01%rZF6w;@25WZP}fo5!yWYYybe4bTGPoIiRc~JZcsk$)OFC^`(wYo^S<5f'
+    '2GsrAoz~9RblmAF8_S9AGgSM62FUknY~B%Bd<oD8HM~{jTs70)@79oFWytN_y>P!9(EnQc-}c^4*zcKd+Chut>rO3?!S-G~Fh57='
+    'xa@hCJur48`<-CFeM0>N?e>1qX?Fr*Pu(_sY;|k4ym+zS>e8z3p7i&KoprjwPLJN(-K}F(S7m1PtyBL;6<i6zx$!&2bt58Yc~pr%'
+    '?bT_1pAS3z9<;k&_q$HF1*X*LcSPO$Zny6ocy8O_G9LS{vKjui(*+ahZhhbXV&p&@`(8&m7z5PGU8pLg7E(J~>of{yhxS@7XZknI'
+    'c-9_;juGOm-ec6<>REiS<@QehD_d^&xn*C-b9*A>d#ysq@0iW)cJCJ}&331BFlf7pRkZ%lCK=z`ZPTHkfA94E(C_clXDs#}e*azC'
+    'a@`De_DhSyGiX^g#bY77agXR|=Yfv8rla<*U8<elLrcZOx1x%VAIU0jt68a%PDJU#Uk~lUUWH_O=u6w#ZyA!=d!U`&D(UT6`snm_'
+    'O*{Pu+UfVp%o6;y(>vK|6Fuxd&REzlz5?1}7%rH#EaAcM8sBM=u;}cc>~#9n_|D(lxI2^HUP;&VqJ;4<F>VDDM^r}q>o@rCxzv6P'
+    'gKlSg5r2-R!A}hM&I0791)DG4f7p)a+wWeUZQ<(c(KH@#c4t#wSIt&5SE+3$U)=_W!G!+bRl^<wO0Nb)QJ-)8xTyi`Ef>>hbFe}<'
+    '1D;}fP#<niQHyi2x$*7BmW>F`uN#A_275)2-9FDbv50yoVTgE6zI0j@(rL2YZt(xy0pXd?#WS~M1$*?lF<Kpx8QO358!P^o{{Zjk'
+    ';o!>u_90hI;j%daYFZF3@w{1m0;uZ4&CSv0A39s#x0-wXA2vs;AKLi4PrCE>ohR+qZtz2}X}{j<Z`;T9kzOZw7PPC4$DAKBKG0bJ'
+    '8(a5GILJ0PKmV}W+9vt^jEn>x@cy&U&pQ1Bc~$nse><8!WCb~Wj6Q!)gC4EEAFZCX>ExgXn#MLyfalDAJ#V*L2ltP5^YeB`-&$?&'
+    ';*V$dk1~sDhLm;=ogvkBwA*@?cAk+PdEbC|5jy;2XZN0AXq!xno83ldZ;O{;@7bzY<VpuZ@XhEmuCUnL{GK2C<=|ku{ad3$d#~qW'
+    '6b}yNyf$$az~;uYcX9mo?K}GCyLTInUaN82n0()9v>V+{qt)nrfBXG}{>}e2XAs$~ht$vyd}=qP=PmuTxq16Tx4re`NtdXu_x;4z'
+    'mHe*XzJ0qv4U@6C^@IP*3;GX6wSnPq?>r!c)wuhuMyIp&1OHhtJ}$os^)6XT8N!*VtCU4r_0NMp@Ds$V<liWUte^y`b+(BjS)7h+'
+    '7mprx>OU16PG8`<RvBOkqv*5CK4>@B0VCYS@w=DSw!BtKaENs<2p9gK&6K-bi-0g5U~Xfh>hO~GesN(AD8J8`4qIC>4eq{Zumyhc'
+    'L!Hv-mks`$ZT!~2OU<h&-;}R5%pxlvcV1yq_FvJ5>`TCVdT%UN-t+v0c{oh-!{R4gfVYLU<-fR`Jf_2S!Kx^g{(aDtdO!;8L;tbZ'
+    '6Mxl-jt@VOG68}v`lSza%!xL$%_^qlbv%uZ`A2Ddyn#wRnHEAsqT4N(TE3%JzBv6fXV;@RMWhV4MN^Z_h(!)-eBzs;ZP7EQYm?|-'
+    'P88PC3rG_-(pd_yT|o>ufG1h)8hDcvRWSjT>Ynu6fH>Cb30~N0@=QM=_j6N6_`}Apzs@%r(R`QyOn11!l^HC^Cz>q)%0AqDdwhQU'
+    'WW#*UHlFZko@|)n0UKLQR6v!s*R&=V)X@kVd}0ik?3ayqr$25qHeS4;e_WiszNCL0y?l9mdPxLZQq{acnLjMdY~${3;|K2Hhm9{^'
+    'Hl!QvoL9jeuCo@Vp>@k3@0Rhpej9$|3Z(zN8T-0sYg9LV#dsbra2YC+Qnh5Z)~w{KkIZeWa*Hu>`X%Yc)0K0h-(oqKYLY{y%G1?!'
+    'wU}gDU0DC)6&dzI8STBG*MHgW2c3Pg0t0;93)(v`d;38b>U%(c@H6*^Q)r&+!b6@ZO3l6Obhzmby6o))Y}Y^3Qm5+2*=RWPbBo4$'
+    '^Xt-VdPmeH{f~WEm|w4Z)FGo-y<7o5<IYdUP&VOu#`0?KsNv<>fwH@0$69YU=-=$jw!7Qi$<E{ES(;f<YP95c?pjN*YrPwt-@Qo>'
+    'wA}9A<J_=Qubqvv8nn)PH=TVfM`!=0-I?udw>$WEkN@cG-_yz3!QW$)nuS!U3?uJw{1t91-!rw-3*b^H`K8#)VBJ#uNgNT~s(<QE'
+    '&ZcToU(}3s8IV(K#pgZv_I^h0H$eZe4Tz3fvXBku(zi)=f8wh1_b?7zEO*6uI#Qrs%G!ofQV&`lD+hp<)8C2_;R38$i-RHOCU4tT'
+    'XJZ(Mo5sckNg&LMD)yB#zPWLNyU{o$ZV-h);ALD1`lrZTXF86#uv^GA-FS#RmUFK!=mte`D=Ac4x_i2GzkBIW^0nO=50~@eW4=Q`'
+    'OPw=jEY2(toNr<PUVOxt4Y+HAiKI^H6XS+fye80Oa_=@${JgdK;(~R#wkqFUp?PtK#m;&PyiiN8)e~LBqqR+ErhjAcrwzBM-%|*x'
+    'S_f)vlW9W4nt2V*6V|u<w}=BcrI-|*w5G6<*VzL_mYz6Ome#%ZsESKZ{E|yvTTTHbE!|_FMYPXjVSI`w>Tzlxa$#SeeLOYkCH_Jf'
+    'jFys3fzr}KTA(3;KY63DK%ys%MRHG+rO*OLB!z^$QafN|TlaG^+0JJEIrph^yzy;t$J_LUTKPx^bvwk}Ne99A^!Zhsg-9qpxQ|tS'
+    '8+=IP8z^0T0X!~WkH@$iCD8kVmvZ$fA68p=Uvw>mf=O8iYmbb|rTmL4d5Hz?DDsC!oo9Zl2?>sY*W_<DttMG@i*N(Qi^iDL7lmTk'
+    ';BXs<EvQd$^&#l1`a3k&YA-UqPng%IArVr32t%6P0Wg(l{ZklATkMuB+^+H58e|J<`Dy_c&^$`7_-^SB_>{U8*$zK_B98LulQDdo'
+    '#0*KRmd7_Ywvo-ZSmqlIQ<jj;vIcHZINU&)1ybbm6<?`tZpo1n`ANFkSlcM?$3{ah={kfzqj?>z$e7fYC7~gln%jq>EWQ$q;s}=o'
+    '8>3)-54;WAV#zl6e8VhW_q6Wzqo2nXKKfzg#n(SePi2RTChrkmq4^iijKjO@gBzamb>oK3UeL49FrIBXbZE#~e(-3!QT7inR`OIq'
+    'p`b<i&JyKTlW!;8WLx>hC=+lSeKBV&TTb&s>+a&$g;pB;w;VZ4#4HSH1^MQmGGe5o<!q5{N)yBsvSmus&xUb)_&Ovbyb*J0;KPoP'
+    'HjUuZCkT~KpU7hW^a(`%>67u>3d#RE|EBScwUwV(HOUHrZw|gWz?D&V+q4(g2X}X50e|`O6kETDQu_Sj4S$51PM=^D^Jh_}=^L?+'
+    '`8#mVgKv9#{heM!AED`rM|67@f8K=i2C;yfFx}+Nw#c;kuE7ytacykT8h(E_NIs)@3bDh3L4qqlsol?Cz>e?ebSBg3_8^*&<Vn(l'
+    'Y(^uWd_li=Gg{qve$aY~i!85Lw?2@rcqUs<c_ar#?@z}l0mfPDtAis1)f;c4=}m+LltxB_+9s9|kDqSeMgvlFw)t`C5o5!}zu`2-'
+    't-oJF2^by3^9j9@Kjo5EqiC4OX*__H@FhIp%SyKOVuw3T2R`U7J_lK%-n~t;vRhB}_w8gnCS~QIxA^=eo?X#AKa0+B&~CN9dpe3U'
+    '+S}CuS7-UsL@C0%1xlZy-*7+;FZ1ZB4YMEcUm%8`H@DmU)^}U(dfnn4_ooZF{*l^We17^DIimDI8kb4j6%F#-nneL|cYwVeG@&~a'
+    'F7w2;-3t26o$t(hd9t_@+vK3ly_#7e%k?R(^3{Bs&)or*CQ6^;_KtXr3ahL_9dKzTqKo`Cisnx(*&vVdpj}#DEb7+Nt8j79!J0OU'
+    '!sK@@MZAf~%8J9r#w9LSB8ht&oF^oKHyT0~{Oqj^dXP*<@&&5?9CZ3L1!gtrHb#aCZ#P@Lel&Y<W*Aqy<ByBe9q!DV$Yy%VUMBy|'
+    '3f(i2yHu|SL07s<vwtcZ#eeFmrKDjkvjZXxcShY}M6_9`;CT0#nRIrj;i8##*L>84+iA5*%?9C}#!(NNJAF$pw4y=lDbpt}X+(4f'
+    'YOB0`FoCVqD1ZHnd*#G$wu|-yw1OoxU1-+foim+Qb)TE<UD{=40L2;MyFP}*D!lCg+uFKkPDpaNo5e`nm&Njq29p8)v2EBpYP&9H'
+    '^X#BKPJ?!{)gPzp_GS0GVr6-0gB^$FOv$yo%G~y7Zl(EG&Vf5c!^_sKhdb3^(stIC%!S!vv$wbS+~_xVZ*Cj=L_0puHYZfhWA(i4'
+    ';=C~nHN1t+pf}z*E~uP7EjZTBzQeFUyg|zw;-ZPdi7pB3fdsrhcKc3)JuGi^*S|E2DvSO>vZtnI=VV+U>Vqzt#S6@H4_va5k`=bq'
+    'c+SJ)#_wmF=(@}Er%sfE@6(AW1OiPq;2Gb?Yea~YPI-w5_+ynbdq*lg&GJC1)8Y2S&33cX-}0YD6+Z6_?l_#uRFb^ApXEH_(3?4%'
+    'XB<gkOH1BW53|#6yN)+>?&A&4_V(#C{(~SmsLM*v!Qig$lxYL05Mrk^WYS^ptoVIu)g`Mekmb*5C)Le`?zdHv551l50{kCm1mubx'
+    '9K)cU#G?_*VAA3y;fTJ$NSJJh&D^UF?v%8_(&z)IKaT37C$6^#noS0OBI61L_YU}OULxYp+XLKzw~hO#4`!rN$BXHz(r8gJvqo>y'
+    '-S2dGGf4x6%JB3d39v)EyiN;sm8+oLFZKu(0`GK<K?3z^%VSg<+l2^CkG<T_0UnyzzG43kzc=I8G&W0O;H0$S`+Jz8SLpMOPXP0`'
+    'g0oo;+;=!|3l~@>L9btFBbapV*2{t#9$%I$P<a|Xk}F`)TQ$<7UzHy1t{GTcMT0-4#a&4fJiV7gIGfK^%I+Q^+S6zeh52T;K{8&H'
+    '*!EtjndhOaG<5cM>-e=CX|q>YjG(huR=ioh*o*xRWDH7z4(&N-Rtya}M3%(`%}&-(!sP|Q7o{Pq2&lJHSn|6K98|S4Zij_K!~16N'
+    'puX0QX4OV&`Rh8;m)9oUhbWQ<(Jd=YN}v@|t076ENTZwV^67G!yo_Su&bL=lPIhWY(jK-}fWdt!t)C;7a2n0eTnY5<(ME?MwH?R-'
+    'qR-9!?;33DIsI>UzYF#{kE6mG^{B#DyrEXNRnEWz<k2apLz*edpgwB5mD{upx9M0dmVNUFaZV#1It*~H)vD}Tr&B`>U56TauBIwA'
+    'TEn~hWrglbNmDARJr0YKg7gndD6`SM4pV5q^EaFGWiF?s{-yffqc)+_sl2^tlv*pPm7U5a^y}1kuZ{5T9;bkNRNc}lR$%Ulz})E;'
+    'w)lNwzOF4Zf?^8mSeEw|&)st*J$(%Od-{-h*e)bFW(9uLuU`af`~6;V-h()YnYh=f7w5aeJnbpltDdsfo@GU~V_e*?@b5a7qs+F_'
+    '3}pIaq&)FQ8tP_?rF_uEs_`jc>(tQ8Zch}fnk7Z6rdrZ-qnJIS-(6^o)TdaXoyQTP9Z*LIxVvW;!o1gUj5IBEv|hkIbe4D5%=cl9'
+    'P~>lKjr^_p>k0<T0GxFlKR_2d6++wVuO&3uIh19%dxXxWyfllZ;{z^6?%I%@);hxA;#l`<IrsQ?>Q4PV{VX2b6;}>A`&?CCdUoA}'
+    ')b8o^K}Pr$jz6yuQ;oN#Q}3;Lw4@Y2Q?Rq%rQ?ktSloGrKKs?{-7Efkj}T8LIPW;|cUz7@*6!a-0?(1(YnA+4vT~-OTDe+Bb#-o3'
+    'r<va`A9h;x&UmkRPix+-YR%50VcD}L0`p;ySm|i`UbV7c0h{>i{6Ea1Q5<f%As?8>TX!Xwv>A~bi(&8aJ^o?k@~+13Ia*AVU~df@'
+    'xx?GM`|CUDfTq9HO=P#{&V%DdPH3nuFvL{n7`APuOZVLI*%3DAA0vOM%Ml0HrNpY{?%H!$1c@q9k^7gsFn^eF$;$Wrx7Yf=+a1zt'
+    'AnmvA-Kbux&PVA|UBAw$D6WUKBfrnJ&~|z(yMK0SIkc<rT0i!Bozxk8ueXj2A6)Zpf4#6M=}7gBu_<E?OuO}f{!!6V)N;CyRLkb='
+    'mm1^5JLG(^`va${j!O6xdA`zl9>(+gyrS&)WL3b(%9h8g_G+x=7IcCyCGde_1?!*(w+Mt6*n?pjg|h;CFqkg0i3>i+!mFqbda$$8'
+    '-|vkdf*zo=t)RXCuYo<_nfMM7?*88@_y8+gfgW`K1)vAL`=JM{jogDb@Gehu2i9-9vX!)|?|f%+@v2;{c=xa6QQv>8E?wtla4%@Q'
+    '`+eTA@;H4h)fj4}>EHT_s)UNg7vtRm`8BSvu5pF!ud&o=393QyvPY~mfFQoBo+#%WmB1M)ScJ9hl~htW1CDJXI;Fo0RS3kI1!hsd'
+    'Q}oI9z+R1tQEuJ0VcL%(pVn7l59<0f_=)N-B?v{8rIi^E*G9*-$uIV!VJo{X8L|HKcx=PoICYi5ey>$=R@Bn6-y!1_t;(_s?Qr)y'
+    'hC-B2`NPM|5$W}mP;||CVRv6`XZK6If$6l=s;4&<5zESE`RnjEyWe1yH2O^(Ypmi{)w8zNBgeeCE3P9^s4F}4{1KkF8V`$+34QT8'
+    ')?EeSsmHytr<$$%R^_PHa94*L3HqX<2*?p}?LpuE>-zRzz3;YklgI<I%VXZ=p`EYkhwmJ@s|5UNMPtigL+;zE{rU)t2Ymp4F4&hA'
+    '1={Y8qO0=h)w@jYst|?>8lk)$tWw&bq8yY*@C)s64HAL>2HhF1^p(hj+OGIOSJf&Ra=*~ZnS9sjpLUn9iS3<7U>G>=Rl08F&bO$('
+    'Mh{}ksbA|Tt8`QG89j<U)(zPA>vZdpSfx8$zCH^7_W*5FhC$Nbi=-hsAN2MdoTiXmZHJE#U5@bVvM0rf+!s_Nk^0KeG+MvrRMow}'
+    'w{UF_C-Jnf|Cxkabx%)2`>;3Lx`&@v<GO|Zw#L`F4z*Kl{`bR7*gwAp1YC;s?^?HZ$BF8fhf;~`R~c<d2)faWPQR|r!Ch^*&I$JW'
+    'm(r};avx1v*j&4i3frCUg1!EIVPN8gkKiBumS=bHfP(vW|7(=1U3d4jZQXp`+W;=8C$wFi;34FxquDU{tyO8-g~|8!TMvlM8X(7B'
+    'xyc6u{*K?_p0G$sU4Uv;hfucmH~cpa1H9jW?1`G!uV`8iZ+@rsfbhUbz6ulI>6-lZqETw?f!IY!fZ(0ykBGq66|=9w#96aM7HzNp'
+    'wHA)sz7w{Pc*R4er60iUdECQm_yO=h?QyJA0Ux(c#!@k7Qr+aFS2lJK{Rf!u2@H-0&*-j)2iWhIf!{v+^TzP7IZ}D?v8HWj-^BX&'
+    'yjZ_@UiMl(6OR^;X_v7VHmcuxWK_Qt!Qb_~YA6m}9ttjtkiC&uZUE3zX&de_U(rOF<93DPKFn~-q58_;zCK95@5Ja!o2dc%O7Q(5'
+    ';mGW-+p8fDHzxmkMAv-_>vys6wg_4QEpXpoU}x#fy%El+cI*9R-s-tnJXYPRCy8W!O)S0dkXff7`iFJw8jt5X2b(j3+7*AC<7F+&'
+    'ETZ!DT|PoWe0>;R!nkXr?ydSQt3`5@WA5fKB9{9Y&F8+b`a>$~?+LU&<XP!gQ_#vNnVL}A{+@)=Jpbgq;q?1li>wwiXr<rx^}%Z7'
+    'w_mHN*F+b~BF5(L+#_CChpr9Ccl`NEV8xHgmm()#2(ZRGZfyRCT-&W`IKfvrOO_Sv;X1JI<F;yz4@sR|EzdCSwJMH7*8_CVWB%^%'
+    'J-Fw){+`3_<`Sv5z{VR>ioccp7>`&1YeY95Fxksd|AI&FL$_#^-4d<e>GP;s{&hCLcNU;!RLoRgANAZ;d*7|I^R&Ia8Y^=RFLFaV'
+    'y|Ov6Zht(r->L>B60v9cL3Bf}<-f^VVf|~}y$X(@PWw_GvtOt3Lu%V|y#|EPsd7$x%p5{$J$$kR^HVrf5&Nx0FI3Gop90nx<7%<p'
+    'v$qGbFJ&l$t?^U`W`Hv2fEoDN0?a^zi>5A^VHRhlItt)z2j7lc<KB4ZAut2p{?`IC@JxI#1BUu<2Fy^lhxt;EGMJ(NFI7jOsFYB}'
+    'HOQm})6n5Y4`Li}W1(EF_!uj%!<vPM952D;ZYGYw+x8Sn(N@tRTQ-(q!VvDZ{%%fZyPz47#`Wqc7-#FLH^MbUCxg4CQE)AU#{$L6'
+    'p4N4FeicK6)x;W`qC)#-)vn^H?}lXBdn6{IyDOw1%P+va`-5hjW9s(De87fN+iW@YYOLB)H#PoKz6r-ZRmC~fZ!Nnl+*zoeXQ`c?'
+    '5Kc-#Ddy%T5mx6_PRuF8&DeYE_w2(J8l_*?MKG8<*CrdvhOXUzT2IwI?oA@vTf1qF&mAqIe9v8xh~M%cP4Y;dB-25d-u<31+}EI<'
+    'x{_$pDZ4)_TeCi_g5eGm>JzoFNH<+WaOH{@{hhC=cwrQqUj5Ov$W(#bi<xD56@}fhaQQ)Q3cY(wR`i;q?^*SxufGr4VyD@H!*dOY'
+    'YNw|5g^dSwBo|-G->{U4MlOi1*Y^>g^(ibBQjoSnxy`hOXA}Sm>*`rs<bqiuXIR@NYrI8!E{q;8blSDa&XuF9n#?_AB8n}O-tVbV'
+    '(eCTix%9;SC##m7)zz9ndr3No^BQ!+y?_j7_9)d5PPeb{Z`54V;<;fSkivrhH(aLIaF-_7WqfA2B#<+%G6o_<Nwa*L^)!gueiiso'
+    'tuR!ALXcWYTuPTcB||Vt=d|cmJ*==Y>k!HN>&o)1A=!Cy`}eK9(A)Vv_=x_x5SNbe`6#||PU()g9rQ;{eP>2nWU>2e@-UOCWo|_u'
+    'k4>@b|Be*9cCR?_=*xH5%eko(+VMlA#Y%;DH3-tbEh9`8tQsEuQmpw`K}S4IeXEdMrC8~H%j*JB-ZeUlb;;O#BCiZY>vvXnaOvB{'
+    'h?MF%G`w;T-iVE^wN9s6U-ZFg=CS1!I{US-i*COZVyvyY&?(^&C6}%k!@Y2#IuhOKSF0;HM^vKKCH-&RF|7~Q8f-FJ{n`|LfpG=>'
+    '*4KsO*Hx|SSD=ONu&S0u)pxLNQ`>u`wrZGz_j_1li`BsxRM1rYar;hA=HsHJUL?8N^7DE_s~QULR7$K>8~fYS<@Z>F>_da>t*L*r'
+    'SJfc*{qs>Xu&?FX0*v>H|M;yw-T~q#&3D*zV6p1P6n9#7U+em*B!qocc8H+2y8G4q_fEMx#L6Eg2DbA3!(Th<zcKaQNZ`HdruxfL'
+    'yS)#mx?9iiy6s&XP=5^a7zrgoXYan2gGU~|qQI5WneJ)x>k`|`Wq8U!B<_aY2<+gxPX=^rtk8D96xOusF()qjurcOp9$LNPQE~U8'
+    'k7``I#>jU9+p6@{1+t%(!rtY;_9M7x4HI1(*KP@{@2g|m_a23+^Ktj#*mgNZ{PC8o8}fck9yw=EZ{4{*<~43*2KIZrwa!u8(fGFG'
+    'yeb@4z3&|N4yTQ~u9vlW&j54*{N}2G4~5`sM2B%U)Q7$ID(g^*1em!N&TCZGf9l4lzCQTrgB1GT)j7CrzFNs?+o<>){Q>}<@3y4o'
+    'r^#&{1L&0!)cW_ha`!6f1GT%}FS#k*v~S6=_wfT|A7OP)kIb=Gz+_<_SE;O!|KekDl7(8XRb596VqZQO5AOS>;XToK*SK>{wpQQQ'
+    'dcQJ*e64QVZ>^K_4~?=`YL^WhiIwuLdAJd6vHIrVn{WT&$udiy4C48dXnqqcR{12EcYmGBg|%nnF&0s;tk_0KHTd(A8pv0{a1sr#'
+    'vu5xyi?ZMYzvo|hJO6dgSKF8lGjlCQG?L3N_@0{L;&i=2F>7$;e#9QP7iluUy*JT#91p|cs`2aml%|9`KJ(~GB99GR0CX8m@p<+H'
+    'f6Q_XS|n-SG*kI?uJ`Uv!fZl=EI#M6>92FXAP0ZS-3F<-rT6XS`xCi?LZ889RG6dwj*A9uQ)y)X#8zRF`quy3+0{0;Z6o2of{v#{'
+    '(&5pRV!3yksyWR?Z8MWLH@4?KoTO?fiMH9uvPw#hQpf+j`|N@cNP@OgkK>SdSpbX0zLC<iC&K9#AZ)sRMAM`Q?UIVXC~j0j6O?U+'
+    '=a=vP^L`YT7qj8}%hCC-!^_b{$cUPu`uW2zquJ=~yUP#f?}qO~Ln5re0_r;;t6;G64<9bofT!-y1g~QTXg*Sf_o*L5@~~&J9$s9G'
+    'E@!_Ee;Hi>)X9b(4AlYphpr7|9$hye@S0E|6_BY=RY0rg)&g#M6r>P_s8Mh476MUm*pw1E1W+Qg8L)n4Gar7c4F*{3Hfc`lG7V^~'
+    '`!wIq05_DUR~6t!?mz@0{t9SXcL|1UD!`~+zDS*w+0t3OO|ISL00}}(T&uY0I12SMGe->oY=M^L8iOH@9OZPV7aw)Sfr~eEC`lk#'
+    'fzhm)nW3U9Kw@Wk1rjycZgWhYaXzHhvF<3@Y=Evy*Hu_nDqyf)FTt*Z-(DSX^{^8q6&_PCNC6>)o?g&GH@jtd66hF~O@4Wf%Xkaj'
+    '<CzV1j9KK1#*jcfK@%C2S`;adCeJ5Wz~Ru!U42BLL+idgi~~uzvcr`*jq!I{UA>nry*6s4h*pW9M~#TJV*6>W7pTENF_x+4B3%mT'
+    'tAP!ct+xa{Z#vF?B<-zT_=q@r>BH076N2yTh>8jeEI=YQYcnV`AFAF)L^d!*z$4W96W2itFf!^Qz`$sPyyTXT`oo3`1tL~4R2{W5'
+    '@JJf2h7=yDsIt>Q*~<6}(U9(;VtiQ(UfCecGG?s$hWKFV?Z;5*WijEPG8W*Pq!<HsG*gq+YG%}wjSLUN(VV`m9)v8~MOndy#urd-'
+    'f!CAb;`1#IxF3W{3}&r+tiG4Fa6(9n7uy*;MZg4i{u$5WIIef3g-eGWxea?31zCMv7WkCYs<`z5nzoAdW#Fw~a2U(FG(*k?(N&r*'
+    'eIe~`z~A{+@2nRq{i4;~C$?Cug$n?P`E?*YufZ>ijMs$O6O3kAF}6TYrrg;<SpdUBoPC0L*)w5CrX3)o5MYRI=rD0el5R%YhAU7+'
+    'deJTpo*%?myn*s#v$1@9u&u@i5h&!&QxqX{4^CSE?Tr8Bu_&(6+j+|9l=tLEvx}1Kmf4;67{T$(bq><EIPu)bx@oD!=@_DUST7G+'
+    'wo`)%*7nddD1(QJC#Av-p!j!sTYzj80!k|e#~!(8^YrOVvFE*86VYUo`Z=B5G|3k?eqJu!kB;92X1SprEr^hW+4!Bn%{U01;4`Wp'
+    'R3~Pp$&eap^q}0FD>t>qhhbuF{%AzQBOHb*Pk65~AlNqRzK&lE=uBZ<x)sgK!XuvQtMb;kFAi6Nts}ZuRLfDrE2*tb`iwjMsWmJe'
+    'VI#)UAaE1G!>Vk(OPjS7^2RbWXGp#tV0Lj3aZ&Kq$qD{aWSQ{o@5y~4GTA5ZER>10&dWNQwzN&?=ZpWQ|J#?7U^0p5_YFqTWS(E{'
+    '9JsWDas?a2U#uy>;&D8+OWtsabBmY?JCnT5*4=4mEWfC)2I8umFu`a=QCYU}L9dk`+^=S=rA&fCF%<A0p5jEip6<7f{54Rl?fNQR'
+    'xr{#|)7r>X^isp$Dk=~3J0AYy|Fh|<$>foKX}5^(lZN@<65D&F0>V5>xwonB^3`Ng98V^`5DiiL?kUoCZ^@=s2m~)<6+-YDtMKwX'
+    '@yg0rL`YXan%39;frWw+-J*#>1covqEvmH+LsUOwHn|&sm`N4;UUYKu(2lqLsBQZTSBl(2eWl5#icshkwVD=cFNP%+(?a*-{@E1t'
+    'rRz8j<FF(DrZ1cq(jJW+z-jnOdDU4I?V(j*Zf#f1Gk~{ztfZGcQ;kil(`Hd|lXQD${@nAT-|0j)_rDSw6eR294p&12`iXAR{W7CC'
+    'g}rDi`l92WCsfLxaUwIHQpwWJ@~n`8^{M-Pvf8D#X3VeWh){spSyqp;e)g(64OQnXAT`+S^`e;Pm$7;!FZXq*dV!^dxf@41d+N~X'
+    'M*r$Uo$V2B#8FI&tS7#v@9)Xv#&}H~q&sqPe5|_BDG#w{c3#gd;+mDk?$%F^=aM%F=V<pQDP|d(G;17nJKeL8h=14Vb@6}vUAG&Q'
+    'C+mhd5GvX+nx*EiFI-`!k(kMy=3M~QaSx}}PIKw0_#md&fo1q0t8c3jahaVp5gxlD9O~)-)Y=MxCPu7e2c{)paW!*7&P%A~*Kp~s'
+    'XvgJir&%>}^S)EKjhyJ-bPNaTH0lxe1je-_8$8`zMzbl1$*b4%H@r8-&|i^#7~)9%nB5aYtQ2UWmf6)+DhZy&c9*Qw#s7XP?V9Ae'
+    'kuPV2Xg)SDfsw@{S8ABl9g@3^U>REJL01}1gz8v$N&ZG~5dWN_!_@BukE{)P2U?s!z!CVHNrtI&THJ$&IyEt(PHbzcCQfYTyX_XI'
+    'PV&`EcuRX;4xq)^i@k2R$O7WbYp+gijMk(_j$5ZDEvBuuLX+khy><jaJSd(Z(I&|r(KY6&JGN6sR4pU|p?(lh%qi6LgJvYbdv*|o'
+    '*DgO3hK8nQKTasAR|KL26{qQ!;~JqO6&A{1?VhJha?Gtb%BY5f{7RaU8@VIPdlp-na3tl%=1Ir%v#cp60G@NXHSerG;o9jr4cx+x'
+    'J-LzXIMpe{7R>Xyc70yC3M{o=otN&D+sz7j3@dZVPk2sDW#Q2ccL>J)PPfeU7HPVM4M|NZOQ7oYqpRpLg|bQV&u>e7bVLLNH{kMq'
+    'O_N)q6vuU8va_a!0&ET=#AA)YI8)y;`}l6^?5`slQm=j%G+XF6CA$3xS0mjM?b+SO`U4*P7$9&v&D%PcTIVB++bZ4T1^a?ExNMrq'
+    '?`Bl270x|Pi&z*{35gR#>uThkUpf^nb()Y4E3mcX#CglzW|b{qI1bNVdCq9VvZ0P1vPZ9;Bv01>h4+PM#lW4XNRlbMIQ%Kkwrpt^'
+    'tKE_x(}LZ&Se62#$n#jkNYI9F?X~N{UGm_SWW0KFy{p!IwiO|)Y^!v!+NS$Oy4jM2UZo?9P>k~YE^kO_QP>`Okv3w4jJ&@gGoAD@'
+    ')9^h#DivtX;1hhw+QAX80xs|UcX)BpSFcrhQbQ!2%D4JXpvRQPlAtO&RXATuatP)-3d*TSp3LJo?D#|4kQ-!!pec9j?2lcF&%$`d'
+    '$+n>BIoxOkr+@ql(6)>W'
+)
+SITE_ROOT = '/var/www/telemt-web-manager'
+SITE_FILES = {
+    'botanical': {'light.html','watering.html','plants.html','field-notes.html'},
+    'night-sky': {'tonight.html','moon.html','constellations.html','equipment.html'},
+    'kitchen': {'recipes.html','pantry.html','techniques.html','seasons.html'},
 }
-
-COVER_STYLESHEET = {
-    'size': 6772,
-    'sha256': '8bf41f327d642d6f5b63e2efa368335c18729e58a389357ff56175c0f860c4d4',
-    'css': '''body.cover-site-02, .cover-site-02 *, .cover-site-02 *::before, .cover-site-02 *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body.cover-site-02 {
-    background: #f4f5f7;
-    font-family: Georgia, 'Times New Roman', serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-  }
-.cover-site-02 .card {
-    background: #ffffff;
-    border-radius: 4px;
-    box-shadow: 0 2px 24px rgba(0,0,0,0.08);
-    padding: 3.5rem 3rem;
-    max-width: 540px;
-    width: 100%;
-    text-align: center;
-    border-top: 5px solid #f4a100;
-  }
-.cover-site-02 .icon {
-    font-size: 4rem;
-    margin-bottom: 1.5rem;
-    line-height: 1;
-  }
-.cover-site-02 h1 {
-    font-size: 2rem;
-    color: #1a1a2e;
-    font-weight: 700;
-    margin-bottom: 0.75rem;
-    letter-spacing: -0.5px;
-  }
-.cover-site-02 .subtitle {
-    font-size: 1rem;
-    color: #555;
-    line-height: 1.7;
-    margin-bottom: 2rem;
-  }
-.cover-site-02 .tape {
-    background: #f4a100;
-    color: #1a1a2e;
-    font-family: 'Courier New', monospace;
-    font-weight: 700;
-    font-size: 0.75rem;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    padding: 0.5rem 1.5rem;
-    display: inline-block;
-    transform: rotate(-1deg);
-    margin-bottom: 2rem;
-  }
-.cover-site-02 .progress-bar {
-    background: #e9ecef;
-    border-radius: 999px;
-    height: 8px;
-    overflow: hidden;
-    margin-bottom: 0.5rem;
-  }
-.cover-site-02 .progress-fill {
-    background: linear-gradient(90deg, #f4a100, #ffca28);
-    height: 100%;
-    width: 68%;
-    border-radius: 999px;
-  }
-.cover-site-02 .progress-label {
-    font-family: 'Courier New', monospace;
-    font-size: 0.75rem;
-    color: #999;
-    text-align: right;
-  }
-.cover-site-02 .brand {
-    margin-top: 2rem;
-    font-size: 0.8rem;
-    color: #aaa;
-    letter-spacing: 0.1em;
-    font-family: Arial, sans-serif;
-  }
-body.cover-site-03, .cover-site-03 *, .cover-site-03 *::before, .cover-site-03 *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body.cover-site-03 {
-    background: linear-gradient(135deg, #0f3d1e 0%, #1a5c2a 40%, #0d4d1f 100%);
-    color: #d4edda;
-    font-family: 'Trebuchet MS', Arial, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    text-align: center;
-  }
-.cover-site-03 .leaf {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    filter: drop-shadow(0 0 12px rgba(72,199,100,0.5));
-  }
-.cover-site-03 .brand {
-    font-size: 0.85rem;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: #6fcf7c;
-    margin-bottom: 3rem;
-  }
-.cover-site-03 h1 {
-    font-size: clamp(2.2rem, 7vw, 5rem);
-    font-weight: 700;
-    color: #ffffff;
-    line-height: 1.1;
-    margin-bottom: 1.5rem;
-    text-shadow: 0 2px 20px rgba(0,0,0,0.4);
-  }
-.cover-site-03 h1 span { color: #48c764; }
-.cover-site-03 .body-text {
-    font-size: 1.1rem;
-    color: #a8d5b0;
-    max-width: 480px;
-    line-height: 1.8;
-    margin-bottom: 3rem;
-  }
-.cover-site-03 .badge-row {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    justify-content: center;
-    margin-bottom: 3rem;
-  }
-.cover-site-03 .badge {
-    background: rgba(72, 199, 100, 0.15);
-    border: 1px solid rgba(72, 199, 100, 0.4);
-    color: #6fcf7c;
-    padding: 0.4rem 1.1rem;
-    border-radius: 999px;
-    font-size: 0.8rem;
-    letter-spacing: 0.05em;
-  }
-.cover-site-03 .footer-line {
-    font-size: 0.75rem;
-    color: #5a8c65;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-  }
-body.cover-site-04, .cover-site-04 *, .cover-site-04 *::before, .cover-site-04 *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body.cover-site-04 {
-    background: linear-gradient(160deg, #1a0533 0%, #2d1055 50%, #1e0840 100%);
-    font-family: 'Palatino Linotype', Palatino, Georgia, serif;
-    min-height: 100vh;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-items: center;
-  }
-@media (max-width: 700px) {body.cover-site-04 { grid-template-columns: 1fr; padding: 3rem 2rem; }
-.cover-site-04 .right { display: none; }
-}
-.cover-site-04 .left {
-    padding: 4rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-.cover-site-04 .eyebrow {
-    font-size: 0.75rem;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: #b07eff;
-    margin-bottom: 1.5rem;
-  }
-.cover-site-04 h1 {
-    font-size: clamp(2rem, 4vw, 3.5rem);
-    color: #ffffff;
-    line-height: 1.15;
-    font-weight: 400;
-    margin-bottom: 0.5rem;
-  }
-.cover-site-04 h1 em {
-    font-style: italic;
-    color: #c89fff;
-  }
-.cover-site-04 .role {
-    font-size: 0.9rem;
-    color: #9b6fcc;
-    letter-spacing: 0.1em;
-    margin-bottom: 2rem;
-  }
-.cover-site-04 p {
-    font-size: 1rem;
-    color: #c4a8e8;
-    line-height: 1.9;
-    max-width: 380px;
-    margin-bottom: 2.5rem;
-  }
-.cover-site-04 .divider {
-    width: 40px;
-    height: 1px;
-    background: #7c3aed;
-    margin-bottom: 2.5rem;
-  }
-.cover-site-04 .status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
-    background: rgba(124, 58, 237, 0.2);
-    border: 1px solid rgba(124, 58, 237, 0.5);
-    padding: 0.5rem 1.2rem;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    color: #b07eff;
-    letter-spacing: 0.08em;
-  }
-.cover-site-04 .dot {
-    width: 7px; height: 7px;
-    background: #7c3aed;
-    border-radius: 50%;
-    animation: cover-site-04-pulse 2s infinite;
-  }
-@keyframes cover-site-04-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
-.cover-site-04 .right {
-    padding: 4rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-.cover-site-04 .art {
-    width: 260px; height: 320px;
-    border: 1px solid rgba(124,58,237,0.4);
-    border-radius: 8px;
-    background: rgba(124,58,237,0.08);
-    position: relative;
-    overflow: hidden;
-  }
-.cover-site-04 .art::before {
-    content: '';
-    position: absolute;
-    top: -40%; left: -40%;
-    width: 180%; height: 180%;
-    background: radial-gradient(circle, rgba(124,58,237,0.3) 0%, transparent 65%);
-  }
-.cover-site-04 .art-label {
-    position: absolute;
-    bottom: 1.2rem; left: 1.2rem;
-    font-size: 0.7rem;
-    color: rgba(176,126,255,0.5);
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-  }
-body.cover-status {margin:0;min-height:100vh;display:grid;place-items:center;background:#101827;color:#e8eef7;font:16px system-ui,sans-serif}
-.cover-status main {padding:3rem;border:1px solid #29364b;border-radius:20px;background:#172235;text-align:center}
-.cover-status i {display:inline-block;width:12px;height:12px;border-radius:50%;background:#50d890;margin-right:10px}
-.cover-status h1 {font-size:1.5rem}
-.cover-status p {color:#b4c2d6}
-''',
-}
-
-from html.parser import HTMLParser
-import secrets
-
-COVER_LIMIT = 32768
-SERVICE_STATUS = b'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Service Status</title><link rel="stylesheet" href="/cover.css"></head><body class="cover-status"><main><h1>Service Status</h1><p><i></i>All systems operational</p></main></body></html>\n'
+SITE_COMMON = {'index.html','404.html','site.css','illustration.svg','favicon.svg','favicon.ico','robots.txt'}
+SITE_SOURCE_FILES = {'generate.py','validate.py',*(f'templates/{theme}/site.css' for theme in SITE_FILES)}
 
 
-class CoverHTML(HTMLParser):
-    """Small local HTML/CSS only; no executable or externally loaded content."""
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.stylesheets = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag == 'link':
-            require(len(attrs) == 2 and dict(attrs) == {'rel':'stylesheet','href':'/cover.css'},
-                    'unsafe cover resource')
-            self.stylesheets += 1
-            return
-        require(tag in {'html','head','meta','title','body','main','div','span','p',
-                        'h1','h2','h3','br','i','em','strong','section','footer'}, 'unsafe cover HTML')
-        allowed = {'lang','charset','name','content','class','id'}
-        require(all(key in allowed and value is not None for key,value in attrs), 'unsafe cover attribute')
-        if tag == 'meta':
-            require(all(key in {'charset','name','content'} for key,_ in attrs))
-            require(not any(key == 'name' and value != 'viewport' for key,value in attrs))
+def site_resources():
+    try: raw = base64.b85decode(SITE_SOURCE_B85)
+    except ValueError: raise ValueError('site resource integrity failed') from None
+    require(hashlib.sha256(raw).hexdigest() == SITE_SOURCE_SHA256, 'site resource integrity failed')
+    values = update_json(zlib.decompress(raw), 256*1024)
+    require(type(values) is dict and set(values) == SITE_SOURCE_FILES
+            and all(isinstance(v,str) and 0 < len(v.encode()) < 180000 for v in values.values()))
+    return values
 
 
-def cover_assets(bundle=None):
-    bundle = COVER_BUNDLE if bundle is None else bundle
-    require(type(bundle) is dict and set(bundle) == {'schema','sites'} and type(bundle['schema']) is int
-            and bundle['schema'] == 1 and type(bundle['sites']) is list and 1 <= len(bundle['sites']) <= 8,
-            'invalid cover manifest')
-    result = {}
-    for item in bundle['sites']:
-        require(type(item) is dict and set(item) == {'id','size','sha256','html'})
-        require(type(item['id']) is str and re.fullmatch(r'site-[0-9]{2}', item['id'])
-                and item['id'] not in result)
-        require(type(item['size']) is int and 0 < item['size'] <= COVER_LIMIT
-                and type(item['html']) is str and len(item['html']) <= COVER_LIMIT and type(item['sha256']) is str
-                and re.fullmatch(r'[0-9a-f]{64}', item['sha256']))
-        raw = item['html'].encode('utf-8')
-        require(len(raw) == item['size'] and hashlib.sha256(raw).hexdigest() == item['sha256'],
-                'cover integrity check failed')
-        require(not re.search(r'url\s*\(|@import|expression\s*\(|\\|https?\s*:',item['html'],re.I),
-                'external or active cover content')
-        parser = CoverHTML(convert_charrefs=True); parser.feed(item['html']); parser.close()
-        require(parser.stylesheets == 1, 'missing or duplicate cover stylesheet')
-        result[item['id']] = raw
-    return result
+def site_identity(directory):
+    directory = Path(directory); safe_path(directory)
+    info = directory.lstat()
+    # Production requires root:root; inert fixtures follow safe_path's CI EUID convention.
+    group = 0 if os.geteuid() == 0 else os.getegid()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and info.st_gid == group
+            and stat.S_IMODE(info.st_mode) == 0o755, 'unsafe site directory')
+    names = set()
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            names.add(entry.name); require(len(names) <= 11, 'extra site files')
+    require(any(names == SITE_COMMON | articles for articles in SITE_FILES.values()), 'unknown site files')
+    rows = []
+    for name in sorted(names):
+        require((directory/name).lstat().st_gid == group, 'unsafe site file group')
+        raw = web_link_read(directory/name, {0o644}, 180000, owner=os.geteuid())
+        require(raw, 'empty site file')
+        rows.append((name, hashlib.sha256(raw).hexdigest()))
+    return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
 
 
-def cover_stylesheet():
-    item = COVER_STYLESHEET
-    require(type(item) is dict and set(item) == {'size','sha256','css'}
-            and type(item['size']) is int and 0 < item['size'] <= COVER_LIMIT
-            and type(item['css']) is str and len(item['css']) <= COVER_LIMIT
-            and type(item['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}',item['sha256']))
-    raw = item['css'].encode('utf-8')
-    require(len(raw) == item['size'] and hashlib.sha256(raw).hexdigest() == item['sha256'],
-            'cover stylesheet integrity check failed')
-    require(not re.search(r'url\s*\(|@import|expression\s*\(|\\|https?\s*:|data\s*:|javascript|behavior\s*:|<|>',
-                          item['css'],re.I), 'unsafe cover stylesheet')
-    return raw
-
-
-def cover_stylesheet_check(directory, owner=0):
-    directory = Path(directory)
-    try:
-        raw = web_link_read(directory/'cover.css',{0o440},COVER_LIMIT,owner=owner)
-    except OSError:
-        raise ValueError('Missing or unsafe managed cover stylesheet; manual review required') from None
-    require((directory/'cover.css').lstat().st_gid == directory.lstat().st_gid
-            and raw == cover_stylesheet(), 'invalid managed cover stylesheet; manual review required')
-
-
-def cover_choose(current=None):
-    choices = [raw for raw in cover_assets().values() if raw != current]
-    require(bool(choices), 'no different cover available')
-    return secrets.choice(choices)
-
-
-def cover_atomic(directory, raw, initial=False, filename='index.html'):
-    """Anchored, bounded single-file publication with verified rollback bytes."""
-    require(filename == 'index.html' or (initial and filename == 'cover.css'))
-    directory = Path(directory); path = directory/filename; safe_path(path)
-    require(0 < len(raw) <= COVER_LIMIT and not os.path.ismount(directory))
-    parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    temporary = '.twm-cover-' + uuid.uuid4().hex
-    old = None; published = False
-    try:
-        before = os.fstat(parent)
-        require(before.st_uid == os.geteuid() and not before.st_mode & 0o022)
-        if initial:
-            require(not os.path.lexists(path), 'cover already exists')
-        else:
-            old = web_link_read(path, {0o440}, COVER_LIMIT)
-            original = path.lstat()
-            require(original.st_gid == before.st_gid)
-        def publish(content):
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
-            with os.fdopen(fd,'wb') as output:
-                os.fchown(output.fileno(), os.geteuid(), before.st_gid)
-                os.fchmod(output.fileno(),0o440)
-                output.write(content); output.flush(); os.fsync(output.fileno())
-            require(os.fstat(parent).st_ino == directory.lstat().st_ino
-                    and os.fstat(parent).st_dev == directory.lstat().st_dev)
-            os.replace(temporary,filename,src_dir_fd=parent,dst_dir_fd=parent)
-            os.fsync(parent)
+def site_generate(destination, theme=None):
+    """Run the verbatim approved generator once; never replace a destination."""
+    destination = Path(destination); safe_path(destination)
+    require(not os.path.lexists(destination) and destination.parent.is_dir())
+    require(theme is None or theme in SITE_FILES)
+    resources = site_resources()
+    with tempfile.TemporaryDirectory(prefix='twpm-site-source-') as temporary:
+        root = Path(temporary)
+        for name, source in resources.items():
+            path = root/name; path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_bytes(source.encode())
+        generator = types.ModuleType('generate'); generator.__file__ = str(root/'generate.py')
+        validator = types.ModuleType('validate'); validator.__file__ = str(root/'validate.py')
+        previous = sys.modules.get('generate')
         try:
-            if old is not None: require(path.lstat() == original, 'cover changed concurrently')
-            # Signals cannot interrupt publication/verification between durable bytes.
-            with fresh_signal_window():
-                published = True
-                publish(raw)
-                fd = os.open(filename,os.O_RDONLY | os.O_NOFOLLOW,dir_fd=parent)
-                try:
-                    info = os.fstat(fd)
-                    require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
-                            and info.st_gid == before.st_gid and stat.S_IMODE(info.st_mode) == 0o440)
-                    require(os.read(fd,COVER_LIMIT+1) == raw, 'cover publication verification failed')
-                finally: os.close(fd)
-        except BaseException:
-            try: os.unlink(temporary,dir_fd=parent)
-            except FileNotFoundError: pass
-            if published:
-                if old is not None: publish(old)
-                else:
-                    try: os.unlink(filename,dir_fd=parent); os.fsync(parent)
-                    except FileNotFoundError: pass
-            raise
-    finally:
-        try: os.unlink(temporary,dir_fd=parent)
-        except FileNotFoundError: pass
-        os.close(parent)
+            exec(compile(resources['generate.py'],generator.__file__,'exec',optimize=0),generator.__dict__)
+            sys.modules['generate'] = generator
+            exec(compile(resources['validate.py'],validator.__file__,'exec',optimize=0),validator.__dict__)
+            metadata = generator.generate(destination,theme)
+            validator.check_site(destination,metadata['theme'])
+        except AssertionError:
+            raise ValueError('generated site validation failed') from None
+        finally:
+            if previous is None: sys.modules.pop('generate',None)
+            else: sys.modules['generate'] = previous
+    for path in destination.iterdir(): path.chmod(0o644)
+    destination.chmod(0o755)
+    return site_identity(destination)
 
 
-def cover_initial(directory, source=None):
-    stylesheet = cover_stylesheet()
-    if source: cover_stylesheet_check(Path(source).parent,owner=os.geteuid())
-    try:
-        if source:
-            raw = web_link_read(source,{0o440},COVER_LIMIT,owner=os.geteuid())
-            require(raw in [SERVICE_STATUS,*cover_assets().values()], 'unknown staged cover')
-        else: raw = cover_choose()
-    except (ValueError,UnicodeError):
-        print('Сайты-прикрытия недоступны; используется Service Status.' if presentation_language() == 'ru'
-              else 'Cover assets unavailable; using Service Status.',file=sys.stderr)
-        raw = SERVICE_STATUS
-    cover_atomic(directory,stylesheet,initial=True,filename='cover.css')
-    cover_atomic(directory,raw,initial=True)
+def site_vhost_digest(source):
+    values = re.findall(r'^# TWPM original site v0\.3 sha256: ([0-9a-f]{64})$',source,re.M)
+    require(len(values) <= 1, 'duplicate site identity')
+    return values[0] if values else None
 
 
-def cover_change(state, config, data, mode, previous):
-    current_web_link(state,config)  # Silent manager ownership/domain/secret proof.
-    runtime_contract(config,data)
-    account = fresh_identity(data)
-    directory = Path(data)/'public'
-    safe_path(directory)
-    require(directory.lstat().st_uid == 0 and directory.lstat().st_gid == int(account['group'][2])
-            and stat.S_IMODE(directory.lstat().st_mode) == 0o750)
-    cover_stylesheet_check(directory)
-    current = web_link_read(directory/'index.html',{0o440},COVER_LIMIT)
-    known = [SERVICE_STATUS,*cover_assets().values()]
-    require(current in known, 'Unknown current cover; manual review required')
-    if mode == 'restore':
-        raw = web_link_read(previous,{0o600},COVER_LIMIT)
-        require(raw in known)
-    else:
-        require(mode in ('random','default'))
-        raw = cover_choose(current) if mode == 'random' else SERVICE_STATUS
-        require(not os.path.lexists(previous)); update_write(previous,current)
-    cover_atomic(directory,raw)
+def site_bound_identity(config, data, nginx_root, directory=SITE_ROOT):
+    c = read_config(config); host = managed_web_contract(c,data)[0]
+    vhost = Path(nginx_root)/'conf.d/telemt-web-manager.conf'; safe_path(vhost)
+    source = vhost.read_text()
+    if c['web']['vhosts'][0]['decoy']['mode'] == 'static_directory':
+        require(source in (render_vhost(host),render_vhost(host,keepalive=False)),
+                'legacy decoy and Nginx vhost differ')
+        return None
+    digest = site_identity(directory)
+    require(source == render_vhost(host,site_digest=digest), 'site ownership/hash differs')
+    return digest
+
 
 
 class UpdateProgress:
@@ -3431,6 +3439,7 @@ class UpdateEngine:
         require(state['DropInPaths']==(str(layout.dropin) if present else ''))
         nginx=layout.path('/etc/nginx')
         require(update_hash(nginx/'conf.d/telemt-web-manager.conf')['sha256']==manifest['nginx_sha256'])
+        site_bound_identity(layout.config,str(layout.data),nginx,layout.path(SITE_ROOT))
         with tempfile.TemporaryDirectory(prefix='twm-ownership-') as directory:
             output=Path(directory)/'nginx-plan.json'
             nginx_plan(nginx,host,output)
@@ -3481,6 +3490,9 @@ class UpdateEngine:
         if os.path.lexists(acme): paths['nginx-acme-vhost']=acme
         parser=Nginx(nginx); streams=exact(parser.read(nginx/'nginx.conf'),'stream')
         require(len(streams)==1)
+        if site_vhost_digest(parser.sources[paths['nginx-web-vhost']]):
+            values['origin-site'] = site_bound_identity(self.layout.config,str(self.layout.data),nginx,
+                                                       self.layout.path(SITE_ROOT))
         # Same exact fragments as reverse planning, without treating unrelated
         # topology/settings as an immutable manager-owned byte contract.
         values.update(nginx_owned_stream(parser,host,streams[0])[0])
@@ -4034,8 +4046,9 @@ def uninstall_update_paths(paths):
     if not any(os.path.lexists(state/name) for name in names): return []
     require(all(os.path.lexists(state/name) for name in names) and state.name=='telemt-web-manager')
     layout=UpdateLayout(state.parents[2])
-    require(paths==[str(layout.binary),str(layout.config.parent),
-                   str(layout.path('/etc/systemd/system/telemt.service')),str(layout.data),str(layout.state)])
+    require(paths[:5]==[str(layout.binary),str(layout.config.parent),
+                       str(layout.path('/etc/systemd/system/telemt.service')),str(layout.data),str(layout.state)]
+            and (len(paths)==5 or (len(paths)==6 and paths[5]==str(layout.path(SITE_ROOT)))))
     update_pending(layout); update_gate_contract(layout); update_generation(layout)
     return [str(layout.dropin.parent),str(layout.recovery_unit)]
 
@@ -4296,6 +4309,56 @@ def update_quota_preserve(old, path, uid):
                 'candidate reset or lost persisted quota state')
 
 
+@contextmanager
+def isolated_site_origin(root, settings, identity):
+    """Existing Nginx, transiently inside the already private Update namespace.
+
+    Candidate TOML stays byte-identical. Every Nginx write is confined to the
+    existing private root; no host Nginx configuration or service is touched.
+    """
+    if settings['web']['vhosts'][0]['decoy']['mode'] != 'http_upstream':
+        yield
+        return
+    directory = root/str(SITE_ROOT).lstrip('/')
+    site_identity(directory)
+    executable = root/'usr/sbin/nginx'; safe_path(executable)
+    config = root/'run/site-origin.conf'
+    runtime = root/'run/site-origin'; runtime.mkdir(mode=0o700)
+    uid = 65533 if identity['uid'] == 65534 else 65534
+    gid = 65533 if identity['gid'] == 65534 else 65534
+    os.chown(runtime,uid,gid)
+    temporary = ''.join(f'{kind}_temp_path {kind};\n' for kind in
+                        ('client_body','proxy','fastcgi','uwsgi','scgi'))
+    source = ('worker_processes 1; pid /run/site-origin/nginx.pid; lock_file /run/site-origin/nginx.lock;\n'
+              'error_log /run/site-origin/error.log crit;\nevents { worker_connections 256; }\n'
+              'http { access_log off;\n'+temporary+render_site_server()+'}\n')
+    update_write(config,source.encode(),0o644)
+    # A distinct numeric UID, no capabilities and the same private chroot keep
+    # even a compromised candidate away from the trusted origin and host files.
+    command = ['chroot',str(root),'/usr/bin/setpriv','--no-new-privs','--bounding-set=-all',
+               '--inh-caps=-all','--ambient-caps=-all','--reuid='+str(uid),'--regid='+str(gid),
+               '--clear-groups','/usr/sbin/nginx','-p','/run/site-origin/',
+               '-c','/run/site-origin.conf','-e','/run/site-origin/error.log']
+    update_run([*command,'-t'],timeout=15,maximum=16384)
+    process = subprocess.Popen([*command,'-g','daemon off; master_process off;'],
+                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic()+10
+        while True:
+            require(process.poll() is None, 'private site origin exited')
+            try:
+                with socket.create_connection(('127.0.0.1',18081),timeout=.1): break
+            except OSError:
+                require(time.monotonic()<deadline, 'private site origin readiness failed'); time.sleep(.05)
+        yield
+    finally:
+        if process.poll() is None: process.terminate()
+        try: process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill(); process.wait(); raise ValueError('private site origin shutdown failed') from None
+        require(process.returncode == 0, 'private site origin failed')
+
+
 class UpdateIsolation:
     """Trusted private root + mount/net/PID namespace + resource cgroup."""
     def __init__(self, layout, tree): self.layout=layout; self.tree=tree
@@ -4310,18 +4373,29 @@ class UpdateIsolation:
         update_copy_stream(binary,root/'usr/local/bin/telemt',0o755)
         update_copy_stream(self.layout.config,root/'etc/telemt/telemt.toml',0o640)
         os.chown(root/'etc/telemt/telemt.toml',0,self.tree.gid)
+        http_origin = read_config(self.layout.config)['web']['vhosts'][0]['decoy']['mode'] == 'http_upstream'
         if source: self.tree.clone(source,root/'var/lib/telemt',index)
         else:
             for relative in ('var/lib/telemt','var/lib/telemt/state','var/lib/telemt/public'):
                 (root/relative).mkdir(mode=0o750)
                 (root/relative).chmod(0o750)
                 os.chown(root/relative,self.tree.uid if relative.endswith('/state') else 0,self.tree.gid)
-            update_copy_stream(self.layout.data/'public/index.html',root/'var/lib/telemt/public/index.html',0o440)
-            os.chown(root/'var/lib/telemt/public/index.html',0,self.tree.gid)
+            if not http_origin:
+                update_copy_stream(self.layout.data/'public/index.html',root/'var/lib/telemt/public/index.html',0o440)
+                os.chown(root/'var/lib/telemt/public/index.html',0,self.tree.gid)
+        if http_origin:
+            original = self.layout.path(SITE_ROOT); digest = site_identity(original)
+            target = root/str(SITE_ROOT).lstrip('/'); target.mkdir(mode=0o755,parents=True)
+            for parent in (target,*target.parents):
+                if parent == root: break
+                parent.chmod(0o755)
+            for path in sorted(original.iterdir()): update_copy_stream(path,target/path.name,0o644)
+            require(site_identity(target) == digest, 'private site copy differs')
         # Only fixed trusted Ubuntu tooling is inspected with ldd. Never invoke
         # ldd on the candidate (ldd is an executable-code hazard for unknown ELF).
         tools={name:Path(shutil.which(name) or '') for name in
-               ('setpriv','conntrack','nft','iptables','ip6tables','iptables-save','ip6tables-save')}
+               ('setpriv','conntrack','nft','iptables','ip6tables','iptables-save','ip6tables-save')
+               + (('nginx',) if http_origin else ())}
         libraries=set()
         for name,path in tools.items():
             require(path.is_absolute(), 'isolation tooling unavailable')
@@ -4467,54 +4541,55 @@ def update_isolated_run(root, expected_version, mode):
     checkpoint('quota-baseline')
     quota_path=root/'var/lib/telemt/state/telemt.limit.json'
     old_quota=update_quota_read(quota_path,identity['uid']) if os.path.lexists(quota_path) else None
-    for cycle in range(2 if mode=='rehearsal' else 1):
-        process=subprocess.Popen(command+['/etc/telemt/telemt.toml'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
-                                 start_new_session=True,env=dict(os.environ,PATH='/usr/sbin:/usr/bin:/sbin:/bin'))
-        os.set_blocking(process.stdout.fileno(),False); raw=bytearray()
-        def drain():
-            while True:
-                try: block=os.read(process.stdout.fileno(),65536)
-                except BlockingIOError: break
-                if not block: break
-                raw.extend(block); require(len(raw)<=16*UPDATE_CHUNK, 'private candidate log flood')
-        try:
-            checkpoint('readiness')
-            deadline=time.monotonic()+45
-            while time.monotonic()<deadline:
-                drain(); require(process.poll() is None, 'private candidate exited')
-                try:
-                    status,_,body=UpdateWEBProbe(settings).request('GET','/')
-                    if status==200: break
-                except OSError: pass
-                time.sleep(.1)
-            else: raise ValueError('private candidate readiness timeout')
-            require(update_hash(root/'var/lib/telemt/public/index.html',256*1024)==
-                    dict(size=len(body),sha256=hashlib.sha256(body).hexdigest()), 'private index response differs')
-            checkpoint('listener')
-            listeners=update_run(['ss','-H','-ltnp']).decode().splitlines()
-            owned=[line for line in listeners if 'pid='+str(process.pid)+',' in line]
-            require(len(owned)==1 and '127.0.0.1:18080 ' in owned[0])
-            checkpoint('capability')
-            require(re.search(r'^CapEff:\s+0000000000001000$',Path('/proc',str(process.pid),'status').read_text(),re.M))
-            checkpoint('WEB')
-            UpdateWEBProbe(settings,checkpoint=checkpoint).run(full=True); drain()
-            start=time.monotonic()
-            while time.monotonic()-start<10:
-                drain(); require(process.poll() is None); time.sleep(.2)
-        finally:
-            if sys.exc_info()[0] is None: checkpoint('shutdown')
-            if process.poll() is None: process.send_signal(signal.SIGTERM)
-            end=time.monotonic()+40
-            while process.poll() is None and time.monotonic()<end: drain(); time.sleep(.1)
-            if process.poll() is None: os.killpg(process.pid,signal.SIGKILL); process.wait(); raise ValueError('candidate private shutdown failed')
-            drain(); process.stdout.close()
-        require(process.returncode==0 and classify_records(raw.decode().splitlines())==0)
-        checkpoint('firewall')
-        firewall=b'\n'.join(update_run(['chroot',str(root),'/usr/sbin/'+name, *arguments])
-            for name,arguments in (('nft',['list','ruleset']),('iptables-save',[]),('ip6tables-save',[])))
-        require(not re.search(rb'TELEMT_|telemt_conntrack',firewall), 'private firewall cleanup failed')
-        checkpoint('quota-readback')
-        update_quota_preserve(old_quota,quota_path,identity['uid'])
+    with isolated_site_origin(root,settings,identity):
+        for cycle in range(2 if mode=='rehearsal' else 1):
+            process=subprocess.Popen(command+['/etc/telemt/telemt.toml'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                                     start_new_session=True,env=dict(os.environ,PATH='/usr/sbin:/usr/bin:/sbin:/bin'))
+            os.set_blocking(process.stdout.fileno(),False); raw=bytearray()
+            def drain():
+                while True:
+                    try: block=os.read(process.stdout.fileno(),65536)
+                    except BlockingIOError: break
+                    if not block: break
+                    raw.extend(block); require(len(raw)<=16*UPDATE_CHUNK, 'private candidate log flood')
+            try:
+                checkpoint('readiness')
+                deadline=time.monotonic()+45
+                while time.monotonic()<deadline:
+                    drain(); require(process.poll() is None, 'private candidate exited')
+                    try:
+                        status,_,body=UpdateWEBProbe(settings).request('GET','/')
+                        if status==200: break
+                    except OSError: pass
+                    time.sleep(.1)
+                else: raise ValueError('private candidate readiness timeout')
+                require(update_hash(root/(str(SITE_ROOT).lstrip('/')+'/index.html' if settings['web']['vhosts'][0]['decoy']['mode']=='http_upstream' else 'var/lib/telemt/public/index.html'),256*1024)==
+                        dict(size=len(body),sha256=hashlib.sha256(body).hexdigest()), 'private index response differs')
+                checkpoint('listener')
+                listeners=update_run(['ss','-H','-ltnp']).decode().splitlines()
+                owned=[line for line in listeners if 'pid='+str(process.pid)+',' in line]
+                require(len(owned)==1 and '127.0.0.1:18080 ' in owned[0])
+                checkpoint('capability')
+                require(re.search(r'^CapEff:\s+0000000000001000$',Path('/proc',str(process.pid),'status').read_text(),re.M))
+                checkpoint('WEB')
+                UpdateWEBProbe(settings,checkpoint=checkpoint).run(full=True); drain()
+                start=time.monotonic()
+                while time.monotonic()-start<10:
+                    drain(); require(process.poll() is None); time.sleep(.2)
+            finally:
+                if sys.exc_info()[0] is None: checkpoint('shutdown')
+                if process.poll() is None: process.send_signal(signal.SIGTERM)
+                end=time.monotonic()+40
+                while process.poll() is None and time.monotonic()<end: drain(); time.sleep(.1)
+                if process.poll() is None: os.killpg(process.pid,signal.SIGKILL); process.wait(); raise ValueError('candidate private shutdown failed')
+                drain(); process.stdout.close()
+            require(process.returncode==0 and classify_records(raw.decode().splitlines())==0)
+            checkpoint('firewall')
+            firewall=b'\n'.join(update_run(['chroot',str(root),'/usr/sbin/'+name, *arguments])
+                for name,arguments in (('nft',['list','ruleset']),('iptables-save',[]),('ip6tables-save',[])))
+            require(not re.search(rb'TELEMT_|telemt_conntrack',firewall), 'private firewall cleanup failed')
+            checkpoint('quota-readback')
+            update_quota_preserve(old_quota,quota_path,identity['uid'])
     require(update_hash(config)==before)
     checkpoint('complete')
     print('Isolated exact version, strict parser, WEB/replay/bounded poll/Pong/close, quota and shutdown: OK')
@@ -4524,10 +4599,16 @@ def main():
     command, *args = sys.argv[1:]
     if command.startswith('update-'):
         update_command(command,args)
-    elif command == "cover-initial":
-        cover_initial(*args)
-    elif command == "cover-change":
-        cover_change(*args)
+    elif command == 'site-generate':
+        print(site_generate(*args))
+    elif command == 'site-identity':
+        print(site_identity(*args))
+    elif command == 'site-bound':
+        value=site_bound_identity(*args)
+        if value: print(value)
+    elif command == 'decoy-mode':
+        c=read_config(args[0]); managed_web_contract(c,c['general']['data_path'])
+        print(c['web']['vhosts'][0]['decoy']['mode'])
     elif command == "semver":
         _, pre = semver(args[0])
         require(len(args) == 1 or (args[1] == "stable" and not pre))
@@ -4535,6 +4616,9 @@ def main():
         print(version_compare(*args))
     elif command == "nginx-plan":
         nginx_plan(*args)
+    elif command == 'nginx-site-plan':
+        require(len(args)==5)
+        nginx_plan(*args[:4],site_digest=args[4])
     elif command == "nginx-uninstall-plan":
         nginx_plan(*args, uninstall=True)
     elif command == "nginx-keepalive-plan":

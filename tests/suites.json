@@ -257,6 +257,11 @@
       "path": "tests/update_isolation_guest.py",
       "called_by": "tests/update_boot_guest.py",
       "reference": "import update_isolation_guest"
+    },
+    {
+      "path": "tests/legacy_site_fixture.py",
+      "called_by": "tests/fresh.sh",
+      "reference": "python3 tests/legacy_site_fixture.py"
     }
   ],
   "builds": [
@@ -299,7 +304,8 @@
     "tests/fixtures/nginx-3x-includes/sites-enabled/vision-acme.conf",
     "tests/fixtures/nginx-3x-includes/sites-enabled/vision.conf",
     "tests/fixtures/nginx-3x-includes/snippets/includes.conf",
-    "tests/fixtures/nginx-3x-includes/stream-enabled/stream.conf"
+    "tests/fixtures/nginx-3x-includes/stream-enabled/stream.conf",
+    "tests/fixtures/legacy-service-status.html"
   ],
   "metadata": [
     "tests/suites.json"

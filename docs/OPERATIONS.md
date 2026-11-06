@@ -790,21 +790,19 @@ complete; the exact candidate and results are recorded below.
 
 ## Co-located 3x-ui Backup/Restore
 
-3x-ui Backup v3 snapshots shared `/etc/nginx` and `/etc/letsencrypt`; on a co-located
-server that can include Telemt's Nginx files, certificate lineage, renewal config
-and deploy hook. It is not a complete Telemt backup and does not carry its full
-deployment/DATA. After restoring such a server, run `telegram-web-proxy-manager --check`.
-If Telemt's own state was not restored and checks fail, recover its deployment
-separately from its own recovery source. Foreign-restored certificates are not
-automatically adopted. Do not run Telemt certificate issuance concurrently with
-3x-ui Backup/Restore; no shared lock or cross-project disaster recovery is promised.
+Текущий распознаватель Backup v3 в 3X-UI исключает только исторический прямой
+TWPM vhost. Для keepalive и нового HTTP-origin совместимость не подтверждена:
+потребуется отдельный адресный PR в 3X-UI и проверка Backup/Restore. Backup 3X-UI
+не заменяет восстановление собственного DATA/recovery TWPM. До отдельной проверки
+не полагаться на совместное резервирование и не рекомендовать новый релиз TWPM.
+Проекты не имеют общего lock или общего механизма аварийного восстановления.
 The common supported platforms remain Ubuntu 24.04 / 26.04, not Debian 13.
 
 ## Current WEB link (manager 0.1.4)
 
 The no-argument manager first asks `1. English / 2. Русский / 0. Exit / Выход`.
 The selected language applies to this single menu action and is never saved.
-The main menu has the same seven actions in both languages, with Exit at 0:
+The main menu has the same six actions in both languages, with Exit at 0:
 
 ```text
 1. Install Telegram proxy
@@ -812,8 +810,7 @@ The main menu has the same seven actions in both languages, with Exit at 0:
 3. Check status
 4. Check and restart services
 5. Show connection link
-6. Change cover site
-7. Uninstall Telegram proxy
+6. Uninstall Telegram proxy
 0. Exit
 ```
 
@@ -825,8 +822,7 @@ Russian main menu:
 3. Проверить состояние
 4. Проверить и перезапустить службы
 5. Показать ссылку подключения
-6. Сменить сайт-прикрытие
-7. Удалить Telegram-прокси
+6. Удалить Telegram-прокси
 0. Выход
 ```
 
@@ -941,27 +937,100 @@ Failure reports “Telemt uninstall succeeded. Certificate cleanup failed or
 requires manual review” and retains backup evidence; Telemt is not resurrected.
 
 
-## Cover sites and Update presentation (1.0.0)
+## Оригинальные сайты v0.3: текущий контракт
 
-Fresh Install automatically selects one of three manager-owned single-file covers.
-The bounded schema-1 manifest records stable IDs, byte sizes and SHA256. HTML and
-manifest are embedded in the atomically installed canonical helper; the collection
-is shipped from the same exact manager commit, without runtime downloads or a
-companion-repository dependency. Only local HTML/CSS is allowed. Invalid assets
-fall back to the built-in Service Status / All systems operational page.
+Fresh Install генерирует через штатный `secrets` один из трёх утверждённых сайтов.
+После проверки исходных ресурсов и результата публикуются ровно 11 готовых файлов
+в `/var/www/telemt-web-manager`: root:root, каталог 0755, файлы 0644. Генератор,
+шаблоны, метаданные выбора и демонстрационные материалы публично не устанавливаются.
+Исходники встроены в доверенный `lib/safety.py`; bootstrap по-прежнему устанавливает
+согласованную пару Bash/Python, без независимой загрузки ресурсов.
 
-Menu item 6 offers Random new cover, Restore Service Status and Cancel. Random
-avoids the current known site when another exists. Unknown/manual HTML (including
-a legacy Welcome page) is not overwritten: manual review is required. Manager
-ownership, TOML identity, account, safe ancestors, root ownership and 0440 mode
-are verified under the exclusive mutation lock; pending Update is refused.
-The publication uses a same-directory no-follow temporary file, root:telemt, 0440,
-file/directory fsync and atomic replace. Failed publication verification restores
-previous bytes and removes staging files. Telemt snapshots static_directory assets
-at config load, so the existing verified restart/readiness/path/journal checks are
-required. Failed activation restores the old cover and verifies its restart.
-The operation does not change TOML, certificate, Nginx, receipt, generation or journal,
-and does not create an Update transaction. Normal full-DATA Update preserves covers.
+Сайт создаётся только при новой установке. Install для существующей установки,
+Check, Repair, Universal Update и bootstrap не меняют его. Пункта смены сайта больше
+нет: меню содержит Install, Update, Check, Repair, Show link, Uninstall и выход 0.
+Новый сайт возможен только после штатного удаления и новой установки.
+
+Новая конфигурация Telemt использует исключительно:
+
+```toml
+[web.vhosts.decoy]
+mode = "http_upstream"
+upstream = "http://127.0.0.1:18081"
+```
+
+TOML, WEB/carrier, секреты, сертификаты и DATA сохраняют остальные контракты.
+Telemt заменяет Host адресом origin; локальный сервер не требует публичного Host.
+`DATA/public` новой установки остаётся пустым. Исторические `static_directory`
+установки с прежними HTML/CSS обслуживаются без миграции и ротации.
+
+Весь HTTP-контракт остаётся в одном принадлежащем TWPM файле
+`/etc/nginx/conf.d/telemt-web-manager.conf`. Сохранены TLS server :7444,
+`upstream twpm_web_backend` (:18080, `keepalive 32`), HTTP/1.1, заголовки,
+тайм-ауты и stream-маршруты. Добавлен только локальный HTTP server:
+
+```nginx
+server {
+    listen 127.0.0.1:18081;
+    server_name _;
+    root /var/www/telemt-web-manager;
+    index index.html;
+    absolute_redirect off;
+    server_tokens off;
+    autoindex off;
+    charset utf-8;
+    access_log off;
+    error_log /dev/null crit;
+    default_type application/octet-stream;
+    types {
+        text/html html;
+        text/css css;
+        image/svg+xml svg;
+        image/x-icon ico;
+        text/plain txt;
+    }
+    add_header Content-Security-Policy "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" always;
+    error_page 404 /404.html;
+    location / { try_files $uri $uri/ =404; }
+}
+```
+
+Перед upstream в том же vhost записывается комментарий
+`# TWPM original site v0.3 sha256: <digest>`. Digest — SHA256 UTF-8 JSON-массива
+отсортированных пар `[имя файла, SHA256 содержимого]`, разделители `,` и `:`.
+Существующий `nginx_sha256` в manifest закрепляет точный vhost и этот digest;
+новых полей manifest и форматов Update state нет. Владение проверяется по точному
+шаблону, сохранённому SHA256, именам 11 файлов, их содержимому, владельцу, правам,
+безопасным предкам и отсутствию ссылок. Чужие/изменённые файлы блокируют операции;
+Uninstall не удаляет их автоматически. Новая установка отказывается при занятом
+18081, существующем document root или конфликтующей Nginx-конфигурации.
+Существующий механизм Fresh backup/rollback охватывает новый каталог.
+
+Принимаются ровно три известных HTTP-шаблона: исторический прямой backend,
+исторический keepalive и новый keepalive + HTTP-origin. Оба stream-формата
+(legacy inline и extension includes) сохраняются без переноса. Старый сайт не
+резервирует новый каталог или порт. Оптимизация старого прямого backend может
+включить keepalive по существующему явному подтверждению, но не меняет сайт.
+
+Universal Update проверяет новую установку с неизменным TOML: копирует проверенный
+сайт и установленный доверенный Nginx в существующий private root. В существующем
+сетевом namespace/chroot временный Nginx работает с отдельным числовым UID, без
+capabilities; его временные файлы ограничены private root. Оба процесса не получают
+доступ к рабочему Nginx или чужим сайтам; origin-процесс не может читать приватный
+TOML кандидата.
+Таймеры 150/45, алгоритм транзакции, DATA, LKG и recovery не меняются.
+
+**Граница с 3X-UI Backup v3:** его текущий строгий распознаватель понимает только
+исторический прямой vhost, а не keepalive или новый HTTP-origin. Совместимость
+не заявляется. Для отдельного исправления распознавателя зафиксированы точный
+`render_vhost(..., site_digest=...)`, приведённый локальный server, комментарий
+владения и собственный document root; никаких объектов в `/var/www/html` нет.
+Не рекомендовать новый релиз TWPM до проверки обоих отдельных PR.
+
+Обычные HTTP/HTTPS и авторизованные WEB-тесты не доказывают устойчивость к DPI,
+активному зондированию или блокировкам провайдера.
+
+## Update presentation и историческая приёмка 1.0.0
 
 TTY Update shows five stages and elapsed stability/restart progress, without hiding
 the cursor or using a background process. NO_COLOR disables ANSI colors; TERM=dumb

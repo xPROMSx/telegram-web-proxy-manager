@@ -11,6 +11,8 @@ TMP="$sandbox/tmp" DATA="$sandbox/data" BIN="$sandbox/installed" CONFIG="$sandbo
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 mkdir -p "$TMP" "$DATA/state" "$DATA/public"
 printf '<!doctype html><title>Welcome</title>\n' >"$DATA/public/index.html"
+SITE_ROOT="$sandbox/site"
+SITE_DIGEST=$(helper site-generate "$SITE_ROOT")
 generate_config "$(openssl rand -hex 16)" >"$CONFIG"
 cp "$CONFIG" "$sandbox/original.toml"
 make_binary() {

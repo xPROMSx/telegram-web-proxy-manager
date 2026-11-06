@@ -9,6 +9,8 @@ trap 'rm -rf -- "$TMP"' EXIT
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 DATA="$TMP/data"
 mkdir -p "$DATA/public"
 printf '<!doctype html><title>Welcome</title>' >"$DATA/public/index.html"
+SITE_ROOT="$TMP/site"
+SITE_DIGEST=$(helper site-generate "$SITE_ROOT")
 download_candidate
 for SOCKS in direct 127.0.0.1:1080; do
     secret=$(openssl rand -hex 16)

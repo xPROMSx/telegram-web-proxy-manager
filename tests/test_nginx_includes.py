@@ -1,4 +1,4 @@
-"""The pinned PR #93 topology and preservation of both ownership formats."""
+"""3X-UI PR #93 includes topology, PR #99 REALITY fallback, and TWPM ownership."""
 import json
 from pathlib import Path
 import shutil
@@ -22,8 +22,8 @@ class IncludeTests(unittest.TestCase):
     def snapshot(self):
         return {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
 
-    def plan(self, uninstall=False):
-        s.nginx_plan(self.root, self.host, self.output, uninstall=uninstall)
+    def plan(self, uninstall=False, site_digest=None):
+        s.nginx_plan(self.root, self.host, self.output, uninstall=uninstall, site_digest=site_digest)
         return json.loads(self.output.read_text())
 
     def apply(self, plan):
@@ -33,6 +33,74 @@ class IncludeTests(unittest.TestCase):
             else:
                 path.write_text(edit['content'])
                 path.chmod(0o644)
+
+    def test_pr99_http_origin_install_check_uninstall_preserves_neighbor(self):
+        stream = self.root / 'stream-enabled/stream.conf'
+        self.assertIn('server 127.0.0.1:8443 max_fails=0;', stream.read_text())
+        self.assertIn('server 127.0.0.1:9443 backup;', stream.read_text())
+        before = self.snapshot()
+        digest = s.site_generate(Path(self.tmp.name) / 'site', 'night-sky')
+        install = self.plan(site_digest=digest)
+        self.assertEqual(len(install['edits']), 3)
+        self.assertEqual(self.snapshot(), before)
+        self.apply(install)
+        self.assertEqual(self.plan()['edits'], [])
+        vhost = self.root / 'conf.d/telemt-web-manager.conf'
+        self.assertEqual(vhost.read_text(), s.render_vhost(self.host, site_digest=digest))
+        self.assertIn('listen 127.0.0.1:18081;', vhost.read_text())
+        self.apply(self.plan(uninstall=True))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_pr99_preserves_historical_single_server_xray(self):
+        stream = self.root / 'stream-enabled/stream.conf'
+        original = stream.read_text()
+        stream.write_text(original.replace(
+            'upstream xray {\n    server 127.0.0.1:8443 max_fails=0;\n'
+            '    server 127.0.0.1:9443 backup;\n}',
+            'upstream xray { server 127.0.0.1:8443; }'))
+        before = self.snapshot()
+        self.apply(self.plan())
+        self.assertEqual(self.plan()['edits'], [])
+        self.apply(self.plan(uninstall=True))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_pr99_refuses_unknown_stream_upstreams_without_mutation(self):
+        stream = self.root / 'stream-enabled/stream.conf'
+        original = stream.read_text()
+        reviewed = ('upstream xray {\n'
+                    '    server 127.0.0.1:8443 max_fails=0;\n'
+                    '    server 127.0.0.1:9443 backup;\n}')
+        self.assertIn(reviewed, original)
+        invalid = (
+            reviewed.replace('max_fails=0', 'max_fails=1'),
+            reviewed.replace('127.0.0.1:9443', '127.0.0.1:9444'),
+            reviewed.replace('9443 backup;', '9443 max_fails=0 backup;'),
+            reviewed.replace('8443 max_fails=0;', '8443;'),
+            reviewed.replace('9443 backup;', '9443;'),
+            reviewed.replace('    server 127.0.0.1:9443 backup;\n', ''),
+            reviewed.replace('    server 127.0.0.1:9443 backup;\n',
+                             '    server 127.0.0.1:9443 backup;\n'
+                             '    server 127.0.0.1:10555 backup;\n'),
+            reviewed + '\nupstream foreign { server 127.0.0.1:8443 max_fails=0; '
+                       'server 127.0.0.1:9443 backup; }',
+        )
+        for variant in invalid:
+            with self.subTest(variant=variant):
+                stream.write_text(original.replace(reviewed, variant))
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    self.plan(site_digest='a' * 64)
+                self.assertEqual(self.snapshot(), before)
+        stream.write_text(original)
+        self.apply(self.plan())
+        twm = self.root / 'stream-upstreams.d/telemt-web-manager.conf'
+        twm.write_text('upstream twm_frontend { server 127.0.0.1:7444; '
+                       'server 127.0.0.1:9443 backup; }\n')
+        before = self.snapshot()
+        for uninstall in (False, True):
+            with self.assertRaises(ValueError):
+                self.plan(uninstall=uninstall)
+            self.assertEqual(self.snapshot(), before)
 
     def test_include_install_check_immutable_uninstall_preserves_neighbor(self):
         before = self.snapshot()

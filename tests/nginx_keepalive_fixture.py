@@ -62,6 +62,48 @@ class SYNs:
         s.require(not self.thread.is_alive()); self.socket.close()
 
 
+def check_site(probe, directory):
+    """Real public HTTPS -> Telemt -> Nginx, not a mock HTTP server."""
+    before=s.site_identity(directory)
+    for file in sorted(directory.iterdir()):
+        path='/' if file.name=='index.html' else '/'+file.name
+        status,headers,body=probe.request('GET',path)
+        s.require(status==200 and body==file.read_bytes(), 'public site resource differs')
+        mime={'.html':'text/html','.css':'text/css','.svg':'image/svg+xml',
+              '.ico':'image/x-icon','.txt':'text/plain'}[file.suffix]
+        s.require(headers.get('content-type','').split(';')[0]==mime)
+        s.require('content-security-policy' in headers)
+    status,headers,body=probe.request('HEAD','/')
+    s.require(status==200 and not body)
+    for method in ('POST','PUT','DELETE','OPTIONS'):
+        status,headers,body=probe.request(method,'/index.html')
+        s.require(status==405)
+    status,headers,body=probe.request('GET','/does-not-exist')
+    s.require(status==404 and body==(directory/'404.html').read_bytes())
+    _,headers,_=probe.request('GET','/')
+    for condition in ({'If-None-Match':headers['etag']},
+                      {'If-Modified-Since':headers['last-modified']}):
+        status,headers,body=probe.request('GET','/',headers=condition)
+        s.require(status==304 and not body)
+    # The approved eleven files are flat. Add/remove a test-only directory to
+    # exercise Nginx's native slash redirect without changing production assets.
+    redirect=directory/'redirect-test'; redirect.mkdir(mode=0o755)
+    (redirect/'index.html').write_bytes((directory/'index.html').read_bytes())
+    # The boot guest uses UMask=0077; real unprivileged Nginx workers need to
+    # traverse/read this inert fixture, just like the eleven public assets.
+    redirect.chmod(0o755); (redirect/'index.html').chmod(0o644)
+    try:
+        status,headers,body=probe.request('GET','/redirect-test')
+        s.require(status==301 and headers.get('location')=='/redirect-test/')
+        s.require(b'127.0.0.1' not in body and b'18081' not in body)
+    finally:
+        (redirect/'index.html').unlink(); redirect.rmdir()
+    s.require(s.site_identity(directory)==before)
+    probe.run(full=False)
+    print('REAL original site: eleven byte-identical resources/MIME/CSP; '
+          'HEAD/405/custom 404/ETag+date 304/relative 301; authenticated WEB after HTTP: PASS',flush=True)
+
+
 def main():
     s.require(os.geteuid()==0)
     config=s.read_config(sys.argv[1]); host=config['web']['vhosts'][0]['host']
@@ -103,6 +145,7 @@ def main():
                 print(f'REAL HTTPS WEB: keepalive={keepalive}; 32 authenticated sessions; '
                       f'{requests} requests; new backend TCP SYN={counts[-1]}; '
                       f'elapsed={time.monotonic()-start:.3f}s',flush=True)
+                if keepalive and len(sys.argv)==3: check_site(probe,Path(sys.argv[2]))
             finally:
                 if process.poll() is None: process.send_signal(signal.SIGQUIT)
                 try: process.wait(timeout=5)

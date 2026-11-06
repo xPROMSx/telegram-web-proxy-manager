@@ -130,7 +130,9 @@ class ManagedContractTests(unittest.TestCase):
         config["web"]["vhosts"][0]["profiles"][0]["max_sessions"] = 16
         config["general"]["log_level"] = "quiet"
         del config["general"]["disable_colors"]  # No automatic color migration.
-        config["web"]["vhosts"][0]["decoy"].pop("index")  # Audited upstream default.
+        legacy = copy.deepcopy(config)
+        legacy['web']['vhosts'][0]['decoy'] = {'mode':'static_directory','directory':'/var/lib/telemt/public'}
+        self.validate(legacy)  # Historical implicit index.html default stays supported.
         self.validate(config)
         config["upstreams"][0] = {"type": "socks5", "address": "localhost:1080",
                                   "enabled": True, "weight": 2}
@@ -170,7 +172,7 @@ class ManagedContractTests(unittest.TestCase):
             (("web", "vhosts", 0, "public_addr"), "203.0.113.10:8443"),
             (("web", "vhosts", 0, "public_addr"), "[2001:db8::1]:443"),
             (("web", "vhosts", 0, "public_addr"), "127.0.0.1:443"),
-            (("web", "vhosts", 0, "decoy", "mode"), "http_upstream"),
+            (("web", "vhosts", 0, "decoy", "mode"), "static_directory"),
             (("web", "vhosts", 0, "decoy", "directory"), "/tmp/decoy"),
             (("web", "vhosts", 0, "decoy", "index"), "../private"),
             (("web", "vhosts", 0, "profiles"), []),
@@ -327,6 +329,7 @@ printf '%s %s\n' "$result" "$SECONDS"
     def test_existing_path_check_keeps_fail_fast_https_contract(self):
         script = r'''source "$1/telemt-web-manager.sh"
 DOMAIN=proxy.example.com
+helper() { [[ $1 == decoy-mode ]] || return 99; printf static_directory; }
 nginx_test() { return 0; }
 service_active() { return 0; }
 listener_ready() { return 0; }
