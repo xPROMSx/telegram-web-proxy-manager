@@ -383,7 +383,7 @@ to 3.5.12; subsequent owner live acceptance completed the normal 3.5.12 → 3.5.
 Update, with COMMITTED metadata, matching generation IDs and final Check OK.
 
 
-## Static cover behavior (1.0.0)
+## Historical static cover behavior (1.0.0)
 
 Reviewed baseline 3.5.12 source at
 `c4555e25f39dd5be200ccf6353f7d82bfcf89131`: `src/config/load/runtime_web.rs`
@@ -417,3 +417,28 @@ Vision in the existing integration chain. Historical profiles remain pinned.
 `tests/fixtures/nginx-3x-includes` is the generated `includes` topology for offline
 regressions (trailing whitespace from empty substitutions is trimmed); shared empty directories are created by fixture setup, as Git does
 not store empty directories. Production must receive them from 3X-UI.
+
+## Approved original cover sites v0.3
+
+Owner-approved archive `TWPM-original-cover-sites-v0.3.zip`:
+SHA256 `aad702e7f8a5a5caf1095d69304d9705e568717ea8ad8c0f502a44fb9eefbab5`.
+Only the following five original source files are vendored and embedded in the
+helper; no HTML/CSS/SVG, editorial text or randomization algorithm was changed.
+Generator and validator run privately; only the chosen eleven ready files are
+published. There is no runtime resource download or neighbor dependency.
+
+| Source | SHA256 |
+| --- | --- |
+| `generate.py` | `80d44774b479dd3559afabeaf5f6d6e2af24d78f5299a9ea449870735148aa37` |
+| `templates/botanical/site.css` | `dfa768748b3eef63feb6b469d6fe508195d6a8c8b901a4e7790e036d5096d795` |
+| `templates/kitchen/site.css` | `cfe8b04b34571f3f154273149124df084258f4631899ea4af2fb85fd16fe39fe` |
+| `templates/night-sky/site.css` | `622fcaead70e4f5069c9eac97910147a2d9dd4705fe4e49da21e41eb48aa02e6` |
+| `validate.py` | `3e7876e3d98775186f6aae433100f39775e54f2d6dbbf9b0468689fdfa84f072` |
+
+The helper checks the frozen compressed resource SHA256 before decompression and
+runs the verbatim validator before publishing. Generated names/content are then
+bound to the exact owned Nginx vhost and its existing manifest digest.
+Telemt 3.5.16 native `http_upstream` forwards method/path/status/headers and rewrites
+Host to the origin authority; relative redirects avoid leaking the local address.
+See [OPERATIONS.md](OPERATIONS.md#оригинальные-сайты-v03-текущий-контракт) for the
+exact owned Nginx template and the separate 3X-UI Backup v3 incompatibility.

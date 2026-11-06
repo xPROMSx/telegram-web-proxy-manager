@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'lib/safety.py'
-MENU = b'  1. Install Telegram proxy\n  2. Update Telemt\n  3. Check status\n  4. Check and restart services\n  5. Show connection link\n  6. Change cover site\n  7. Uninstall Telegram proxy\n  0. Exit\n'
+MENU = b'  1. Install Telegram proxy\n  2. Update Telemt\n  3. Check status\n  4. Check and restart services\n  5. Show connection link\n  6. Uninstall Telegram proxy\n  0. Exit\n'
 COUNT = 0
 
 
@@ -154,13 +154,13 @@ main
             passed('real platform guard before apt: '+reason)
         before = snapshot(root)
         for language, menu, warning in [('1',MENU,b'WARNING: This link contains a bearer secret.'),
-                ('2','  1. Установить Telegram-прокси\n  2. Обновить Telemt\n  3. Проверить состояние\n  4. Проверить и перезапустить службы\n  5. Показать ссылку подключения\n  6. Сменить сайт-прикрытие\n  7. Удалить Telegram-прокси\n  0. Выход\n'.encode(),
+                ('2','  1. Установить Telegram-прокси\n  2. Обновить Telemt\n  3. Проверить состояние\n  4. Проверить и перезапустить службы\n  5. Показать ссылку подключения\n  6. Удалить Telegram-прокси\n  0. Выход\n'.encode(),
                  'ВНИМАНИЕ: ссылка содержит секрет доступа.'.encode())]:
             for name, extra, colored in [('color', {}, True), ('NO_COLOR', {'NO_COLOR':'1'}, False),
                                          ('NO_COLOR empty', {'NO_COLOR':''}, False), ('TERM=dumb', {'TERM':'dumb'}, False),
                                          ('TERM=unknown', {'TERM':'unknown'}, False)]:
                 result, output = terminal(command, (language+'\n5\n').encode(), dict(env, **extra))
-                require(result == 0 and menu in output, 'exact localized eight-entry menu')
+                require(result == 0 and menu in output, 'exact localized seven-entry menu')
                 require(output.count(b'SELECT LANGUAGE /')==1, 'one language choice per invocation')
                 require(expected in output and output.count(expected) == 1, 'exact current TOML/domain link display')
                 require((b'\x1b[' in output) == colored, 'terminal color policy')

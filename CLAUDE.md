@@ -35,7 +35,8 @@ under qemu-user; it does not establish native ARM VPS/systemd acceptance.
 | `install.sh` | Official manager source resolution, static pair validation, locked atomic installation and both launchers |
 | `telemt-web-manager.sh` | Public menu/CLI, preflight and Install/Update/Check/Repair/Uninstall orchestration |
 | `lib/safety.py` | Strict config/Nginx/renewal parsers, ownership, cover bytes, provenance, transaction/isolation/recovery APIs |
-| `assets/fake-sites/` | Local HTML/CSS/manifest sources matching the embedded helper collection |
+| `assets/cover-sites-v0.3/` | Verbatim approved resources embedded in the helper; only eleven generated files are public |
+| `assets/fake-sites/` | Historical static_directory test fixtures, not production generation |
 | `tests/`, `tests/suites.json` | Existing discovery, standalone suites, fixtures and mechanically checked CI reachability |
 | `.github/workflows/checks.yml` | Exact-revision plan, identity/static/regression/integration/system jobs and final required gate |
 | `.github/workflows/telegram-release.yml` | Release announcements/manual notification; never invoke it as validation |
@@ -93,11 +94,22 @@ are language-independent. WEB link display requires terminal stdin/stdout/stderr
   ownership and renewal contracts. Telemt keeps its own ACME webroot and canonical
   deploy hook; it does not adopt 3x-ui's `/var/www/acme` or manage global renewal
   timers. Unknown renewal/hook state is not silently rewritten.
-- Cover pages use bounded verified manager-owned bytes and local `/cover.css`;
-  no external resources or weakened CSP. Cover changes atomically replace only
-  known HTML after stylesheet/ownership checks. Telemt caches static assets, so
-  the existing verified restart/restoration path is necessary. Update preserves
-  both HTML and CSS through the full DATA contract.
+- Fresh sites use the approved v0.3 generator once, through native Telemt
+  `http_upstream` and loopback Nginx :18081. Publish only the eleven generated files
+  under `/var/www/telemt-web-manager`; never change approved content/design/randomization
+  casually. Existing `static_directory` sites stay byte-identical, with no migration.
+  There is no Change cover site operation. Preserve site ownership and strict CSP.
+
+
+The generated site is fixed for the installation's lifetime. Its eleven-file digest
+is bound by a comment in the exact owned Nginx vhost and the existing manifest hash;
+do not change manifest/state schemas. Check, Update and Uninstall refuse modified
+or foreign site contents. Bootstrap never generates or changes a site. Update
+uses a copy and a temporary, distinct unprivileged Nginx process inside its existing
+private namespace/chroot; preserve candidate isolation and all recovery controls.
+3X-UI Backup v3 recognition is not compatible with cached/new vhosts yet; a separate
+neighbor PR and verification are required before recommending a new TWPM release.
+HTTP/WEB test success does not establish DPI resistance or IP-blocking protection.
 
 ## Tests and CI
 

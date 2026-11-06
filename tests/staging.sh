@@ -15,26 +15,29 @@ for SOCKS in direct 127.0.0.1:1080; do
     generate_config "$secret" >"$TMP/old.toml"
     mkdir -p "$TMP/empty-cwd"
     if candidate_compatibility "$CANDIDATE" "$TMP/old.toml" "$TMP/empty-cwd"; then
-        die 'Old missing static-directory ordering unexpectedly passed'
+        die 'Old missing site staging ordering unexpectedly passed'
     fi
     [[ ! -e $DATA ]]
+    SITE_DIGEST=$(helper site-generate "$TMP/site")
     prepare_compatibility_data "$TMP/compat-data"
     generate_config "$secret" "$TMP/compat-data" >"$TMP/staged.toml"
     candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$TMP/compat-data"
-    printf 'ok - official pinned Telemt %s config healthcheck: staged static_directory + strict unknown-key rejection (%s)\n' "$SUPPORTED_TELEMT_VERSION" "$SOCKS"
-    mv "$TMP/compat-data/public" "$TMP/compat-data/saved-public"
+    printf 'ok - official pinned Telemt %s config healthcheck: staged original HTTP site + strict unknown-key rejection (%s)\n' "$SUPPORTED_TELEMT_VERSION" "$SOCKS"
+    mv "$TMP/site" "$TMP/saved-site"
     if candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$TMP/compat-data"; then die 'Missing static directory accepted'; fi
-    mv "$TMP/compat-data/saved-public" "$TMP/compat-data/public"
-    mv "$TMP/compat-data/public/index.html" "$TMP/compat-data/public/saved-index"
+    mv "$TMP/saved-site" "$TMP/site"
+    mv "$TMP/site/index.html" "$TMP/site/saved-index"
     if candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$TMP/compat-data"; then die 'Missing static index accepted'; fi
-    mv "$TMP/compat-data/public/saved-index" "$TMP/compat-data/public/index.html"
-    printf 'ok - manager compatibility rejects missing static_directory and index; old ordering fails before issuance (%s)\n' "$SOCKS"
+    mv "$TMP/site/saved-index" "$TMP/site/index.html"
+    printf 'ok - manager compatibility rejects missing site and index; old ordering fails before issuance (%s)\n' "$SOCKS"
     # Root mismatch and symlink escape must not turn staging into a weaker contract.
     if candidate_compatibility "$CANDIDATE" "$TMP/staged.toml" "$DATA"; then die 'Unexpected data root accepted'; fi
     rm -rf -- "$TMP/compat-data"
     ln -s "$TMP/empty-cwd" "$TMP/compat-data"
     if prepare_compatibility_data "$TMP/compat-data"; then die 'Symlink staging accepted'; fi
     rm -- "$TMP/compat-data"
+    rm -rf -- "$TMP/site"
+    SITE_DIGEST=''
     REAL_CANDIDATE="$CANDIDATE" FIXTURE_SOCKS="$SOCKS" bash tests/fresh.sh
     REAL_CANDIDATE="$CANDIDATE" FIXTURE_SOCKS="$SOCKS" FIXTURE_INCOMPATIBLE=1 bash tests/fresh.sh
     for missing in directory index; do

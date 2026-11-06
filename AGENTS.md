@@ -16,8 +16,9 @@
 Telegram Web Proxy Manager installs and manages a Telegram HTTPS WEB proxy on an
 Ubuntu VPS. Telemt is the proxy engine; existing Nginx supplies public SNI/TLS
 routing and Let's Encrypt certificates. Direct Telegram connectivity or optional
-SOCKS5 is supported. Local cover pages use a manager-owned stylesheet and strict
-upstream CSP. 3x-ui Auto Nginx is an optional, independently managed neighbor:
+SOCKS5 is supported. Fresh installs use an original eleven-file static site through Telemt
+`http_upstream` and an owned loopback Nginx origin; existing `static_directory`
+sites remain supported without migration. 3x-ui Auto Nginx is an optional, independently managed neighbor:
 prepare it first, then install this manager. Do not modify its repository or state
 as an incidental part of work here.
 
@@ -51,8 +52,9 @@ under qemu-user, not a native ARM VPS/systemd acceptance.
   lifecycle orchestration, Nginx/TLS integration and safe diagnostics.
 - `lib/safety.py`: strict parsers, staged plans, ownership/provenance validation,
   cover assets, Universal Update transaction, isolation and recovery APIs.
-- `assets/fake-sites/`: bounded local cover sources/manifest matching the embedded
-  helper assets; no external resources or weakening of CSP.
+- `assets/cover-sites-v0.3/`: verbatim approved generator, validator and CSS sources;
+  integrity-checked resources are embedded in the helper to preserve the two-file bootstrap.
+- `assets/fake-sites/`: historical fixtures only; never generate or rotate old covers.
 - `tests/`: unittest modules, shell suites, real dependency tests and controlled
   fault-injection fixtures. `tests/suites.json` records execution paths.
 - `docs/`: operational/security contracts, evidence and upstream attribution.
@@ -153,6 +155,16 @@ new standalone tests/helpers so the manifest proves a real CI execution path;
 `test_*.py` modules use existing discovery. Keep public PR descriptions concise
 and free of private findings. Do not rewrite published history or claim pending
 CI/live checks passed. Stop at the requested review boundary; no implicit merge.
+
+The generated site is fixed for the installation's lifetime. Its eleven-file digest
+is bound by a comment in the exact owned Nginx vhost and the existing manifest hash;
+do not change manifest/state schemas. Check, Update and Uninstall refuse modified
+or foreign site contents. Bootstrap never generates or changes a site. Update
+uses a copy and a temporary, distinct unprivileged Nginx process inside its existing
+private namespace/chroot; preserve candidate isolation and all recovery controls.
+3X-UI Backup v3 recognition is not compatible with cached/new vhosts yet; a separate
+neighbor PR and verification are required before recommending a new TWPM release.
+HTTP/WEB test success does not establish DPI resistance or IP-blocking protection.
 
 ## Independent integration management
 

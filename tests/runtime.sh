@@ -24,9 +24,11 @@ PY
     [[ $(binary_version "$candidate") == "$SUPPORTED_TELEMT_VERSION" ]]
     printf 'Real runtime Telemt version: %s\n' "$SUPPORTED_TELEMT_VERSION"
     pid=''
+    origin_pid=''
     # Invoked by EXIT trap, including failed readiness/classification/shutdown.
     # shellcheck disable=SC2317
     stop_on_failure() {
+        if [[ -n $origin_pid ]]; then kill -TERM "$origin_pid" 2>/dev/null || true; wait "$origin_pid" 2>/dev/null || true; fi
         if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             for ((i=0; i<100; i++)); do
@@ -55,6 +57,16 @@ PY
     # Upstream's "stderr" tracing layer uses the fmt default stdout writer;
     # the MAESTRO startup banner uses stderr. Capture both as journald does.
     # Do not inherit the Cloud executor's RUST_LOG=...error filter.
+    python3 - "$ROOT" "$fixture" <<'PY_ORIGIN'
+import importlib.util,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('runtime_origin',Path(sys.argv[1])/'lib/safety.py')
+s=importlib.util.module_from_spec(spec);sys.modules[spec.name]=s;spec.loader.exec_module(s)
+p=Path(sys.argv[2])
+(p/'origin.conf').write_text('worker_processes 1; pid '+str(p/'origin.pid')+'; error_log '+str(p/'origin.log')+' crit; events {} http {'+s.render_site_server(p/'site')+'}')
+PY_ORIGIN
+    nginx -p "$fixture/" -c "$fixture/origin.conf" -g 'daemon off; master_process off;' >/dev/null 2>&1 &
+    origin_pid=$!
     env -u RUST_LOG "$candidate" "$fixture/runtime.toml" >"$fixture/stderr" 2>&1 &
     pid=$!
     printf 'Real Telemt process started: pid=%s\n' "$pid"
@@ -74,7 +86,7 @@ PY
         sleep 0.1
     done
     (( ready )) || die 'Real listener/HTTP did not become ready'
-    cmp -s "$fixture/http-body" "$fixture/data/public/index.html"
+    cmp -s "$fixture/http-body" "$fixture/site/index.html"
     printf 'ok - REAL pinned listener owned by Telemt PID; real HTTP 200 serves generated managed index\n'
     # Old actor retries after 1s, 2s, 4s, then backs off to a 30s cap.
     # HTTP readiness alone could mask permanently failed reconciliation.
@@ -84,7 +96,7 @@ PY
     ss -H -ltnp 'sport = :18080' | grep -Fq "pid=$pid,"
     curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
         http://127.0.0.1:18080/ -o "$fixture/http-body"
-    cmp -s "$fixture/http-body" "$fixture/data/public/index.html"
+    cmp -s "$fixture/http-body" "$fixture/site/index.html"
     python3 - "$dwell_started" <<'PY'
 import sys, time
 elapsed = time.monotonic_ns() - int(sys.argv[1])
@@ -103,39 +115,10 @@ except Exception:
     raise SystemExit('REAL Fresh WEB protocol probe failed; private configuration withheld') from None
 print('ok - REAL authenticated WEB bootstrap/session/Hello/uplink replay/close: PASS')
 PY
-    python3 "$ROOT/tests/nginx_keepalive_fixture.py" "$fixture/runtime.toml"
-    # Static assets are cached at config load. Atomic replacement is visible only
-    # after the same graceful restart used by Change cover site.
-    cp "$fixture/http-body" "$fixture/old-cover"
-    python3 - "$ROOT" "$fixture/data/public" <<'PY'
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location('cover_runtime',sys.argv[1]+'/lib/safety.py')
-s = importlib.util.module_from_spec(spec); sys.modules[spec.name] = s; spec.loader.exec_module(s)
-s.cover_atomic(sys.argv[2],s.SERVICE_STATUS)
-PY
-    curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
-        http://127.0.0.1:18080/ -o "$fixture/http-body"
-    cmp -s "$fixture/http-body" "$fixture/old-cover"
-    kill -TERM "$pid"
-    for ((i=0; i<1800; i++)); do
-        if ! kill -0 "$pid" 2>/dev/null; then break; fi
-        sleep 0.1
-    done
-    if kill -0 "$pid" 2>/dev/null; then die 'Cover restart graceful shutdown timed out'; fi
-    wait "$pid"
-    env -u RUST_LOG "$candidate" "$fixture/runtime.toml" >>"$fixture/stderr" 2>&1 &
-    pid=$!
-    ready=0
-    for ((i=0; i<900; i++)); do
-        kill -0 "$pid" || die 'Real Telemt exited during cover restart'
-        if ss -H -ltnp 'sport = :18080' | grep -Fq "pid=$pid," &&
-           curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
-                http://127.0.0.1:18080/ -o "$fixture/http-body"; then ready=1; break; fi
-        sleep 0.1
-    done
-    (( ready )) || die 'Cover restart listener/HTTP did not become ready'
-    cmp -s "$fixture/http-body" "$fixture/data/public/index.html"
-    printf 'ok - REAL atomic cover replacement: cached before restart; new Service Status served after verified restart\n'
+    python3 "$ROOT/tests/nginx_keepalive_fixture.py" "$fixture/runtime.toml" "$fixture/site"
+    # Site files never rotate. Ordinary HTTP and authenticated WEB probes above
+    # must leave all eleven files unchanged.
+    [[ $(helper site-identity "$fixture/site") == "$(cat "$fixture/site.sha256")" ]]
     if grep -Fq "${failure_patterns[@]}" "$fixture/stderr"; then
         die 'Pinned runtime has conntrack reconciliation/retry failure'
     fi
@@ -196,7 +179,9 @@ runtime_cleanup() {
 trap runtime_cleanup EXIT
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 DATA="$TMP/data"
 install -d -m 0750 "$DATA" "$DATA/state" "$DATA/public"
-write_managed_decoy "$DATA/public"
+SITE_ROOT="$TMP/site"
+SITE_DIGEST=$(helper site-generate "$SITE_ROOT")
+printf '%s\n' "$SITE_DIGEST" >"$TMP/site.sha256"
 secret=$(openssl rand -hex 16)
 generate_config "$secret" >"$TMP/runtime.toml"
 unset secret
@@ -208,7 +193,7 @@ import sys, tomllib
 c = tomllib.loads(Path(sys.argv[1]).read_text())
 assert c['server']['conntrack_control'] == {'inline_conntrack_control': True, 'mode': 'tracked'}
 assert c['server']['listeners'][0]['ip'] == '127.0.0.1'
-print('Production-generated strict tracked-mode TOML and static index verified')
+print('Production-generated strict tracked-mode TOML and original HTTP site verified')
 PY
 host_namespace=$(readlink /proc/self/ns/net)
 unshare "${namespace_args[@]}" bash "$ROOT/tests/runtime.sh" --inside "$TMP" "$CANDIDATE" "$host_namespace"

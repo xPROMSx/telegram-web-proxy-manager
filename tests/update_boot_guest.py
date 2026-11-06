@@ -78,7 +78,9 @@ WantedBy=multi-user.target
         path.chmod(0o700 if path in (layout.state,layout.backups) else 0o750)
         os.chown(path,uid if path==layout.data/'state' else 0,0 if path in (layout.state,layout.backups) else gid)
     secret=secrets.token_hex(16)
-    s.update_write(layout.config,bash('read -r token; generate_config "$token"',secret),0o640); os.chown(layout.config,0,gid)
+    sys.path.insert(0,str(ROOT/'tests'))
+    from legacy_site_fixture import legacy_config
+    s.update_write(layout.config,legacy_config(bash('read -r token; generate_config "$token"',secret)),0o640); os.chown(layout.config,0,gid)
     s.update_write(layout.data/'public/index.html',
                    b'<!doctype html><html lang="en"><meta charset="utf-8"><title>Welcome</title><h1>Welcome</h1></html>\n',0o440)
     os.chown(layout.data/'public/index.html',0,gid)
@@ -140,21 +142,24 @@ WantedBy=multi-user.target
 
 
 class RecordedHTTP:
+    def __init__(self,directory='x86_64'): self.directory=directory
     def download(self,url,path,size,digest):
-        frozen=s.update_json((ARTIFACTS/'x86_64/frozen.json').read_bytes())
+        frozen=s.update_json((ARTIFACTS/self.directory/'frozen.json').read_bytes())
         item=next((key for key in ('asset','checksum_asset') if frozen[key]['url']==url),None)
         assert item and frozen[item]['size']==size and frozen[item]['sha256']==digest
-        source=ARTIFACTS/'x86_64'/('archive.tar.gz' if item=='asset' else 'archive.sha256')
+        source=ARTIFACTS/self.directory/('archive.tar.gz' if item=='asset' else 'archive.sha256')
         assert s.update_hash(source)==dict(sha256=digest,size=size)
         s.update_copy_stream(source,path)
 
 
 class RecordedReleases(s.UpdateReleases):
-    def __init__(self): super().__init__(RecordedHTTP()); self.record=s.update_json((ARTIFACTS/'x86_64/frozen.json').read_bytes())
+    def __init__(self,directory='x86_64'):
+        self.directory=directory; super().__init__(RecordedHTTP(directory))
+        self.record=s.update_json((ARTIFACTS/self.directory/'frozen.json').read_bytes())
     def latest(self): return dict(self.record['release'],version=self.record['installed_version'])
     def freeze(self,release,arch): assert arch=='x86_64'; return copy.deepcopy(self.record)
     def recheck(self,record,require_latest=True):
-        assert record==self.record==s.update_json((ARTIFACTS/'x86_64/frozen.json').read_bytes())
+        assert record==self.record==s.update_json((ARTIFACTS/self.directory/'frozen.json').read_bytes())
 
 
 def assert_running(version):
@@ -264,19 +269,28 @@ check_manager
     receipt=s.UpdateReceipt.read(layout.receipt)
     assert receipt['installed_version']=='3.5.16' and receipt['origin']=='reviewed-baseline'
     engine=s.UpdateEngine(); engine.ownership(); engine.systemd.identity(receipt); engine.systemd.path_health()
-    keepalive=subprocess.run(['python3',str(ROOT/'tests/nginx_keepalive_fixture.py'),str(layout.config)],
+    keepalive=subprocess.run(['python3',str(ROOT/'tests/nginx_keepalive_fixture.py'),str(layout.config),s.SITE_ROOT],
                              capture_output=True,timeout=120)
     assert keepalive.returncode==0,'real Fresh Telemt HTTPS/keepalive fixture failed'
     for line in keepalive.stdout.decode().splitlines(): print('TWM_REAL_KEEPALIVE '+line,flush=True)
+    # Real new-mode candidate isolation, including two process lifetimes and
+    # quota readback. Historical 3.5.12 -> 3.5.13 activation remains unchanged.
+    private=Path('/root/fresh-http-isolation'); private.mkdir(mode=0o700)
+    probe=engine.isolation.prepare(private/'root',layout.binary)
+    engine.isolation.run(probe,'3.5.16',rehearsal=True)
+    engine.discard_private(private)
+    print('TWM_FRESH_HTTP_ISOLATION_OK official 3.5.16, immutable TOML/site, private origin, WEB/restart/quota',flush=True)
     before=engine.immutable()
     preserved=(layout.binary,layout.receipt,layout.journal,layout.generation,
                layout.data/'.telemt-web-manager-generation.json',
-               layout.data/'public/index.html',layout.data/'public/cover.css')
+               *(Path(s.SITE_ROOT)/name for name in sorted(p.name for p in Path(s.SITE_ROOT).iterdir())))
     identities={path:s.update_hash(path) for path in preserved}
     s.update_run(['bash','-c','source "$1"; TMP=$(mktemp -d); trap cleanup EXIT; take_lock; install_manager',
                   'fresh-idempotence',str(MANAGER/'telemt-web-manager.sh')],timeout=300)
     assert engine.immutable()==before
     assert {path:s.update_hash(path) for path in preserved}==identities
+    engine.releases=RecordedReleases('fresh-x86_64'); engine.update()
+    assert engine.immutable()==before and {path:s.update_hash(path) for path in preserved}==identities
     print('TWM_FRESH_3516_OK actual Install/state/systemd/WEB/Check/idempotent rerun; historical 3.5.12 -> 3.5.13 recovery unchanged',flush=True)
 
 

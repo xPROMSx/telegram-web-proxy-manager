@@ -25,6 +25,7 @@ BIN="$SANDBOX/telemt" CONFIG_DIR="$SANDBOX/etc-telemt" DATA="$SANDBOX/data"
 CONFIG="$CONFIG_DIR/telemt.toml" UNIT="$SANDBOX/telemt.service" STATE="$SANDBOX/state"
 BACKUP_ROOT="$SANDBOX/backups" NGINX_ROOT="$SANDBOX/nginx" TMP="$SANDBOX/tmp"
 CERT_ROOT="$SANDBOX/certs"
+SITE_ROOT="$SANDBOX/site"
 RENEW_HOOK="$CERT_ROOT/renewal-hooks/deploy/telemt-web-manager"
 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
 mkdir "$TMP"
@@ -101,11 +102,17 @@ candidate_healthcheck() {
         # A real strict-parser rejection on the private healthcheck copy.
         printf '\n[__telemt_web_manager_incompatible_fixture]\ninvalid = true\n' >>"$2"
     fi
-    if [[ ${FIXTURE_MISSING_STATIC:-} == directory && $3 == "$TMP/compat-data" ]]; then rm -rf -- "$3/public"; fi
-    if [[ ${FIXTURE_MISSING_STATIC:-} == index && $3 == "$TMP/compat-data" ]]; then rm -f -- "$3/public/index.html"; fi
+    if [[ ${FIXTURE_MISSING_STATIC:-} == directory && $3 == "$TMP/compat-data" ]]; then rm -rf -- "$TMP/site"; fi
+    if [[ ${FIXTURE_MISSING_STATIC:-} == index && $3 == "$TMP/compat-data" ]]; then rm -f -- "$TMP/site/index.html"; fi
     if [[ -n ${REAL_CANDIDATE:-} ]]; then official_candidate_healthcheck "$@" || return 1;
     else
-    [[ -d $3/public && ! -L $3/public && -f $3/public/index.html && ! -L $3/public/index.html ]] || return 1
+    local site=$SITE_ROOT
+    if [[ $3 == "$TMP/compat-data" ]]; then site="$TMP/site"; fi
+    if [[ $(helper decoy-mode "$2") == static_directory ]]; then
+        [[ -f $3/public/index.html && ! -L $3/public/index.html ]] || return 1
+    else
+        [[ -n $SITE_DIGEST && $(helper site-identity "$site") == "$SITE_DIGEST" ]] || return 1
+    fi
     ! grep -q '^__telemt_web_manager_unknown_contract = ' "$2" || return 1
     helper config-info "$2" >/dev/null || return 1
     fi
@@ -344,7 +351,7 @@ assert 'tg://' not in pathlib.Path(sys.argv[2]).read_text()
 final = pathlib.Path(sys.argv[1]).read_text()
 assert pathlib.Path(sys.argv[3]).read_text().replace(sys.argv[4], sys.argv[5]) == final
 assert sys.argv[4] not in final
-assert (pathlib.Path(sys.argv[4]) / 'public/index.html').read_bytes() == (pathlib.Path(sys.argv[5]) / 'public/index.html').read_bytes()
+assert c['web']['vhosts'][0]['decoy'] == {'mode':'http_upstream','upstream':'http://127.0.0.1:18081'}
 assert c['upstreams'] == ([{'type': 'direct'}] if sys.argv[6] == 'direct' else [{'type': 'socks5', 'address': sys.argv[6]}])
 PY
 printf 'ok - staged/final semantics identical; no temporary path/secret leaks; final revalidation and readiness/path/log checks (%s)\n' "$SOCKS"
@@ -357,12 +364,11 @@ printf 'ok - full fresh install and idempotent rerun in mocked filesystem\n'
 # as Install. Real load_installation and Nginx ownership checks remain active.
 cp -p "$NGINX_ROOT/conf.d/telemt-web-manager.conf" "$SANDBOX/optimized-vhost"
 cp -p "$STATE/manifest.json" "$SANDBOX/optimized-manifest"
-for http_format in keepalive legacy; do
-if [[ $http_format == legacy ]]; then
-    cp "$ROOT/tests/fixtures/nginx-vhost-legacy.conf" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"
-    jq --arg nginx "$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf" | cut -d' ' -f1)" \
-        '.nginx_sha256=$nginx' "$STATE/manifest.json" >"$SANDBOX/legacy-manifest"
-    cp "$SANDBOX/legacy-manifest" "$STATE/manifest.json"
+cp -p "$CONFIG" "$SANDBOX/origin-config"
+cp -a "$SITE_ROOT" "$SANDBOX/origin-site"
+for http_format in origin keepalive direct; do
+if [[ $http_format != origin ]]; then
+    python3 tests/legacy_site_fixture.py "$CONFIG" "$DATA" "$NGINX_ROOT" "$STATE" "$SITE_ROOT" "$http_format"
 fi
 nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
 (
@@ -387,6 +393,9 @@ printf 'ok - Install/Check/Update delegation/Repair preserve %s HTTP and existin
 done
 cp -p "$SANDBOX/optimized-vhost" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"
 cp -p "$SANDBOX/optimized-manifest" "$STATE/manifest.json"
+cp -p "$SANDBOX/origin-config" "$CONFIG"
+cp -a "$SANDBOX/origin-site" "$SITE_ROOT"
+rm -- "$DATA/public/index.html" "$DATA/public/cover.css"
 before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file")
 set +e
 (set -Eeuo pipefail; installed_compatibility() { return 1; }; load_installation) >"$SANDBOX/isolation-failure.log" 2>&1
