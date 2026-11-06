@@ -157,6 +157,7 @@ if [[ -n ${FIXTURE_HTTPS:-} ]]; then
     process_identity() { printf x >>"$SANDBOX/process-checks"; }
     socks_probe() { printf x >>"$SANDBOX/socks-checks"; }
     http_ok() {
+        if [[ $* == *http://127.0.0.1:18081/* ]]; then printf x >>"$SANDBOX/origin-checks"; return 0; fi
         if [[ $* != *https://* ]]; then printf x >>"$SANDBOX/http-checks"; return 0; fi
         printf x >>"$SANDBOX/https-checks"
         # Advance a test-only Bash clock: permanent failures finish immediately.
@@ -183,7 +184,8 @@ if [[ -n ${FIXTURE_HTTPS:-} ]]; then
     # exactly the requests and pauses from that bounded subprocess.
     [[ $(cat "$SANDBOX/https-issuance") == issued ]]
     [[ $(cat "$SANDBOX/service-checks") == x && $(cat "$SANDBOX/listener-checks") == x &&
-       $(cat "$SANDBOX/process-checks") == x && $(cat "$SANDBOX/http-checks") == x ]]
+       $(cat "$SANDBOX/process-checks") == x && $(cat "$SANDBOX/http-checks") == x &&
+       $(cat "$SANDBOX/origin-checks") == x ]]
     if [[ $FIXTURE_HTTPS == ready || $FIXTURE_HTTPS == delayed ]]; then
         if [[ $result != 0 ]]; then cat "$SANDBOX/https.log" >&2; exit 1; fi
         [[ -f $STATE/manifest.json && -f $BIN && -f $UNIT && -f $SANDBOX/path-health ]]
