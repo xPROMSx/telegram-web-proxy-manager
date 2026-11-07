@@ -42,6 +42,11 @@ real Nginx and counts distinct loopback TCP SYNs to port 18080 for the same 192
 HTTP requests before/after keepalive. This controlled sequence is not Telegram
 iOS traffic, live ACME issuance or evidence about carrier blocking. Captured
 credentials and HTTP payloads are never printed.
+The same fixture now keeps sixteen independently authenticated WEB sessions
+live, sends concurrent uplinks, checks HTTP 503 for a seventeenth, verifies that
+existing sessions still work and reuses a released slot. This uses official
+Telemt and real HTTPS/Nginx, not a mocked admission response. Source-level config
+regressions also preserve the historical eight-session profile as safe tuning.
 
 Targeted local acceptance on 5 November 2026 used the official Telemt 3.5.16
 binary in isolated container/network namespaces. Stock Ubuntu 24.04 Nginx 1.24.0

@@ -33,6 +33,20 @@ pre-issuance rejection through explicit safe-path/directory/index checks in the
 existing `candidate_healthcheck` wrapper; unknown-key rejection is still proven
 against the real binary. No TOML, unit, Nginx or state schema changes are needed.
 
+The 3.5.16 source at the commit above validates profile `max_sessions` as nonzero
+and no greater than the global ceiling (`src/config/load/validate_web/vhosts.rs`).
+Defaults in `src/config/types/web/defaults.rs` are 128 sessions per process and
+16 per IP. `src/web/manager/session_admission.rs` enforces both ceilings and the
+profile ceiling independently; the profile key binds host, user and secret mode
+(`src/web/manager/state.rs`). Fresh Install now sets that profile ceiling to 16,
+without changing global/IP limits or the 512/64 stream limits. Existing profiles
+remain unchanged. The official ELF passed strict configuration validation and
+the isolated real HTTPS/WEB fixture: sixteen live authenticated sessions,
+concurrent uplinks, HTTP 503 for a seventeenth, healthy existing sessions and
+successful reuse of a closed slot. This measures admission behavior, not load
+capacity or throughput. The same regression runs in the existing runtime and
+Ubuntu system suites through `tests/nginx_keepalive_fixture.py`.
+
 ## Retained historical 3.5.12 baseline
 
 The historical 3.5.12 release and source were verified through official GitHub metadata and

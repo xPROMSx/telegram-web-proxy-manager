@@ -2,6 +2,7 @@
 """Real root-owned bootstrap commit barrier; candidates are never executed."""
 import importlib.util
 import os
+import py_compile
 from pathlib import Path
 import subprocess
 import sys
@@ -34,13 +35,13 @@ class BootstrapBarrier(unittest.TestCase):
         paths=[f.launcher,f.launcher.with_name('telegram-web-proxy-manager'),*f.destination.rglob('*')]
         return {str(p):(p.stat().st_uid,p.stat().st_gid,p.stat().st_mode,
                        p.read_bytes() if p.is_file() else None) for p in paths if p.exists()}
-    def candidate_version(self,f,version,previous='1.2.0'):
+    def candidate_version(self,f,version,previous='1.3.1'):
         for name,old,new in (('telemt-web-manager.sh','SCRIPT_VERSION='+previous,'SCRIPT_VERSION='+version),
                             ('safety.py',"UPDATE_MANAGER_VERSION = '"+previous+"'","UPDATE_MANAGER_VERSION = '"+version+"'")):
             path=f.source/name; text=path.read_text()
             self.assertEqual(text.count(old),1,'version mutation must change the candidate')
             path.write_text(text.replace(old,new))
-    def invoke(self,f,success=False,tag='v1.2.0',explicit=''):
+    def invoke(self,f,success=False,tag='v1.3.1',explicit=''):
         code=('source "$1"; BOOTSTRAP_TMP=$2; INSTALL_DIR=$3; LAUNCHER=$4; BOOTSTRAP_LOCK=$5; '
               'MANAGER_TAG=$6; VERSION=$7; MANAGER_STATE=$8; MANAGER_SYSTEMD_ROOT=$9; commit_manager_pair')
         result=subprocess.run(['bash','-c',code,'fixture',str(ROOT/'install.sh'),str(f.source),
@@ -57,7 +58,7 @@ class BootstrapBarrier(unittest.TestCase):
         self.candidate_version(f,'1.1.1')
         self.invoke(f,tag='v99.0.0')
 
-    def test_112_upgrade_and_equal_120_preserve_old_receipt_recovery_and_data(self):
+    def test_112_upgrade_and_equal_131_preserve_old_receipt_recovery_and_data(self):
         f=self.fixture(manager_version='1.1.2')
         # Model the installed manager's original release receipt and terminal
         # journal; updating program files must not migrate either record.
@@ -78,8 +79,9 @@ class BootstrapBarrier(unittest.TestCase):
             return {p:(p.read_bytes() if p.is_file() else None,
                        p.stat().st_uid,p.stat().st_gid,p.stat().st_mode) for p in paths}
         before=state()
-        self.candidate_version(f,'1.2.0',previous='1.1.2')
+        self.candidate_version(f,'1.3.1',previous='1.1.2')
         for _ in range(2):
+            py_compile.compile(str(f.destination/'lib/safety.py'),doraise=True)
             self.invoke(f,success=True)
             self.assertEqual((f.destination/'telemt-web-manager.sh').read_bytes(),(f.source/'telemt-web-manager.sh').read_bytes())
             self.assertEqual((f.destination/'lib/safety.py').read_bytes(),(f.source/'safety.py').read_bytes())

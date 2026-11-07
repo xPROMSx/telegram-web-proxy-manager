@@ -2,6 +2,8 @@
 """Bounded repository identity and public CLI migration fixtures; no network."""
 import json
 import os
+import py_compile
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -134,12 +136,13 @@ class LauncherMigration(unittest.TestCase):
             target.write_bytes(src.read_bytes()); target.chmod(0o600)
 
     def snapshot(self):
-        return {str(p.relative_to(self.root)): (p.read_bytes(), p.stat().st_mode,
-                                               p.stat().st_uid, p.stat().st_gid)
+        return {str(p.relative_to(self.root)): (os.readlink(p) if p.is_symlink() else
+                                               p.read_bytes() if p.is_file() else None,
+                                               p.lstat().st_mode, p.lstat().st_uid, p.lstat().st_gid)
                 for directory in (self.root / 'opt', self.root / 'bin')
-                for p in directory.rglob('*') if p.is_file()}
+                for p in directory.rglob('*')}
 
-    def install(self, success=True, injection='', tag='v1.2.0'):
+    def install(self, success=True, injection='', tag='v1.3.1'):
         # No production bypass: inject errors into this fixture's Python interpreter.
         code = '''source "$1"; BOOTSTRAP_TMP=$2/source; INSTALL_DIR=$2/opt/telemt-web-manager
 LAUNCHER=$2/bin/telemt-web-manager; BOOTSTRAP_LOCK=$2/lock/manager.lock
@@ -165,7 +168,7 @@ MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd
                              (0, 0, 0o755, 1))
             result = subprocess.run([str(path), '--help'], capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0)
-            self.assertIn(b'Telegram Web Proxy Manager 1.2.0', result.stdout)
+            self.assertIn(b'Telegram Web Proxy Manager 1.3.1', result.stdout)
             self.assertIn(b'Usage: telegram-web-proxy-manager', result.stdout)
         self.assertEqual(self.legacy.read_bytes(), self.canonical.read_bytes())
 
@@ -173,24 +176,80 @@ MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd
         self.install(); self.assert_launchers()
         before = self.snapshot(); self.install(); self.assertEqual(before, self.snapshot())
 
+    def test_standard_python_cache_allows_pair_reinstall(self):
+        self.install()
+        for optimize in (0, 1, 2):
+            py_compile.compile(str(self.dest / 'lib/safety.py'), doraise=True, optimize=optimize)
+        self.assertTrue(list((self.dest / 'lib/__pycache__').glob('safety.*.pyc')))
+        self.install(); self.assert_launchers()
+        self.assertEqual((self.dest / 'lib/safety.py').read_bytes(),
+                         (self.source / 'safety.py').read_bytes())
+
+    def test_foreign_or_unsafe_helper_cache_refuses_without_mutation(self):
+        self.install()
+        cache = self.dest / 'lib/__pycache__'
+        for kind in ('foreign-file', 'foreign-directory', 'foreign-cache-name', 'nested-directory',
+                     'cache-symlink', 'cache-file', 'cache-owner', 'cache-group', 'cache-mode', 'cache-sticky',
+                     'entry-symlink', 'entry-hardlink', 'entry-owner', 'entry-group', 'entry-mode', 'entry-fifo'):
+            with self.subTest(kind=kind):
+                cache.mkdir(0o755)
+                entry = cache / 'safety.cpython-312.pyc'
+                if kind.startswith('foreign-'):
+                    entry = self.dest / 'lib/unrelated' if kind != 'foreign-cache-name' else cache / 'foreign.cpython-312.pyc'
+                    if kind == 'foreign-directory': entry.mkdir()
+                    else: entry.write_bytes(b'foreign')
+                elif kind == 'nested-directory': entry.mkdir()
+                elif kind == 'cache-symlink': cache.rmdir(); cache.symlink_to(self.source, target_is_directory=True)
+                elif kind == 'cache-file': cache.rmdir(); cache.write_bytes(b'foreign')
+                elif kind == 'entry-symlink': entry.symlink_to(self.source / 'safety.py')
+                elif kind == 'entry-hardlink': os.link(self.source / 'safety.py', entry)
+                elif kind == 'entry-fifo': os.mkfifo(entry)
+                else:
+                    target = cache if kind.startswith('cache-') else entry
+                    if target == entry: entry.write_bytes(b'cache')
+                    if kind.endswith('owner'): os.chown(target, 65534, 0)
+                    elif kind.endswith('group'): os.chown(target, 0, 65534)
+                    else: target.chmod(0o1777 if kind == 'cache-sticky' else 0o777)
+                before = self.snapshot(); self.install(False); self.assertEqual(before, self.snapshot())
+                if cache.is_symlink() or not cache.is_dir(): cache.unlink()
+                else: shutil.rmtree(cache)
+                foreign = self.dest / 'lib/unrelated'
+                if foreign.is_dir(): foreign.rmdir()
+                elif foreign.exists(): foreign.unlink()
+
+    def test_cached_pair_publication_failure_restores_cache_and_launchers(self):
+        self.install()
+        py_compile.compile(str(self.dest / 'lib/safety.py'), doraise=True)
+        self.canonical.unlink()  # Force publication instead of retaining an identical launcher.
+        before = self.snapshot()
+        inject = '''import os
+real_replace = os.replace
+def fail_launcher(a, b):
+    if str(b).endswith('/telegram-web-proxy-manager'):
+        raise OSError('injected canonical launcher failure')
+    real_replace(a, b)
+os.replace = fail_launcher
+'''
+        self.install(False, inject); self.assertEqual(before, self.snapshot())
+
     def test_pre_rename_published_101_candidate_is_still_accepted(self):
         path = self.source / 'telemt-web-manager.sh'
-        self.assertEqual(path.read_text().count('SCRIPT_VERSION=1.2.0'), 1)
+        self.assertEqual(path.read_text().count('SCRIPT_VERSION=1.3.1'), 1)
         path.write_text(path.read_text().replace('# Telegram Web Proxy Manager.',
-            '# Telemt WEB Manager.').replace('SCRIPT_VERSION=1.2.0', 'SCRIPT_VERSION=1.0.1'))
+            '# Telemt WEB Manager.').replace('SCRIPT_VERSION=1.3.1', 'SCRIPT_VERSION=1.0.1'))
         helper = self.source / 'safety.py'
-        self.assertEqual(helper.read_text().count("UPDATE_MANAGER_VERSION = '1.2.0'"), 1)
-        helper.write_text(helper.read_text().replace("UPDATE_MANAGER_VERSION = '1.2.0'", "UPDATE_MANAGER_VERSION = '1.0.1'"))
+        self.assertEqual(helper.read_text().count("UPDATE_MANAGER_VERSION = '1.3.1'"), 1)
+        helper.write_text(helper.read_text().replace("UPDATE_MANAGER_VERSION = '1.3.1'", "UPDATE_MANAGER_VERSION = '1.0.1'"))
         self.install(tag='v1.0.1')
         self.assertEqual(self.legacy.read_bytes(), self.canonical.read_bytes())
         self.assertEqual((self.dest / 'telemt-web-manager.sh').read_bytes(), path.read_bytes())
 
     def legacy_pair(self):
         self.dest.mkdir(0o755); (self.dest / 'lib').mkdir(0o755)
-        self.assertEqual((ROOT / 'telemt-web-manager.sh').read_text().count('SCRIPT_VERSION=1.2.0'), 1)
+        self.assertEqual((ROOT / 'telemt-web-manager.sh').read_text().count('SCRIPT_VERSION=1.3.1'), 1)
         script = (ROOT / 'telemt-web-manager.sh').read_text().replace(
             '# Telegram Web Proxy Manager.', '# Telemt WEB Manager.').replace(
-            'SCRIPT_VERSION=1.2.0', 'SCRIPT_VERSION=1.0.1')
+            'SCRIPT_VERSION=1.3.1', 'SCRIPT_VERSION=1.0.1')
         (self.dest / 'telemt-web-manager.sh').write_text(script)
         (self.dest / 'telemt-web-manager.sh').chmod(0o755)
         (self.dest / 'lib/safety.py').write_bytes((ROOT / 'lib/safety.py').read_bytes())
@@ -255,8 +314,8 @@ class PublicBrand(unittest.TestCase):
             self.assertNotIn('Telemt WEB Manager', text, filename)
         shell = (ROOT / 'telemt-web-manager.sh').read_text()
         helper = (ROOT / 'lib/safety.py').read_text()
-        self.assertIn('readonly SCRIPT_VERSION=1.2.0', shell)
-        self.assertIn("UPDATE_MANAGER_VERSION = '1.2.0'", helper)
+        self.assertIn('readonly SCRIPT_VERSION=1.3.1', shell)
+        self.assertIn("UPDATE_MANAGER_VERSION = '1.3.1'", helper)
         self.assertEqual(helper.count("'User-Agent': f'telegram-web-proxy-manager/{UPDATE_MANAGER_VERSION}'"), 2)
         for filename in ('README.md', 'README.en.md'):
             text = (ROOT / filename).read_text()

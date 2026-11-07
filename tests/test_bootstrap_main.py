@@ -1,6 +1,7 @@
 """Real isolated bootstrap install, with only HTTPS transport replaced by fixtures."""
 import json
 import os
+import py_compile
 from pathlib import Path
 import subprocess
 import tempfile
@@ -165,20 +166,36 @@ shift 2; bootstrap_main --no-start "$@"
         self.assertIn(b'Installed manager 1.1.0', result.stdout)
         self.assertNotIn(b'Installed manager v1.1.1', result.stdout)
 
-    def test_112_upgrade_to_current_120_and_equal_reinstall(self):
+    def test_112_upgrade_to_current_131_and_equal_reinstall(self):
         self.candidate('1.1.2'); self.run_install()
-        self.candidate('1.2.0')
+        self.candidate('1.3.1')
         for _ in range(2):
             result = self.run_install()
-            self.assertIn(b'Installed manager 1.2.0', result.stdout)
+            self.assertIn(b'Installed manager 1.3.1', result.stdout)
         before = self.snapshot()
         # A valid shell paired with an older helper must refuse before commit.
         helper = self.root / 'fixtures/helper'
         text = helper.read_text()
-        self.assertEqual(text.count("UPDATE_MANAGER_VERSION = '1.2.0'"), 1)
-        helper.write_text(text.replace("UPDATE_MANAGER_VERSION = '1.2.0'", "UPDATE_MANAGER_VERSION = '1.1.2'"))
+        self.assertEqual(text.count("UPDATE_MANAGER_VERSION = '1.3.1'"), 1)
+        helper.write_text(text.replace("UPDATE_MANAGER_VERSION = '1.3.1'", "UPDATE_MANAGER_VERSION = '1.1.2'"))
         self.run_install(False); self.assertEqual(before, self.snapshot())
         self.candidate('1.1.2')
+        self.run_install(False); self.assertEqual(before, self.snapshot())
+
+    def test_120_upgrade_and_equal_reinstall_with_python_cache(self):
+        self.candidate('1.2.0'); self.run_install()
+        helper = self.root / 'opt/manager/lib/safety.py'
+        for version in ('1.3.1', '1.3.1'):
+            py_compile.compile(str(helper), doraise=True)
+            before = self.snapshot()
+            source = self.root / 'fixtures/helper'
+            saved = source.read_bytes(); source.unlink()
+            self.run_install(False); self.assertEqual(before, self.snapshot())
+            source.write_bytes(saved)
+            self.candidate(version); result = self.run_install()
+            self.assertIn(b'Installed manager 1.3.1', result.stdout)
+        py_compile.compile(str(helper), doraise=True)
+        before = self.snapshot(); self.candidate('1.2.0')
         self.run_install(False); self.assertEqual(before, self.snapshot())
 
     def test_release_preparation_rejects_original_111_vs_110_mismatch(self):
