@@ -10,7 +10,7 @@ import uuid
 
 family,work,source,artifacts=sys.argv[1:]
 assert Path('/dev/kvm').is_char_device(), 'KVM device unavailable on runner'
-print('System accelerator: KVM; 2 vCPU; 1536 MiB; no TCG fallback',flush=True)
+print('System accelerator: KVM; 4 vCPU; 2048 MiB; no TCG fallback',flush=True)
 work=Path(work); combined=[]
 for attempt in range(4):
     name='twm-boot-'+uuid.uuid4().hex
@@ -18,7 +18,7 @@ for attempt in range(4):
     command=['docker','run','--rm','--name',name,'--device=/dev/kvm','--network=none','--cap-drop=ALL','--cap-add=DAC_OVERRIDE',
         '--security-opt=no-new-privileges','-v',str(work)+':/work','-v',source+':/src:ro',
         '-v',artifacts+':/evidence:ro','twm-boot:'+family,'qemu-system-x86_64','-accel','kvm','-cpu','max',
-        '-m','1536','-smp','2','-nographic','-no-reboot','-nic','none',
+        '-m','2048','-smp','4','-nographic','-no-reboot','-nic','none',
         '-kernel',f'/work/boot-{family}/vmlinuz','-initrd',f'/work/boot-{family}/initrd.img',
         '-drive',f'file=/work/boot-{family}/disk.img,format=raw,if=virtio',
         '-virtfs','local,path=/src,mount_tag=source,security_model=none,readonly=on',

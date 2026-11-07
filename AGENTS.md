@@ -147,7 +147,8 @@ and `docs/**` select DOCS_ONLY; all other/mixed/uncertain diffs select FULL.
 Agent/contributor guides still select FULL. New PR commits cancel unfinished
 runs of the same PR; each main push has a distinct group and is never displaced.
 Plan, Static and Commit identity are required in both modes. FULL also requires
-Regression, Telemt/Lifecycle/Nginx integration, both parallel Ubuntu QEMU suites
+Regression, Telemt/Nginx integration, both independent Lifecycle profile jobs,
+both parallel Ubuntu QEMU suites
 and ARM64. `CI / Required` rejects failed/cancelled/missing or unexpectedly skipped
 jobs. Do not change protected names, scope, permissions or checkout to bypass it.
 

@@ -144,7 +144,17 @@
     {
       "path": "tests/uninstall.sh",
       "job": "lifecycle",
-      "command": "sudo env TELEMT_UPDATE_ARTIFACTS=\"$TELEMT_UPDATE_ARTIFACTS\" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh"
+      "command": "sudo env TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui TELEMT_UPDATE_ARTIFACTS=\"$TELEMT_UPDATE_ARTIFACTS\" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh"
+    },
+    {
+      "path": "tests/update_provenance.py",
+      "job": "lifecycle_includes",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
+      "path": "tests/uninstall.sh",
+      "job": "lifecycle_includes",
+      "command": "sudo env TWM_TEST_NGINX_FIXTURE=\"$TWM_TEST_NGINX_FIXTURE\" TELEMT_UPDATE_ARTIFACTS=\"$TELEMT_UPDATE_ARTIFACTS\" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh"
     },
     {
       "path": "tests/acme.sh",
@@ -262,6 +272,11 @@
       "path": "tests/legacy_site_fixture.py",
       "called_by": "tests/fresh.sh",
       "reference": "python3 tests/legacy_site_fixture.py"
+    },
+    {
+      "path": "tests/three_x_ui.py",
+      "called_by": "lifecycle_includes",
+      "reference": "python3 tests/three_x_ui.py \"$fixture\" --script x-ui-latest.sh --profile includes"
     }
   ],
   "builds": [

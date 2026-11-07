@@ -76,6 +76,20 @@ class PlanTests(unittest.TestCase):
                      for j in ci_plan.REQUIRED}
             self.assertTrue(ci_plan.gate(mode, needs))
 
+    def test_both_lifecycle_profiles_are_mandatory_and_docs_only_skippable(self):
+        for job in ('lifecycle', 'lifecycle_includes'):
+            self.assertIn(job, ci_plan.HEAVY)
+            needs = {name: {'result': 'success'} for name in ci_plan.REQUIRED}
+            for result in ('failure', 'cancelled', 'skipped'):
+                needs[job]['result'] = result
+                with self.subTest(job=job, result=result):
+                    self.assertFalse(ci_plan.gate('FULL', needs))
+            del needs[job]
+            self.assertFalse(ci_plan.gate('FULL', needs))
+        docs = {name: {'result': 'skipped' if name in ci_plan.HEAVY else 'success'}
+                for name in ci_plan.REQUIRED}
+        self.assertTrue(ci_plan.gate('DOCS_ONLY', docs))
+
     def test_every_required_full_failure_cancel_skip_or_missing_fails(self):
         healthy = {j: {'result': 'success'} for j in ci_plan.REQUIRED}
         for job in ci_plan.REQUIRED:
@@ -111,6 +125,28 @@ class ManifestTests(unittest.TestCase):
     def test_complete_current_inventory(self):
         self.assertEqual(ci_manifest.check()['orphan_tests'], 0)
 
+    def test_split_lifecycle_cannot_omit_or_duplicate_a_profile(self):
+        path = self.root/'.github/workflows/checks.yml'
+        original = yaml.safe_load(path.read_text())
+        for defect in ('missing-job', 'serial', 'selector', 'wrong-profile', 'export', 'provenance', 'checkout', 'duplicate'):
+            value = copy.deepcopy(original)
+            includes = value['jobs']['lifecycle_includes']
+            if defect == 'missing-job': del value['jobs']['lifecycle_includes']
+            elif defect == 'serial': includes['needs'] = ['lifecycle']
+            elif defect == 'selector':
+                step = value['jobs']['lifecycle']['steps'][-1]
+                step['run'] = step['run'].replace('TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui ', '')
+            elif defect in ('wrong-profile', 'export'):
+                step = next(step for step in includes['steps'] if step.get('name') == 'Generate pinned includes profile')
+                step['run'] = step['run'].replace('--profile includes', '--profile legacy') if defect == 'wrong-profile' else step['run'].replace('>> "$GITHUB_ENV"', '> /dev/null')
+            elif defect == 'provenance':
+                includes['steps'] = [step for step in includes['steps'] if step.get('name') != 'Verify official provenance and download both architectures + baseline']
+            elif defect == 'duplicate': includes['steps'].append(copy.deepcopy(includes['steps'][-1]))
+            else: includes['steps'][0]['with']['ref'] = 'main'
+            path.write_text(yaml.safe_dump(value))
+            with self.subTest(defect=defect), self.assertRaises((AssertionError, KeyError)):
+                ci_manifest.check(self.root)
+
     def test_concurrency_cancels_only_older_runs_of_the_same_pr(self):
         workflow = yaml.safe_load((ROOT/'.github/workflows/checks.yml').read_text())
         concurrency = workflow['concurrency']
@@ -134,7 +170,7 @@ class ManifestTests(unittest.TestCase):
                        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                        and target.id == 'command' for target in node.targets))
         tokens = [node.value for node in command.elts if isinstance(node, ast.Constant)]
-        for option, value in (('-accel', 'kvm'), ('-cpu', 'max'), ('-m', '1536'), ('-smp', '2')):
+        for option, value in (('-accel', 'kvm'), ('-cpu', 'max'), ('-m', '2048'), ('-smp', '4')):
             self.assertEqual(tokens[tokens.index(option)+1], value)
         for token in ('--device=/dev/kvm', '--network=none', '--cap-drop=ALL',
                       '--cap-add=DAC_OVERRIDE', '--security-opt=no-new-privileges'):
@@ -206,7 +242,8 @@ class ManifestTests(unittest.TestCase):
                         'bash tests/pinned.sh', 'bash tests/upstream.sh', 'bash tests/staging.sh',
                         'sudo env TELEMT_TEST_EVIDENCE_DIR="$TELEMT_TEST_EVIDENCE_DIR" bash tests/runtime.sh',
                         'bash tests/pinned.sh --versions', 'sudo bash tests/bootstrap.sh',
-                        'sudo env TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh',
+                        'sudo env TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh',
+                        'sudo env TWM_TEST_NGINX_FIXTURE="$TWM_TEST_NGINX_FIXTURE" TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh',
                         'bash tests/versions.sh', 'sudo env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_transactions.py',
                         'sudo env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_bootstrap.py',
                         'bash tests/conntrack.sh', 'bash tests/contracts.sh', 'bash tests/locks.sh',
@@ -216,7 +253,7 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(command=command): self.assertIn(command, commands)
         self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision includes includes-ipv4;',
                       (ROOT/'tests/three-x-ui.sh').read_text())
-        for job in ('telemt', 'lifecycle', 'system26', 'system24', 'arm'):
+        for job in ('telemt', 'lifecycle', 'lifecycle_includes', 'system26', 'system24', 'arm'):
             calls = '\n'.join(step.get('run','') for step in workflow['jobs'][job]['steps'])
             self.assertIn('sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py', calls)
 
