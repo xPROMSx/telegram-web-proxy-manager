@@ -20,6 +20,18 @@ cp -r "${1:-tests/fixtures/nginx}" "$test_dir/nginx"
 cp /etc/nginx/mime.types "$test_dir/nginx/mime.types"
 sed -i 's/http {/http { include mime.types;/' "$test_dir/nginx/nginx.conf"
 mkdir -p "$test_dir/nginx/conf.d" "$test_dir/logs" "$test_dir/temp"
+if [[ $# == 0 ]]; then
+    cp tests/fixtures/nginx-http80-3x.conf "$test_dir/nginx/conf.d/foreign-http.conf"
+    cp -r "$test_dir/nginx" "$test_dir/fresh-input"
+    mkdir "$test_dir/fresh-input/sites-enabled"
+    mv "$test_dir/fresh-input/conf.d/foreign-http.conf" "$test_dir/fresh-input/sites-enabled/80.conf"
+    sed -i 's/http {/http { include sites-enabled\/*.conf;/' "$test_dir/fresh-input/nginx.conf"
+    # Fresh orchestration/Certbot fixture and real Nginx below use identical
+    # foreign HTTP bytes; Fresh checks both planners without editing its input.
+    bash tests/fresh.sh "$test_dir/fresh-input"
+fi
+python3 lib/safety.py nginx-site-plan "$test_dir/nginx" proxy.example.com "$test_dir/site-plan.json" "$test_dir/acme" "$(printf 'a%.0s' {1..64})"
+
 mkdir -p "$test_dir/acme/.well-known/acme-challenge"
 printf challenge-fixture >"$test_dir/acme/.well-known/acme-challenge/probe"
 python3 lib/safety.py acme-plan "$test_dir/nginx" proxy.example.com "$test_dir/acme-plan.json" "$test_dir/acme"
@@ -213,6 +225,22 @@ if [[ -f $test_dir/nginx/sites-enabled/80.conf ]]; then
     [[ $(curl --noproxy '*' -s --max-time 5 -o /dev/null -w '%{http_code}' \
         --resolve panel.example.com:18082:127.0.0.1 http://panel.example.com:18082/) == 301 ]]
 fi
+# Only map the fixture port; token generation, file lifecycle and comparison
+# remain production acme_probe. No external ACME CA is contacted.
+(
+ACME_ROOT="$test_dir/acme"
+curl() {
+    local value; local -a args=()
+    for value in "$@"; do
+        value=${value//proxy.example.com:80:127.0.0.1/proxy.example.com:18082:127.0.0.1}
+        value=${value//http:\/\/proxy.example.com\//http:\/\/proxy.example.com:18082/}
+        args+=("$value")
+    done
+    command curl "${args[@]}"
+}
+acme_probe
+)
+printf 'ok - production acme_probe verifies a new token through the real owned HTTP server\n'
 if grep -q '\[::1\]:14443' "$test_dir/nginx/stream-enabled/stream.conf" 2>/dev/null; then
     curl --noproxy '*' -fsS --max-time 5 --cacert "$test_dir/ca.pem" \
         --resolve 'proxy.example.com:14443:[::1]' \

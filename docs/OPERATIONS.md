@@ -127,16 +127,17 @@ Certbot symlinks within archive/DOMAIN and matching public keys. HTTP probes che
 TLS trust. For new issuance, explicitly accept ACME terms with `--email` and `--agree-tos`.
 
 Free port 80 uses standalone HTTP-01 without stopping Nginx. If the port belongs
-to the same verified Nginx master/workers, webroot accepts two exact HTTP :80
-profiles: legacy redirect-only vhosts, or the recognized 3x-ui webroot+redirect
-form. The latter has a required IPv4 listener and optional IPv6 listener, exact domain names, only an ACME
-`location ^~ /.well-known/acme-challenge/` with `root /var/www/acme`,
-optional `default_type text/plain`, `try_files $uri =404`, and `location /` returning
-`301 https://$host$request_uri`. Legacy direct 301 redirects remain supported.
-Wildcard/regex names, extra directives/locations, conflicting domains and unrelated
-processes cause refusal. Telemt keeps its own `/var/lib/telemt-web-manager-acme`
-webroot, marker and `telemt-web-manager-acme.conf`; it neither writes nor takes
-ownership of the external `/var/www/acme` tree.
+to the same verified Nginx master/workers, webroot checks supported TCP/80
+listeners and exact, non-conflicting server names. Wildcard/regex/dynamic names,
+ambiguous sockets and duplicate names are refused. Foreign server bodies
+(locations, redirects, Host guards, headers and roots) are preserved and do not
+prove TWPM ownership: Nginx selects TWPM's separate exact-name server before
+executing another server's body. This includes the HTTP/80 output of
+3X-UI `setup_acme_http()` at `994414f54322712ba30fc03af21bee0a2c2c4f5f`.
+The complete configuration still must pass real `nginx -t`, reload and the
+HTTP-01 token probe; accepting a plan does not certify foreign body syntax.
+Telemt keeps its own `/var/lib/telemt-web-manager-acme` webroot, marker and exact
+`telemt-web-manager-acme.conf`; it never modifies the external `/var/www/acme`.
 Port-80 runtime/config disagreement also causes refusal, preventing pending
 Nginx configuration from invalidating a standalone renewal strategy.
 

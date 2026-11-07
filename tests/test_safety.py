@@ -342,8 +342,7 @@ printf 'INSTALL_CONTINUED\\n'
         for old, new in (('panel.example.com', 'proxy.example.com'),
                          ('panel.example.com', '*.example.com'),
                          ('listen 80;', 'listen 80 proxy_protocol;'),
-                         ('listen 80;', 'listen 80; resolver 127.0.0.1;'),
-                         ('return 301 https://$host$request_uri;', 'return 200 custom;')):
+                         ('listen 80;', 'listen 80; listen 80;')):
             with self.subTest(new=new):
                 path.write_text(original.replace(old, new))
                 before = self.snapshot()
@@ -459,6 +458,23 @@ printf 'INSTALL_CONTINUED\\n'
             path=str(self.root / 'conf.d/telemt-web-manager-acme.conf'),
             content=s.render_acme('proxy.example.com', own_root), old=None)])
 
+    def test_current_3x_host_guard_is_foreign_content(self):
+        # setup_acme_http(), 3X-UI 994414f54322712ba30fc03af21bee0a2c2c4f5f.
+        self.webroot_http()
+        path=self.root/'sites-enabled/80.conf'
+        path.write_bytes((ROOT/'tests/fixtures/nginx-http80-3x.conf').read_bytes())
+        before=self.snapshot()
+        self.plan_nginx()
+        s.nginx_plan(self.root,'proxy.example.com',self.plan,site_digest='a'*64)
+        s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
+        edits=json.loads(self.plan.read_text())['edits']
+        self.assertEqual([e['path'] for e in edits],[str(self.root/'conf.d/telemt-web-manager-acme.conf')])
+        self.assertEqual(before,self.snapshot())
+        Path(edits[0]['path']).write_text(edits[0]['content'])
+        s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
+        self.assertEqual(json.loads(self.plan.read_text())['edits'],[])
+        for name,raw in before.items(): self.assertEqual(Path(name).read_bytes(),raw)
+
     def test_vision_acme_ipv4_only_preserves_foreign_topology(self):
         self.vision_topology()
         originals = {self.root / 'sites-enabled' / name:
@@ -488,15 +504,7 @@ printf 'INSTALL_CONTINUED\\n'
     def test_vision_acme_unsafe_variants_and_occupied_domains_refused(self):
         path = self.vision_topology()
         original = path.read_text()
-        cases = (
-            ('root /var/www/acme;', 'root /wrong;'),
-            ('try_files $uri =404;', 'try_files $uri /index.html =404;'),
-            ('root /var/www/acme;', 'root /var/www/acme; default_type text/html;'),
-            ('root /var/www/acme;', 'root /var/www/acme; default_type text/plain; default_type text/plain;'),
-            ('root /var/www/acme;', 'root /var/www/acme; proxy_pass http://127.0.0.1;'),
-            ('location / {', 'location /other { return 404; } location / {'),
-            ('listen 80;', 'listen 80; listen 80;'),
-        )
+        cases = (("listen 80;", "listen 80; listen 80;"),)
         for old, new in cases:
             with self.subTest(replacement=new):
                 path.write_text(original.replace(old, new)); self.plan.unlink(missing_ok=True)
@@ -517,6 +525,42 @@ printf 'INSTALL_CONTINUED\\n'
         original = self.webroot_http()
         path = self.root / 'sites-enabled/80.conf'
         cases = (
+            ('panel.example.com', 'proxy.example.com'),
+            ('panel.example.com', '*.example.com'),
+            ('panel.example.com', '~^panel'),
+            ('listen 80;', 'listen 80 proxy_protocol;'),
+            ('listen 80;', 'listen 80 ssl;'),
+            ('listen 80;', 'listen 80 default_server;'),
+            ('listen 80;', 'listen 80 reuseport;'),
+            ('listen 80;', 'listen 80; listen 127.0.0.1:80;'),
+            ('listen 80;', ''),  # IPv6-only remains unsupported; IPv6 is optional.
+            ('listen 80;', 'listen 80; listen 80;'),
+            ('listen [::]:80;', 'listen [::]:80; listen [::]:80;'),
+            ('panel.example.com reality.example.com', 'panel.example.com panel.example.com'),
+        )
+        snippet = self.root / 'snippets/webroot-empty.conf'
+        snippet.write_text('# No directives, but includes are not trusted in this profile.\n')
+        variants = [original.replace(old, new) for old, new in cases]
+        variants.append(original + original)
+        for text in variants:
+            with self.subTest(text=text):
+                path.write_text(text); self.plan.unlink(missing_ok=True)
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    s.acme_plan(self.root, 'proxy.example.com', self.plan, '/var/lib/telemt-web-manager-acme')
+                self.assertEqual(before, self.snapshot())
+                self.assertFalse((self.root / 'conf.d/telemt-web-manager-acme.conf').exists())
+                if self.plan.exists():
+                    self.assertTrue(all(not edit['path'].endswith('/telemt-web-manager-acme.conf')
+                                        for edit in json.loads(self.plan.read_text())['edits']))
+
+    def test_foreign_http_bodies_do_not_control_twpm_challenge(self):
+        original=self.webroot_http()
+        path=self.root/'sites-enabled/80.conf'
+        snippet=self.root/'snippets/webroot-empty.conf'; snippet.write_text('# empty\n')
+        cases=(
+            ('listen 80;', 'listen 80; include snippets/webroot-empty.conf;'),
+            ('listen 80;', 'listen 80; resolver 127.0.0.1;'),
             ('root /var/www/acme;', 'root /wrong;'),
             ('root /var/www/acme;', 'root $document_root;'),
             ('root /var/www/acme;', 'alias /var/www/acme;'),
@@ -538,39 +582,17 @@ printf 'INSTALL_CONTINUED\\n'
             ('return 301', 'return 302'),
             ('return 301', 'return 200'),
             ('https://$host$request_uri', 'https://panel.example.com$request_uri'),
-            ('panel.example.com', 'proxy.example.com'),
-            ('panel.example.com', '*.example.com'),
-            ('panel.example.com', '~^panel'),
-            ('listen 80;', 'listen 80 proxy_protocol;'),
-            ('listen 80;', 'listen 80 ssl;'),
-            ('listen 80;', 'listen 80 default_server;'),
-            ('listen 80;', 'listen 80 reuseport;'),
-            ('listen 80;', 'listen 80; listen 127.0.0.1:80;'),
-            ('listen 80;', ''),  # IPv6-only remains unsupported; IPv6 is optional.
-            ('listen 80;', 'listen 80; listen 80;'),
-            ('listen [::]:80;', 'listen [::]:80; listen [::]:80;'),
             ('listen 80;', 'listen 0.0.0.0:80;'),
             ('location / {', 'location /extra { return 404; } location / {'),
-            ('listen 80;', 'listen 80; resolver 127.0.0.1;'),
-            ('listen 80;', 'listen 80; include snippets/webroot-empty.conf;'),
             ('root /var/www/acme;', 'root /var/www/acme; include snippets/webroot-empty.conf;'),
-            ('panel.example.com reality.example.com', 'panel.example.com panel.example.com'),
         )
-        snippet = self.root / 'snippets/webroot-empty.conf'
-        snippet.write_text('# No directives, but includes are not trusted in this profile.\n')
-        variants = [original.replace(old, new) for old, new in cases]
-        variants.append(original + original)
-        for text in variants:
-            with self.subTest(text=text):
-                path.write_text(text); self.plan.unlink(missing_ok=True)
-                before = self.snapshot()
-                with self.assertRaises(ValueError):
-                    s.acme_plan(self.root, 'proxy.example.com', self.plan, '/var/lib/telemt-web-manager-acme')
-                self.assertEqual(before, self.snapshot())
-                self.assertFalse((self.root / 'conf.d/telemt-web-manager-acme.conf').exists())
-                if self.plan.exists():
-                    self.assertTrue(all(not edit['path'].endswith('/telemt-web-manager-acme.conf')
-                                        for edit in json.loads(self.plan.read_text())['edits']))
+        for old,new in cases:
+            with self.subTest(replacement=new):
+                path.write_text(original.replace(old,new))
+                before=self.snapshot()
+                s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
+                self.assertEqual(before,self.snapshot())
+                self.assertEqual(len(json.loads(self.plan.read_text())['edits']),1)
 
     def test_acme_modified_managed_vhost_refused(self):
         path = self.root / 'conf.d/telemt-web-manager-acme.conf'
