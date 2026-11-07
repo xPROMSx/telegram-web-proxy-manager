@@ -14,7 +14,7 @@ Un VPS, un dominio exclusivo y un enlace listo para conectar Telegram.
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![Versión](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[📦 Versiones](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [❤️ Apoyar](#support-development) · [🐛 Informar de un problema](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 Comunidad](https://t.me/promsdev)
+[📦 Versiones](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [❤️ Apoyar](#-apoyar-el-desarrollo) · [🐛 Informar de un problema](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 Comunidad](https://t.me/promsdev)
 
 </div>
 
@@ -143,6 +143,6 @@ Telegram Web Proxy Manager es gratuito y está disponible para todos. Si te ha r
 
 ⭐ Si el proyecto te parece útil, [dale una Star](https://github.com/xPROMSx/telegram-web-proxy-manager) para ayudar a que otros lo descubran.
 
-[Instalación](#quick-start) · [Versiones](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [Problemas](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[Instalación](#-inicio-rápido) · [Versiones](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [Problemas](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
 
 </div>
