@@ -14,7 +14,7 @@
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 [![版本发布](https://img.shields.io/github/v/release/xPROMSx/telegram-web-proxy-manager)](https://github.com/xPROMSx/telegram-web-proxy-manager/releases/latest)
 
-[📦 版本发布](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [❤️ 支持项目](#support-development) · [🐛 反馈问题](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 交流反馈](https://t.me/promsdev)
+[📦 版本发布](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [⚙️ 3X-UI AUTO NGINX](https://github.com/xPROMSx/3x-ui-auto-nginx) · [❤️ 支持项目](#-支持项目开发) · [🐛 反馈问题](https://github.com/xPROMSx/telegram-web-proxy-manager/issues) · [💬 交流反馈](https://t.me/promsdev)
 
 </div>
 
@@ -143,6 +143,6 @@ Telegram Web Proxy Manager 免费开放使用。如果项目对你有帮助，�
 
 ⭐ 如果你觉得项目有用，欢迎[点亮 Star](https://github.com/xPROMSx/telegram-web-proxy-manager)，帮助更多人发现它。
 
-[安装](#quick-start) · [版本发布](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [问题反馈](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
+[安装](#-快速开始) · [版本发布](https://github.com/xPROMSx/telegram-web-proxy-manager/releases) · [问题反馈](https://github.com/xPROMSx/telegram-web-proxy-manager/issues)
 
 </div>
