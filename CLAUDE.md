@@ -127,8 +127,11 @@ Bash syntax, ShellCheck, Python syntax, pinned actionlint, documentation/pin che
 and `test_ci*.py` regressions form Static. Use the current workflow as the command
 source for provenance, lifecycle, Nginx, QEMU and ARM integration prerequisites.
 
-Only the three whitelisted READMEs and `docs/**` select DOCS_ONLY. AGENTS.md,
-CLAUDE.md, CONTRIBUTING.md, other translations and unknown/mixed paths select FULL.
+Only the eight existing READMEs (`README.md`, `README.en.md`, `README.ru.md`,
+`README_AR.md`, `README_ES.md`, `README_FA.md`, `README_TR.md`, `README_ZH_CN.md`)
+and `docs/**` select DOCS_ONLY. AGENTS.md, CLAUDE.md, CONTRIBUTING.md and
+unknown/mixed paths select FULL. New commits cancel unfinished runs of the same
+PR; unique main-push groups preserve both running and pending main checks.
 Plan, Commit identity and Static are mandatory in both modes. FULL also runs
 Regression, Telemt/Lifecycle/Nginx integration, parallel Ubuntu 26.04/24.04 QEMU
 and ARM64; `CI / Required` rejects failures, cancellations, missing jobs and

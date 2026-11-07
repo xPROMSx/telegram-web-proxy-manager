@@ -8,7 +8,8 @@ import subprocess
 
 HEAVY = ('regression', 'telemt', 'lifecycle', 'nginx', 'system26', 'system24', 'arm')
 REQUIRED = ('scope', 'identity', 'static', *HEAVY)
-READMES = {'README.md', 'README.en.md', 'README.ru.md'}
+READMES = {'README.md', 'README.en.md', 'README.ru.md', 'README_AR.md',
+           'README_ES.md', 'README_FA.md', 'README_TR.md', 'README_ZH_CN.md'}
 
 
 def paths_plan(paths):

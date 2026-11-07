@@ -141,9 +141,11 @@ with the agreed target version; it must precede publication, not stand in for re
 
 `.github/workflows/checks.yml` runs for PRs and main pushes with exact checkout,
 pinned actions, read-only permissions and no persisted checkout credentials.
-Only `README.md`, `README.en.md`, `README.ru.md` and `docs/**` select DOCS_ONLY;
-all other/mixed/uncertain diffs select FULL. Agent/contributor guides and other
-README translations therefore select FULL under the current policy.
+Only the eight existing READMEs (`README.md`, `README.en.md`, `README.ru.md`,
+`README_AR.md`, `README_ES.md`, `README_FA.md`, `README_TR.md`, `README_ZH_CN.md`)
+and `docs/**` select DOCS_ONLY; all other/mixed/uncertain diffs select FULL.
+Agent/contributor guides still select FULL. New PR commits cancel unfinished
+runs of the same PR; each main push has a distinct group and is never displaced.
 Plan, Static and Commit identity are required in both modes. FULL also requires
 Regression, Telemt/Lifecycle/Nginx integration, both parallel Ubuntu QEMU suites
 and ARM64. `CI / Required` rejects failed/cancelled/missing or unexpectedly skipped

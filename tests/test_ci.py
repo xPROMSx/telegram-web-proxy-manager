@@ -1,4 +1,5 @@
 """Scope/gate refusal and inventory reachability regressions; no runtime suite."""
+import ast
 import copy
 import hashlib
 import json
@@ -22,15 +23,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class PlanTests(unittest.TestCase):
     def test_docs_only_paths(self):
-        for paths in (['README.md'], ['README.en.md'], ['README.ru.md'], ['docs/OPERATIONS.md'],
-                      ['README.md', 'docs/CI-COVERAGE.md']):
+        readmes = ['README.md', 'README.en.md', 'README.ru.md', 'README_AR.md',
+                   'README_ES.md', 'README_FA.md', 'README_TR.md', 'README_ZH_CN.md']
+        self.assertTrue(all((ROOT/name).is_file() for name in readmes))
+        for paths in ([name] for name in readmes):
             with self.subTest(paths=paths): self.assertTrue(ci_plan.paths_plan(paths))
+        self.assertTrue(ci_plan.paths_plan(readmes + ['docs/OPERATIONS.md', 'docs/CI-COVERAGE.md']))
 
     def test_every_other_or_empty_path_is_full(self):
         for path in ('install.sh', 'telemt-web-manager.sh', 'lib/safety.py', 'tests/test_ci.py',
                      '.github/workflows/checks.yml', 'assets/fake-sites/cover.css', 'LICENSE',
-                     'unknown', 'docs-other/file.md'):
-            for paths in ([path], ['README.md', path]):
+                     'unknown', 'docs-other/file.md', 'README_DE.md', 'README.en.md.bak',
+                     'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md'):
+            for paths in ([path], *([readme, path] for readme in
+                                   ('README.md', 'README_AR.md', 'README_ES.md', 'README_FA.md',
+                                    'README_TR.md', 'README_ZH_CN.md', 'README.en.md', 'README.ru.md'))):
                 with self.subTest(paths=paths): self.assertFalse(ci_plan.paths_plan(paths))
         self.assertFalse(ci_plan.paths_plan([]))
 
@@ -45,6 +52,10 @@ class PlanTests(unittest.TestCase):
             (root/'README.md').write_text('second'); git('commit', '-am', 'docs')
             head = git('rev-parse', 'HEAD')
             self.assertEqual(ci_plan.classify(base, head, 'pull_request', root)['mode'], 'DOCS_ONLY')
+            for name in ('README_AR.md', 'README_ZH_CN.md'):
+                (root/name).write_text('translated documentation')
+            git('add', '.'); git('commit', '-m', 'translations')
+            self.assertEqual(ci_plan.classify(base, git('rev-parse', 'HEAD'), 'pull_request', root)['mode'], 'DOCS_ONLY')
             (root/'runtime.sh').write_text('runtime'); git('add', '.'); git('commit', '-m', 'runtime')
             base = git('rev-parse', 'HEAD')
             (root/'docs').mkdir(); (root/'runtime.sh').rename(root/'docs/moved.md')
@@ -99,6 +110,37 @@ class ManifestTests(unittest.TestCase):
 
     def test_complete_current_inventory(self):
         self.assertEqual(ci_manifest.check()['orphan_tests'], 0)
+
+    def test_concurrency_cancels_only_older_runs_of_the_same_pr(self):
+        workflow = yaml.safe_load((ROOT/'.github/workflows/checks.yml').read_text())
+        concurrency = workflow['concurrency']
+        self.assertEqual(concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
+        self.assertEqual(concurrency['group'], '${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}')
+        def group(event, pr, run):
+            # Resolve the three literal substitutions, including GHA's || fallback.
+            return concurrency['group'].replace('${{ github.workflow }}', 'checks').replace(
+                '${{ github.event_name }}', event).replace(
+                '${{ github.event.pull_request.number || github.run_id }}', str(pr or run))
+        self.assertEqual(group('pull_request', 7, 100), group('pull_request', 7, 101))
+        self.assertNotEqual(group('pull_request', 7, 100), group('pull_request', 8, 101))
+        # A shared main group can cancel pending runs even with cancellation false.
+        self.assertNotEqual(group('push', None, 100), group('push', None, 101))
+        self.assertNotEqual(group('pull_request', 100, 101), group('push', None, 100))
+        for job in workflow['jobs'].values(): self.assertNotIn('concurrency', job)
+
+    def test_kvm_preserves_guest_budget_and_container_isolation(self):
+        source = (ROOT/'tests/update_boot_host.py').read_text()
+        command = next(node.value for node in ast.walk(ast.parse(source))
+                       if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                       and target.id == 'command' for target in node.targets))
+        tokens = [node.value for node in command.elts if isinstance(node, ast.Constant)]
+        for option, value in (('-accel', 'kvm'), ('-cpu', 'max'), ('-m', '1536'), ('-smp', '2')):
+            self.assertEqual(tokens[tokens.index(option)+1], value)
+        for token in ('--device=/dev/kvm', '--network=none', '--cap-drop=ALL',
+                      '--cap-add=DAC_OVERRIDE', '--security-opt=no-new-privileges'):
+            self.assertIn(token, tokens)
+        self.assertNotIn('--privileged', tokens)
+        self.assertIn('deadline=time.monotonic()+1200', source)
 
     def test_unregistered_shell_python_helper_and_fixture_refused(self):
         for name in ('new.sh', 'new.py', 'helper.py', 'fixtures/unknown.txt'):
