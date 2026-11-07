@@ -170,7 +170,7 @@ class ManifestTests(unittest.TestCase):
                        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                        and target.id == 'command' for target in node.targets))
         tokens = [node.value for node in command.elts if isinstance(node, ast.Constant)]
-        for option, value in (('-accel', 'kvm'), ('-cpu', 'max'), ('-m', '2048'), ('-smp', '4')):
+        for option, value in (('-accel', 'kvm'), ('-cpu', 'max'), ('-m', '1536'), ('-smp', '2')):
             self.assertEqual(tokens[tokens.index(option)+1], value)
         for token in ('--device=/dev/kvm', '--network=none', '--cap-drop=ALL',
                       '--cap-add=DAC_OVERRIDE', '--security-opt=no-new-privileges'):

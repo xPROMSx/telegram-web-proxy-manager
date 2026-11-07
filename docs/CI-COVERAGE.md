@@ -337,7 +337,7 @@ verifies the 3.5.12 baseline archive and embedded ELF identity. It executes no E
 
 `update_boot.sh` runs offline disposable QEMU guests with real Ubuntu 24.04 and
 26.04 PID 1 systemd. System jobs require KVM via only `/dev/kvm`; there is no
-automatic TCG fallback. The guest uses 4 vCPU and 2048 MiB RAM, the same CPU model,
+automatic TCG fallback. The guest retains 2 vCPU, 1536 MiB RAM, the same CPU model,
 all deadlines and the networkless, capability-restricted container. Each family
 exercises the official 3.5.12 baseline and full
 3.5.13 Update: exact generated TOML/base unit, real Telemt UID/CAP_NET_ADMIN,
