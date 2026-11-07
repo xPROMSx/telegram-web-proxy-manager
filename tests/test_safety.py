@@ -462,18 +462,21 @@ printf 'INSTALL_CONTINUED\\n'
         # setup_acme_http(), 3X-UI 994414f54322712ba30fc03af21bee0a2c2c4f5f.
         self.webroot_http()
         path=self.root/'sites-enabled/80.conf'
-        path.write_bytes((ROOT/'tests/fixtures/nginx-http80-3x.conf').read_bytes())
-        before=self.snapshot()
-        self.plan_nginx()
-        s.nginx_plan(self.root,'proxy.example.com',self.plan,site_digest='a'*64)
-        s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
-        edits=json.loads(self.plan.read_text())['edits']
-        self.assertEqual([e['path'] for e in edits],[str(self.root/'conf.d/telemt-web-manager-acme.conf')])
-        self.assertEqual(before,self.snapshot())
-        Path(edits[0]['path']).write_text(edits[0]['content'])
-        s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
-        self.assertEqual(json.loads(self.plan.read_text())['edits'],[])
-        for name,raw in before.items(): self.assertEqual(Path(name).read_bytes(),raw)
+        original=(ROOT/'tests/fixtures/nginx-http80-3x.conf').read_text()
+        for ipv6 in (True,False):
+            path.write_text(original if ipv6 else original.replace('    listen [::]:80;\n',''))
+            before=self.snapshot()
+            self.plan_nginx()
+            s.nginx_plan(self.root,'proxy.example.com',self.plan,site_digest='a'*64)
+            s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
+            edits=json.loads(self.plan.read_text())['edits']
+            self.assertEqual([e['path'] for e in edits],[str(self.root/'conf.d/telemt-web-manager-acme.conf')])
+            self.assertEqual(before,self.snapshot())
+            Path(edits[0]['path']).write_text(edits[0]['content'])
+            s.acme_plan(self.root,'proxy.example.com',self.plan,'/var/lib/telemt-web-manager-acme')
+            self.assertEqual(json.loads(self.plan.read_text())['edits'],[])
+            for name,raw in before.items(): self.assertEqual(Path(name).read_bytes(),raw)
+            Path(edits[0]['path']).unlink()
 
     def test_vision_acme_ipv4_only_preserves_foreign_topology(self):
         self.vision_topology()

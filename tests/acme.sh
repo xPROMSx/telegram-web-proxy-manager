@@ -9,7 +9,7 @@ trap 'rm -rf -- "$sandbox"' EXIT
 fixture=${1:-tests/fixtures/nginx-3x-ui}
 openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj /CN=proxy.example.com \
     -addext subjectAltName=DNS:proxy.example.com -keyout "$sandbox/key" -out "$sandbox/cert" >/dev/null 2>&1
-for scenario in free webroot foreign conflict invalid-nginx failed-certbot interrupted-certbot pending-config post-validation post-renewal foreign-existing; do
+for scenario in free webroot foreign conflict invalid-nginx failed-certbot interrupted-certbot pending-config post-validation post-renewal foreign-existing probe-fail unsafe-webroot unowned-webroot; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     TMP="$case_dir/tmp" NGINX_ROOT="$case_dir/nginx" ACME_ROOT="$case_dir/acme"
     STATE="$case_dir/state" CERT_ROOT="$case_dir/certs" BACKUP_ROOT="$case_dir/backups"
@@ -32,6 +32,12 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
         cp "$sandbox/key" "$CERT_ROOT/live/$DOMAIN/privkey.pem"
         printf '[renewalparams]\nauthenticator = standalone\n' >"$CERT_ROOT/renewal/$DOMAIN.conf"
     fi
+    if [[ $scenario == unsafe-webroot ]]; then
+        mkdir "$case_dir/foreign-root"; printf keep >"$case_dir/foreign-root/keep"
+        ln -s "$case_dir/foreign-root" "$ACME_ROOT"
+    elif [[ $scenario == unowned-webroot ]]; then
+        mkdir "$ACME_ROOT"; printf keep >"$ACME_ROOT/keep"
+    fi
     cp -r --preserve=mode "$NGINX_ROOT" "$case_dir/original"
     ss() { if [[ $scenario != free && $scenario != pending-config ]]; then printf occupied; fi; }
     nginx_runtime_identity() { return 0; }
@@ -42,7 +48,7 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
         case $1 in stop|disable|restart) printf forbidden >"$case_dir/forbidden-service-mutation"; return 1;; esac
         return 0
     }
-    acme_probe() { [[ -d $ACME_ROOT/.well-known/acme-challenge ]]; }
+    acme_probe() { [[ $scenario != probe-fail && -d $ACME_ROOT/.well-known/acme-challenge ]]; }
     certbot() {
         [[ $* == *--non-interactive* && $* == *--cert-name* ]] || return 1
         if [[ $scenario == free ]]; then
@@ -125,6 +131,8 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
             if [[ $scenario != failed-certbot && $scenario != interrupted-certbot ]]; then [[ ! -e $case_dir/certbot-called ]]; fi
             if [[ $scenario == interrupted-certbot ]]; then [[ $result == 143 ]]; fi;;
     esac
+    if [[ $scenario == unsafe-webroot ]]; then [[ $(cat "$case_dir/foreign-root/keep") == keep && -L $ACME_ROOT ]]; fi
+    if [[ $scenario == unowned-webroot ]]; then [[ $(cat "$ACME_ROOT/keep") == keep ]]; fi
     [[ ! -e $case_dir/forbidden-service-mutation ]]
     printf 'ok - ACME %s\n' "$scenario"
 done

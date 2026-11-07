@@ -239,6 +239,10 @@ curl() {
     command curl "${args[@]}"
 }
 acme_probe
+ACME_ROOT="$test_dir/unserved"
+mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
+if acme_probe 2>/dev/null; then die 'Unserved HTTP-01 root unexpectedly accepted'; fi
+[[ -z $(find "$ACME_ROOT" -type f -print) ]]
 )
 printf 'ok - production acme_probe verifies a new token through the real owned HTTP server\n'
 if grep -q '\[::1\]:14443' "$test_dir/nginx/stream-enabled/stream.conf" 2>/dev/null; then
