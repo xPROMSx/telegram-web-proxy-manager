@@ -22,13 +22,7 @@ sed -i 's/http {/http { include mime.types;/' "$test_dir/nginx/nginx.conf"
 mkdir -p "$test_dir/nginx/conf.d" "$test_dir/logs" "$test_dir/temp"
 if [[ $# == 0 ]]; then
     cp tests/fixtures/nginx-http80-3x.conf "$test_dir/nginx/conf.d/foreign-http.conf"
-    cp -r "$test_dir/nginx" "$test_dir/fresh-input"
-    mkdir "$test_dir/fresh-input/sites-enabled"
-    mv "$test_dir/fresh-input/conf.d/foreign-http.conf" "$test_dir/fresh-input/sites-enabled/80.conf"
-    sed -i 's/http {/http { include sites-enabled\/*.conf;/' "$test_dir/fresh-input/nginx.conf"
-    # Fresh orchestration/Certbot fixture and real Nginx below use identical
-    # foreign HTTP bytes; Fresh checks both planners without editing its input.
-    bash tests/fresh.sh "$test_dir/fresh-input"
+
 fi
 python3 lib/safety.py nginx-site-plan "$test_dir/nginx" proxy.example.com "$test_dir/site-plan.json" "$test_dir/acme" "$(printf 'a%.0s' {1..64})"
 

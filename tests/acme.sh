@@ -136,3 +136,15 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
     [[ ! -e $case_dir/forbidden-service-mutation ]]
     printf 'ok - ACME %s\n' "$scenario"
 done
+
+# Exercise Fresh -> site plan -> ACME plan on the current foreign HTTP bytes.
+# Keep orchestration mocks in this suite; nginx.sh independently runs the real
+# Nginx/token probe and remains bounded for the existing QEMU timeout.
+if [[ $# == 0 ]]; then
+    current="$sandbox/current-http"
+    cp -r tests/fixtures/nginx "$current"
+    mkdir -p "$current/sites-enabled" "$current/conf.d"
+    cp tests/fixtures/nginx-http80-3x.conf "$current/sites-enabled/80.conf"
+    sed -i 's/http {/http { include sites-enabled\/*.conf;/' "$current/nginx.conf"
+    bash tests/fresh.sh "$current"
+fi
