@@ -9,6 +9,12 @@ Supported Telemt: **3.5.16** (fresh Install baseline). Universal Update (introdu
 compatibility-driven across all stable SemVer series. See [upstream provenance](UPSTREAM.md) and the
 [REAL/MOCKED CI coverage inventory](CI-COVERAGE.md).
 
+Fresh Install sets the WEB user's profile `max_sessions = 16`, keeping
+`max_streams = 512` and `max_streams_per_session = 64`. Telemt 3.5.16 also enforces
+its unchanged process-wide and per-IP limits (defaults 128 and 16). This is a
+session ceiling, not a throughput claim. Existing TOML, including profiles with
+eight sessions, is preserved by manager bootstrap, Install reruns and Update.
+
 ## Nginx requirements
 
 The manager parses the include tree rather than doing regex substitutions.
@@ -412,6 +418,13 @@ The bootstrap parses deployed recovery schemas and candidate declarations as
 data, without executing either candidate file. Pending/critical/corrupt state,
 unsupported schemas, changed gate contracts and unsafe legacy downgrade refuse
 before atomic manager-pair replacement, including explicit downgrade requests.
+The existing helper directory may contain only `safety.py` and an optional
+root-owned, non-writable-by-others `__pycache__` directory with regular,
+single-link, root-owned `safety.cpython-NNN[.opt-1|.opt-2].pyc` cache files.
+These are never loaded during bootstrap and are discarded with the old pair
+only after successful atomic replacement. Unknown entries, links and unsafe
+ownership/permissions still refuse; failed publication restores the old pair
+including its cache. No Telemt data or recovery records are migrated.
 
 ## Check and repair
 

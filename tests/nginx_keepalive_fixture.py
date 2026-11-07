@@ -4,10 +4,14 @@
 The caller owns the Telemt process. Only private Nginx files/ports are used;
 packet capture retains TCP identities, never HTTP payloads or credentials.
 """
+import base64
+import concurrent.futures
+import hmac
 import http.client
 import importlib.util
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import ssl
@@ -104,6 +108,46 @@ def check_site(probe, directory):
           'HEAD/405/custom 404/ETag+date 304/relative 301; authenticated WEB after HTTP: PASS',flush=True)
 
 
+def check_session_capacity(probe):
+    """Keep sixteen authenticated sessions live; exercise their uplinks together."""
+    s.require(probe.config['web']['vhosts'][0]['profiles'][0]['max_sessions']==16)
+    capability=base64.urlsafe_b64encode(hmac.digest(probe.secret,
+        b'tdesktop-web-proxy-bridge-v1\n'+probe.host.encode(),'sha256')).decode().rstrip('=')
+    tokens=[]
+    def create():
+        status,_,page=probe.request('GET','/?bridge='+capability)
+        credentials=re.findall(rb'bootstrap\s*=\s*"([A-Za-z0-9_-]{43})"',page)
+        s.require(status==200 and len(credentials)==1)
+        return probe.request('POST','/api/v1/session',probe.frame(0x10,b'\x01'),
+            {'Authorization':'Bearer '+credentials[0].decode(),'Content-Type':'application/octet-stream'})
+    def opened(result):
+        status,headers,welcome=result; token=headers.get('x-session-token','')
+        s.require(status==200 and welcome==probe.frame(0x11)
+                  and re.fullmatch('[A-Za-z0-9_-]{43}',token) and token not in tokens)
+        tokens.append(token)
+    def uplink(token, sequence):
+        status,headers,_=probe.request('POST','/api/v1/up',probe.frame(6),
+            {'Authorization':'Bearer '+token,'Content-Type':'application/octet-stream','X-Up-Seq':str(sequence)})
+        s.require(status==204 and headers.get('x-up-ack')==str(sequence))
+    try:
+        for _ in range(16): opened(create())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as workers:
+            list(workers.map(lambda token:uplink(token,1),tokens))
+        status,headers,_=create()
+        s.require(status==503 and 'x-session-token' not in headers,'seventeenth WEB session accepted')
+        for token in tokens: uplink(token,2)
+        status,_,_=probe.request('DELETE','/api/v1/session',headers={'Authorization':'Bearer '+tokens[0]})
+        s.require(status==204); tokens.pop(0)
+        opened(create()); uplink(tokens[-1],1)
+    finally:
+        for token in tokens:
+            status,_,_=probe.request('DELETE','/api/v1/session',headers={'Authorization':'Bearer '+token})
+            s.require(status==204)
+    probe.run(full=False)
+    print('REAL WEB capacity: 16 simultaneous authenticated sessions; concurrent uplinks; '
+          '17th refused with HTTP 503; existing sessions healthy; released slot reused: PASS',flush=True)
+
+
 def main():
     s.require(os.geteuid()==0)
     config=s.read_config(sys.argv[1]); host=config['web']['vhosts'][0]['host']
@@ -146,6 +190,7 @@ def main():
                       f'{requests} requests; new backend TCP SYN={counts[-1]}; '
                       f'elapsed={time.monotonic()-start:.3f}s',flush=True)
                 if keepalive and len(sys.argv)==3: check_site(probe,Path(sys.argv[2]))
+                if keepalive: check_session_capacity(probe)
             finally:
                 if process.poll() is None: process.send_signal(signal.SIGQUIT)
                 try: process.wait(timeout=5)

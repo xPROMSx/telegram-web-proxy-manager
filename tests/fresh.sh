@@ -371,7 +371,10 @@ cp -a "$SITE_ROOT" "$SANDBOX/origin-site"
 for http_format in origin keepalive direct; do
 if [[ $http_format != origin ]]; then
     python3 tests/legacy_site_fixture.py "$CONFIG" "$DATA" "$NGINX_ROOT" "$STATE" "$SITE_ROOT" "$http_format"
+    # Historical installations retain their eight-session profile verbatim.
+    sed -i 's/^max_sessions = 16$/max_sessions = 8/' "$CONFIG"
 fi
+toml_before=$(sha256sum "$CONFIG")
 nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
 (
     INTERACTIVE_INSTALL=0 UI_INTERACTIVE=0
@@ -391,6 +394,7 @@ nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
     repair_manager
 ) >"$SANDBOX/lifecycle-$http_format.log" 2>&1
 [[ $(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort) == "$nginx_before" ]]
+[[ $(sha256sum "$CONFIG") == "$toml_before" ]]
 printf 'ok - Install/Check/Update delegation/Repair preserve %s HTTP and existing stream format (runtime transports mocked)\n' "$http_format"
 done
 cp -p "$SANDBOX/optimized-vhost" "$NGINX_ROOT/conf.d/telemt-web-manager.conf"

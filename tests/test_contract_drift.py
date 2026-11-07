@@ -124,10 +124,14 @@ class ManagedContractTests(unittest.TestCase):
         return s.managed_web_contract(config, "/var/lib/telemt")
 
     def test_fresh_and_safe_tuning(self):
+        profile = self.config['web']['vhosts'][0]['profiles'][0]
+        self.assertEqual(tuple(profile[key] for key in
+                               ('max_sessions', 'max_streams', 'max_streams_per_session')),
+                         (16, 512, 64))
         self.assertEqual(self.validate(self.config),
                          ("proxy.example.com", "direct", "203.0.113.10"))
         config = copy.deepcopy(self.config)
-        config["web"]["vhosts"][0]["profiles"][0]["max_sessions"] = 16
+        config["web"]["vhosts"][0]["profiles"][0]["max_sessions"] = 8
         config["general"]["log_level"] = "quiet"
         del config["general"]["disable_colors"]  # No automatic color migration.
         legacy = copy.deepcopy(config)

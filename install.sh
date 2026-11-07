@@ -237,8 +237,21 @@ def existing_pair():
     if {p.name for p in dest.iterdir()} != {'telemt-web-manager.sh', 'lib'}:
         raise ValueError('Unrelated installation directory; manual review required')
     safe(dest / 'lib')
-    if {p.name for p in (dest / 'lib').iterdir()} != {'safety.py'}:
+    helpers = {p.name for p in (dest / 'lib').iterdir()}
+    if helpers not in ({'safety.py'}, {'safety.py', '__pycache__'}):
         raise ValueError('Unrelated manager helper directory; manual review required')
+    if '__pycache__' in helpers:
+        cache = dest / 'lib/__pycache__'
+        safe(cache)
+        if cache.stat().st_gid != 0 or cache.stat().st_mode & 0o022:
+            raise ValueError('Unsafe manager helper cache')
+        for entry in cache.iterdir():
+            # Never load cached code. The atomic pair exchange discards only
+            # root-owned, regular CPython cache files for this known helper.
+            if not re.fullmatch(r'safety\.cpython-[0-9]{2,3}(?:\.opt-[12])?\.pyc', entry.name):
+                raise ValueError('Unrelated manager helper cache; manual review required')
+            safe(entry, regular=True)
+            if entry.stat().st_gid != 0: raise ValueError('Unsafe manager helper cache')
     for p in (dest / 'telemt-web-manager.sh', dest / 'lib/safety.py'): safe(p, regular=True)
     if not (dest / 'telemt-web-manager.sh').read_bytes().startswith((b'#!/usr/bin/env bash\n# Telegram Web Proxy Manager.', b'#!/usr/bin/env bash\n# Telemt WEB Manager.')):
         raise ValueError('Existing program is not recognized as this manager')

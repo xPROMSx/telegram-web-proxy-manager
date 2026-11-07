@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=1.2.0
+readonly SCRIPT_VERSION=1.3.1
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1
@@ -520,7 +520,7 @@ upstream = "http://127.0.0.1:18081"
 [[web.vhosts.profiles]]
 user = "web-user"
 secret_mode = "dd"
-max_sessions = 8
+max_sessions = 16
 max_streams = 512
 max_streams_per_session = 64
 [[upstreams]]
