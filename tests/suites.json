@@ -305,7 +305,8 @@
     "tests/fixtures/nginx-3x-includes/sites-enabled/vision.conf",
     "tests/fixtures/nginx-3x-includes/snippets/includes.conf",
     "tests/fixtures/nginx-3x-includes/stream-enabled/stream.conf",
-    "tests/fixtures/legacy-service-status.html"
+    "tests/fixtures/legacy-service-status.html",
+    "tests/fixtures/nginx-http80-3x.conf"
   ],
   "metadata": [
     "tests/suites.json"

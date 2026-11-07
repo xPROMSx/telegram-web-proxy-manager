@@ -950,7 +950,6 @@ def acme_plan(root, host, output, webroot):
     for server in exact(http.children, "server"):
         if server.path == acme:
             continue
-        directives = list(expand(server.children))
         names = exact(server.children, "server_name")
         require(len(names) == 1)
         for name in names[0].args[1:]:
@@ -965,39 +964,16 @@ def acme_plan(root, host, output, webroot):
         require(len({tuple(n.args) for n in listens}) == len(listens)
                 and all(n.args in (["listen", "80"], ["listen", "0.0.0.0:80"],
                                    ["listen", "[::]:80"]) for n in listens))
-        locations = [n for n in directives if n.args[0] == "location"]
-        if not locations:
-            # Existing redirect-only profile remains unchanged.
-            require(all(n.children is None for n in directives))
-            require(len(directives) == len(listens) + 2)
-            require([n.args for n in directives if n.args[0] == "return"]
-                    == [["return", "301", "https://$host$request_uri"]])
-        else:
-            # Exact external webroot+redirect profile; Vision omits optional text/plain.
-            require(all(n.args[0] != "include" for n in server.children))
-            require(["listen", "80"] in [n.args for n in listens])
-            require(len(names[0].args) > 1 and len(set(names[0].args[1:])) == len(names[0].args[1:]))
-            for name in names[0].args[1:]: domain(name)
-            require(len(directives) == len(listens) + 3 and len(locations) == 2
-                    and all(n.children is None for n in directives if n.args[0] != "location"))
-            expected = {
-                ("location", "^~", "/.well-known/acme-challenge/"): [
-                    ["root", "/var/www/acme"], ["default_type", "text/plain"], ["try_files", "$uri", "=404"]],
-                ("location", "/"): [["return", "301", "https://$host$request_uri"]],
-            }
-            require({tuple(n.args) for n in locations} == set(expected))
-            for location in locations:
-                require(location.children is not None and all(n.children is None for n in location.children)
-                        and sorted(n.args for n in location.children) in (
-                            sorted(expected[tuple(location.args)]),
-                            sorted(args for args in expected[tuple(location.args)] if args[0] != "default_type")))
-            # Duplicate names on :80 would make Nginx select an ambiguous vhost.
-            for other in exact(http.children, "server"):
-                if other is server or other.path == acme: continue
-                if any(n.args[1] in ("80", "0.0.0.0:80", "[::]:80") for n in exact(other.children, "listen")):
-                    require(not set(names[0].args[1:]).intersection(
-                        name for n in exact(other.children, "server_name") for name in n.args[1:]),
-                        "ambiguous port 80 names")
+        # Nginx selects our separate exact-name :80 server before evaluating
+        # any foreign server's rewrites, Host guards or locations. Their content
+        # is not TWPM ownership evidence and is never edited by this plan.
+        require(len(names[0].args) > 1 and len(set(names[0].args[1:])) == len(names[0].args[1:]))
+        for other in exact(http.children, "server"):
+            if other is server or other.path == acme: continue
+            if any(n.args[1] in ("80", "0.0.0.0:80", "[::]:80") for n in exact(other.children, "listen")):
+                require(not set(names[0].args[1:]).intersection(
+                    name for n in exact(other.children, "server_name") for name in n.args[1:]),
+                    "ambiguous port 80 names")
         port80.update(id(n) for n in listens)
     for n in walk(nodes):
         if n.args[0] == "listen" and n.path != acme:
