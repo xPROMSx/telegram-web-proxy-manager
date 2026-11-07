@@ -4,6 +4,9 @@ name: checks
   push:
     branches:
     - main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 env:
@@ -264,8 +267,52 @@ jobs:
       run: sudo bash tests/bootstrap.sh
     - name: sudo python3 tests/web_link_fixture.py
       run: sudo python3 tests/web_link_fixture.py
-    - name: sudo env TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh
-      run: sudo env TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh
+    - name: Full Uninstall (standard profile)
+      run: sudo env TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh
+  lifecycle_includes:
+    name: Integration / Lifecycle includes
+    needs:
+    - scope
+    if: needs.scope.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    - name: Exact checkout and production identities
+      env:
+        EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        git rev-parse HEAD
+
+        git hash-object telemt-web-manager.sh lib/safety.py install.sh
+
+        '
+    - name: Install test tools
+      run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables nftables conntrack certbot passwd iproute2
+        util-linux curl python3 python3-yaml openssl ca-certificates
+    - name: Private official artifact directory
+      run: 'provenance="/var/tmp/twm-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+        sudo install -d -o root -g root -m 0700 "$provenance"
+
+        printf "TELEMT_UPDATE_ARTIFACTS=%s\n" "$provenance" >> "$GITHUB_ENV"
+
+        '
+    - name: Verify official provenance and download both architectures + baseline
+      env:
+        TELEMT_TEST_GITHUB_TOKEN: ${{ github.token }}
+      run: sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py "$TELEMT_UPDATE_ARTIFACTS"
+    - name: Generate pinned includes profile
+      run: |
+        fixture="$RUNNER_TEMP/telemt-uninstall-includes"
+        python3 tests/three_x_ui.py "$fixture" --script x-ui-latest.sh --profile includes
+        printf 'TWM_TEST_NGINX_FIXTURE=%s\n' "$fixture" >> "$GITHUB_ENV"
+    - name: Full Uninstall (includes profile)
+      run: sudo env TWM_TEST_NGINX_FIXTURE="$TWM_TEST_NGINX_FIXTURE" TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh
   nginx:
     name: Integration / Nginx
     needs:
@@ -432,6 +479,7 @@ jobs:
     - regression
     - telemt
     - lifecycle
+    - lifecycle_includes
     - nginx
     - system26
     - system24

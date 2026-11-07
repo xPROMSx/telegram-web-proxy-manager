@@ -3,16 +3,24 @@
 ## CI jobs and scope (Phase 1)
 
 The workflow always starts `Plan / Scope`, then `CI / Static`. Only changes to
-`README.md`, `README.en.md`, `README.ru.md` and `docs/**` select `DOCS_ONLY`.
+the eight existing READMEs (`README.md`, `README.en.md`, `README.ru.md`,
+`README_AR.md`, `README_ES.md`, `README_FA.md`, `README_TR.md`, `README_ZH_CN.md`)
+and `docs/**` select `DOCS_ONLY`.
 An unknown/empty diff, invalid revision or any other path selects `FULL`.
 There is no workflow-level path exclusion.
+Workflow concurrency groups PR runs by workflow/event/PR number, cancelling an
+unfinished older run when a new commit arrives. Other PRs have separate groups.
+Push groups use the unique run ID and do not cancel running or pending main
+checks; `cancel-in-progress: false` alone would still displace a pending run in
+a shared group. Exact-HEAD checkout and the final required gate remain unchanged.
 
 | Job | DOCS_ONLY | FULL |
 | --- | --- | --- |
 | Plan / Scope; CI / Static | Required | Required |
 | CI / Regression | Policy skip | Root discovery, transactions, bootstrap barrier, offline shell contracts |
 | Integration / Telemt | Policy skip | Official provenance, baseline/download/staging/runtime and evidence parity |
-| Integration / Lifecycle | Policy skip | Fresh/rollback/account, bootstrap/signals, WEB-link PTY and Uninstall |
+| Integration / Lifecycle | Policy skip | Fresh/rollback/account, bootstrap/signals, WEB-link PTY and full Uninstall with nginx-3x-ui |
+| Integration / Lifecycle includes | Policy skip | Full Uninstall with the generated pinned includes profile |
 | Integration / Nginx | Policy skip | ACME/renewal contracts, real Nginx and pinned 3x-ui profiles, including v2.1.7 with/without Vision (IPv4-only/dual-stack) |
 | System / Ubuntu 26.04 | Policy skip | Existing primary real QEMU suite |
 | System / Ubuntu 24.04 | Policy skip | Existing compatibility real QEMU suite |
@@ -21,7 +29,14 @@ There is no workflow-level path exclusion.
 
 All FULL suites start independently after Plan. Both QEMU suites run in parallel;
 Uninstall does not block them. Jobs needing official artifacts independently run
-the existing provenance verifier. ARM no longer depends on a completed QEMU job:
+the existing provenance verifier. Both Lifecycle jobs have their own runner,
+verified Telemt artifacts and temporary filesystem. They set
+`TWM_TEST_NGINX_FIXTURE` explicitly, selecting one complete pass each without
+the default sequential second pass in `uninstall.sh`. Fresh/Bootstrap/WEB stay
+in the standard job; the includes job generates the same hash-checked upstream
+profile before Uninstall. No state is passed between jobs, and neither depends
+on the other. Both are required for FULL and policy-skipped for DOCS_ONLY.
+ARM no longer depends on a completed QEMU job:
 its image keeps the same userspace/loader/qemu-user contract without a boot kernel.
 The GitHub runner remains Ubuntu 24.04; primary Ubuntu 26.04 is a real guest.
 
@@ -321,7 +336,10 @@ ELF safely and writes schema-1 receipts outside the checkout. It independently
 verifies the 3.5.12 baseline archive and embedded ELF identity. It executes no ELF.
 
 `update_boot.sh` runs offline disposable QEMU guests with real Ubuntu 24.04 and
-26.04 PID 1 systemd. Each family exercises the official 3.5.12 baseline and full
+26.04 PID 1 systemd. System jobs require KVM via only `/dev/kvm`; there is no
+automatic TCG fallback. The guest retains 2 vCPU, 1536 MiB RAM, the same CPU model,
+all deadlines and the networkless, capability-restricted container. Each family
+exercises the official 3.5.12 baseline and full
 3.5.13 Update: exact generated TOML/base unit, real Telemt UID/CAP_NET_ADMIN,
 private namespaces/cgroups and strict parser, stopped full-DATA rehearsal/quota
 readback, authenticated WEB, PID-owned listener, real local/public-path Nginx TLS/
@@ -411,9 +429,11 @@ configuration, inherited map include context, install/idempotence, exact owned
 fragment hashes, legacy retention when extension points appear, reverse planning
 and byte-identical neighbor preservation, plus partial/changed/duplicate/misplaced
 refusals. `three-x-ui.sh` adds the pinned include profiles to the existing
-Fresh/rollback/ACME/real-Nginx chain. The root lifecycle `uninstall.sh` also runs
-its complete deletion/certificate/refusal/rollback suite on the pinned include
-profile, using its existing verified baseline artifacts. The real Nginx test delays activation of the
+Fresh/rollback/ACME/real-Nginx chain. `Integration / Lifecycle includes` runs the
+unchanged full `uninstall.sh` deletion/certificate/refusal/rollback suite on the
+pinned include profile, independently of the standard Lifecycle runner and
+using separately verified baseline artifacts. Running `uninstall.sh` locally
+without a selector still executes both passes sequentially. The real Nginx test delays activation of the
 owned SNI include for the same verified TLS refusal/reload/acceptance contract as
 legacy. Its origin is a Python fixture; it does not prove real Telegram traffic,
 live ACME issuance or production systemd behavior.

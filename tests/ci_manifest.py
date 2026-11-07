@@ -54,6 +54,28 @@ def check(root=ROOT):
         return {' '.join(line.split()) for step in jobs[job]['steps'] if 'run' in step
                 for line in step['run'].splitlines() if not line.lstrip().startswith('#')}
 
+    # One complete pass per independent runner; a missing selector would
+    # silently reintroduce the sequential second pass in uninstall.sh.
+    assert jobs['lifecycle']['name'] == 'Integration / Lifecycle'
+    assert jobs['lifecycle_includes']['name'] == 'Integration / Lifecycle includes'
+    for job, selector in (('lifecycle', 'tests/fixtures/nginx-3x-ui'),
+                          ('lifecycle_includes', '"$TWM_TEST_NGINX_FIXTURE"')):
+        uninstall = ('sudo env TWM_TEST_NGINX_FIXTURE=' + selector +
+                     ' TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS"'
+                     ' PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh')
+        assert uninstall in command_lines(job), 'missing independent full Uninstall profile'
+        assert sum('bash tests/uninstall.sh' in line for step in jobs[job]['steps']
+                   for line in step.get('run', '').splitlines()) == 1
+        assert ('sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1'
+                ' python3 tests/update_provenance.py "$TELEMT_UPDATE_ARTIFACTS"') in command_lines(job)
+    generation = next(step['run'] for step in jobs['lifecycle_includes']['steps']
+                      if step.get('name') == 'Generate pinned includes profile')
+    assert generation.strip() == (
+        'fixture="$RUNNER_TEMP/telemt-uninstall-includes"\n'
+        'python3 tests/three_x_ui.py "$fixture" --script x-ui-latest.sh --profile includes\n'
+        'printf \'TWM_TEST_NGINX_FIXTURE=%s\\n\' "$fixture" >> "$GITHUB_ENV"')
+    assert jobs['lifecycle_includes']['steps'][:5] == jobs['lifecycle']['steps'][:5], 'lifecycle prerequisites differ'
+
     entries = manifest['entrypoints']
     reachable = set(jobs)
     for entry in entries:
