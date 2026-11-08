@@ -168,16 +168,16 @@ shift 2; bootstrap_main --no-start "$@"
 
     def test_112_upgrade_to_current_131_and_equal_reinstall(self):
         self.candidate('1.1.2'); self.run_install()
-        self.candidate('1.3.1')
+        self.candidate('1.3.2')
         for _ in range(2):
             result = self.run_install()
-            self.assertIn(b'Installed manager 1.3.1', result.stdout)
+            self.assertIn(b'Installed manager 1.3.2', result.stdout)
         before = self.snapshot()
         # A valid shell paired with an older helper must refuse before commit.
         helper = self.root / 'fixtures/helper'
         text = helper.read_text()
-        self.assertEqual(text.count("UPDATE_MANAGER_VERSION = '1.3.1'"), 1)
-        helper.write_text(text.replace("UPDATE_MANAGER_VERSION = '1.3.1'", "UPDATE_MANAGER_VERSION = '1.1.2'"))
+        self.assertEqual(text.count("UPDATE_MANAGER_VERSION = '1.3.2'"), 1)
+        helper.write_text(text.replace("UPDATE_MANAGER_VERSION = '1.3.2'", "UPDATE_MANAGER_VERSION = '1.1.2'"))
         self.run_install(False); self.assertEqual(before, self.snapshot())
         self.candidate('1.1.2')
         self.run_install(False); self.assertEqual(before, self.snapshot())
@@ -185,7 +185,7 @@ shift 2; bootstrap_main --no-start "$@"
     def test_120_upgrade_and_equal_reinstall_with_python_cache(self):
         self.candidate('1.2.0'); self.run_install()
         helper = self.root / 'opt/manager/lib/safety.py'
-        for version in ('1.3.1', '1.3.1'):
+        for version in ('1.3.2', '1.3.2'):
             py_compile.compile(str(helper), doraise=True)
             before = self.snapshot()
             source = self.root / 'fixtures/helper'
@@ -193,7 +193,7 @@ shift 2; bootstrap_main --no-start "$@"
             self.run_install(False); self.assertEqual(before, self.snapshot())
             source.write_bytes(saved)
             self.candidate(version); result = self.run_install()
-            self.assertIn(b'Installed manager 1.3.1', result.stdout)
+            self.assertIn(b'Installed manager 1.3.2', result.stdout)
         py_compile.compile(str(helper), doraise=True)
         before = self.snapshot(); self.candidate('1.2.0')
         self.run_install(False); self.assertEqual(before, self.snapshot())

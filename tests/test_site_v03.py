@@ -28,7 +28,12 @@ class SiteV03Tests(unittest.TestCase):
         config['web']['vhosts'][0]['decoy']={'mode':'http_upstream','upstream':'http://127.0.0.1:18081'}
         self.assertEqual(s.managed_web_contract(config,'/var/lib/telemt'),
                          ('proxy.example.com','direct','203.0.113.10'))
-        for upstream in ('http://0.0.0.0:18081','http://127.0.0.1:18082','https://127.0.0.1:18081',
+        for port in (18082,18090):
+            allowed=copy.deepcopy(config)
+            allowed['web']['vhosts'][0]['decoy']['upstream']=f'http://127.0.0.1:{port}'
+            self.assertEqual(s.managed_web_contract(allowed,'/var/lib/telemt'),
+                             ('proxy.example.com','direct','203.0.113.10'))
+        for upstream in ('http://0.0.0.0:18081','http://127.0.0.1:18091','https://127.0.0.1:18081',
                          'http://foreign.example/','http://127.0.0.1:18081/path'):
             bad=copy.deepcopy(config); bad['web']['vhosts'][0]['decoy']['upstream']=upstream
             with self.subTest(upstream=upstream),self.assertRaises(ValueError):
@@ -53,6 +58,74 @@ generate_config 00000000000000000000000000000000
                          'http://127.0.0.1:18082')
         self.assertEqual(s.managed_web_contract(config,'/var/lib/telemt'),
                          ('proxy.example.com','direct','203.0.113.10'))
+
+    def test_selected_origin_port_remains_bound_through_nginx_check_and_uninstall(self):
+        import shutil
+        nginx=self.root/'selected-nginx'; shutil.copytree(ROOT/'tests/fixtures/nginx',nginx)
+        (nginx/'conf.d').mkdir(exist_ok=True)
+        site=self.root/'selected-site'; digest=s.site_generate(site,'kitchen')
+        output=self.root/'selected-plan.json'
+        s.nginx_plan(nginx,'proxy.example.com',output,site_digest=digest,site_port=18082)
+        for edit in json.loads(output.read_text())['edits']:
+            Path(edit['path']).write_text(edit['content'])
+        vhost=nginx/'conf.d/telemt-web-manager.conf'
+        self.assertEqual(vhost.read_text(),
+                         s.render_vhost('proxy.example.com',site_digest=digest,site_port=18082))
+        s.nginx_plan(nginx,'proxy.example.com',output)
+        self.assertEqual(json.loads(output.read_text())['edits'],[])
+        shell=('source ./telemt-web-manager.sh; DOMAIN=proxy.example.com '
+               'PUBLIC_IP=203.0.113.10 DATA=/var/lib/telemt SITE_PORT=18082; '
+               'generate_config 00000000000000000000000000000000')
+        config=self.root/'selected.toml'
+        config.write_bytes(subprocess.run(['bash','-c',shell],cwd=ROOT,
+                                          capture_output=True,check=True).stdout)
+        self.assertEqual(s.site_bound_identity(config,'/var/lib/telemt',nginx,site),digest)
+        original=config.read_text()
+        for wrong in (18081,18083):
+            with self.subTest(mismatched_port=wrong), self.assertRaises(ValueError):
+                s.nginx_plan(nginx,'proxy.example.com',output,site_digest=digest,site_port=wrong)
+            config.write_text(original.replace('127.0.0.1:18082',f'127.0.0.1:{wrong}'))
+            with self.assertRaises(ValueError):
+                s.site_bound_identity(config,'/var/lib/telemt',nginx,site)
+        config.write_text(original)
+        s.nginx_plan(nginx,'proxy.example.com',output,uninstall=True)
+        for edit in json.loads(output.read_text())['edits']:
+            if edit['content'] is None: Path(edit['path']).unlink()
+            else: Path(edit['path']).write_text(edit['content'])
+        self.assertFalse(vhost.exists())
+
+    def test_all_candidate_origin_ports_busy_refuses(self):
+        shell = """
+source ./telemt-web-manager.sh
+ss() { printf 'LISTEN foreign-process\\n'; }
+if select_site_port; then exit 99; fi
+[[ -z $SITE_PORT ]]
+"""
+        result=subprocess.run(['bash','-c',shell],cwd=ROOT,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
+
+    def test_isolated_update_origin_uses_exact_installed_port(self):
+        # Port wiring is mocked here; real isolation/rollback remains in system CI.
+        from unittest.mock import MagicMock
+        root=self.root/'private'; (root/'run').mkdir(parents=True)
+        (root/'usr/sbin').mkdir(parents=True)
+        (root/'usr/sbin/nginx').write_text('fixture')
+        (root/'var/www/telemt-web-manager').mkdir(parents=True)
+        settings={'web':{'vhosts':[{'decoy':{'mode':'http_upstream',
+                                          'upstream':'http://127.0.0.1:18082'}}]}}
+        process=MagicMock()
+        process.poll.return_value=None
+        process.wait.return_value=0
+        process.returncode=0
+        with patch.object(s,'site_identity'), patch.object(s,'safe_path'), \
+             patch.object(s.os,'chown'), patch.object(s,'update_write'), \
+             patch.object(s,'update_run'), patch.object(s.subprocess,'Popen',return_value=process), \
+             patch.object(s.socket,'create_connection') as connect, \
+             patch.object(s,'render_site_server',wraps=s.render_site_server) as render:
+            with s.isolated_site_origin(root,settings,{'uid':65534,'gid':65534}):
+                pass
+        render.assert_called_once_with(port=18082)
+        connect.assert_called_once_with(('127.0.0.1',18082),timeout=.1)
 
     def test_embedded_resources_are_verbatim_and_fail_before_generation_if_corrupt(self):
         values=s.site_resources()
