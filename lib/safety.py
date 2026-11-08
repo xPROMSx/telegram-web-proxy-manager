@@ -742,8 +742,10 @@ def nginx_web_backend(http, vhost):
 
 
 def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False,
-               keepalive=False, site_digest=None):
+               keepalive=False, site_digest=None, site_port=18081):
     domain(host)
+    if site_digest is not None:
+        require(type(site_port) is int and 18081 <= site_port <= 18090, 'unsupported origin port')
     parser = Nginx(root)
     nodes = parser.read(Path(root) / "nginx.conf")
     streams, https = exact(nodes, "stream"), exact(nodes, "http")
@@ -819,6 +821,10 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     vhost = parser.root / "conf.d" / "telemt-web-manager.conf"
     safe_path(vhost)
     owned_site = site_vhost_digest(vhost.read_text()) if vhost.exists() else None
+    owned_port = site_vhost_port(vhost.read_text()) if owned_site else None
+    if site_digest is not None and owned_port is not None:
+        require(site_port == owned_port, 'managed origin port changed')
+    origin_port = owned_port if owned_port is not None else site_port
     # Legacy checks/removal do not claim a new HTTP symbol. Fresh/new vhosts
     # and explicit optimization must prove exclusive use before publishing it.
     if keepalive or site_digest or owned_site or not vhost.exists() or vhost.read_text() == render_vhost(host):
@@ -846,14 +852,14 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
                     "ambiguous Nginx listen address")
             if not address.startswith("unix:"):
                 require(int(address.rsplit(":", 1)[-1]) not in
-                        ((443,7444,18080,18081) if site_digest or owned_site else (443,7444,18080)))
+                        ((443,7444,18080,origin_port) if site_digest or owned_site else (443,7444,18080)))
     edits = {}
     if existing or owned or vhost.exists():
         require(len(existing) == len(owned) == 1 and vhost.exists())
         require(existing[0].args == [host, "twm_frontend"])
         require([n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]])
         require(vhost.read_text() in (render_vhost(host), render_vhost(host, keepalive=False),
-                                     render_vhost(host,site_digest=owned_site)),
+                                     render_vhost(host,site_digest=owned_site,site_port=origin_port)),
                 "managed Nginx vhost differs; manual review required")
         if site_digest: require(owned_site == site_digest, 'site creation cannot migrate an existing vhost')
         active = [n for n in expand(http.children) if n.path == vhost]
@@ -870,7 +876,7 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         for path, literal in stream_files:
             safe_path(path)
             edits[path] = literal
-        edits[vhost] = render_vhost(host,site_digest=site_digest)
+        edits[vhost] = render_vhost(host,site_digest=site_digest,site_port=origin_port)
     elif not (existing or owned or vhost.exists()):
         source = parser.sources[mapping.path]
         require(mapping.path == stream.path or mapping.path.is_relative_to(parser.root))
@@ -879,7 +885,7 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         shifted = mapping.close + len(f"    {host} twm_frontend; # telemt-web-manager\n") + 1
         content = edits[mapping.path]
         edits[mapping.path] = content[:shifted] + "\n# telemt-web-manager\nupstream twm_frontend { server 127.0.0.1:7444; }\n" + content[shifted:]
-        edits[vhost] = render_vhost(host,site_digest=site_digest)
+        edits[vhost] = render_vhost(host,site_digest=site_digest,site_port=origin_port)
     if keepalive:
         require(not uninstall and len(existing) == len(owned) == 1 and vhost.exists())
         if vhost.read_text() == render_vhost(host,keepalive=False): edits[vhost] = render_vhost(host)
@@ -996,11 +1002,21 @@ def port80_config(root):
                   and int(n.args[1].rsplit(":", 1)[-1]) == 80 for n in walk(nodes))))
 
 
-def render_site_server(directory=None):
+def decoy_origin_port(decoy):
+    require(type(decoy) is dict and decoy.get('mode') == 'http_upstream')
+    upstream = decoy.get('upstream')
+    require(type(upstream) is str
+            and re.fullmatch(r'http://127\.0\.0\.1:(1808[1-9]|18090)', upstream),
+            'decoy contract changed')
+    return int(upstream.rsplit(':', 1)[1])
+
+
+def render_site_server(directory=None, port=18081):
     directory = str(directory or SITE_ROOT)
     require(re.fullmatch(r'/[A-Za-z0-9_./-]+',directory) and '..' not in Path(directory).parts)
+    require(type(port) is int and 18081 <= port <= 18090, 'unsupported origin port')
     return f'''server {{
-    listen 127.0.0.1:18081;
+    listen 127.0.0.1:{port};
     server_name _;
     root {directory};
     index index.html;
@@ -1025,7 +1041,7 @@ def render_site_server(directory=None):
 '''
 
 
-def render_vhost(host, keepalive=True, site_digest=None):
+def render_vhost(host, keepalive=True, site_digest=None, site_port=18081):
     require(site_digest is None or (keepalive and re.fullmatch(r'[0-9a-f]{64}',site_digest)))
     upstream = ('upstream twpm_web_backend {\n    server 127.0.0.1:18080;\n    keepalive 32;\n}\n'
                 if keepalive else '')
@@ -1060,7 +1076,7 @@ def render_vhost(host, keepalive=True, site_digest=None):
         proxy_next_upstream off;
     }}
 }}
-'''+(render_site_server() if site_digest else '')
+'''+(render_site_server(port=site_port) if site_digest else '')
 
 
 def read_config(path):
@@ -1127,8 +1143,7 @@ def managed_web_contract(c, data):
         require(decoy.get('directory') == str(Path(data)/'public')
                 and decoy.get('index','index.html') == 'index.html', 'decoy contract changed')
     else:
-        require(decoy == {'mode':'http_upstream','upstream':'http://127.0.0.1:18081'},
-                'decoy contract changed')
+        decoy_origin_port(decoy)
     profiles = vhosts[0].get("profiles", [])
     require(len(profiles) == 1 and profiles[0].get("user") == "web-user"
             and profiles[0].get("secret_mode") == "dd", "WEB profile binding changed")
@@ -2282,6 +2297,13 @@ def site_vhost_digest(source):
     return values[0] if values else None
 
 
+def site_vhost_port(source):
+    ports = re.findall(r'^    listen 127\.0\.0\.1:(\d+);$', source, re.M)
+    require(len(ports) == 1 and 18081 <= int(ports[0]) <= 18090,
+            'unrecognized owned origin listener')
+    return int(ports[0])
+
+
 def site_bound_identity(config, data, nginx_root, directory=SITE_ROOT):
     c = read_config(config); host = managed_web_contract(c,data)[0]
     vhost = Path(nginx_root)/'conf.d/telemt-web-manager.conf'; safe_path(vhost)
@@ -2291,7 +2313,9 @@ def site_bound_identity(config, data, nginx_root, directory=SITE_ROOT):
                 'legacy decoy and Nginx vhost differ')
         return None
     digest = site_identity(directory)
-    require(source == render_vhost(host,site_digest=digest), 'site ownership/hash differs')
+    origin_port = decoy_origin_port(c['web']['vhosts'][0]['decoy'])
+    require(source == render_vhost(host,site_digest=digest,site_port=origin_port),
+            'site ownership/hash differs')
     return digest
 
 
@@ -2360,7 +2384,7 @@ class UpdateProgress:
 # helper with the older parser APIs; bootstrap continues to install one pair.
 UPDATE_SCHEMA = 1
 UPSTREAM_REPOSITORY = dict(id=1125007401, full_name='telemt/telemt')
-UPDATE_MANAGER_VERSION = '1.3.1'
+UPDATE_MANAGER_VERSION = '1.3.2'
 BASELINE_VERSION = '3.5.16'
 BASELINE_COMMIT = '84e5b827a6619fb2e09ad3d09f253cdffe04bc2f'
 BASELINE_HASHES = {
@@ -4295,6 +4319,7 @@ def isolated_site_origin(root, settings, identity):
     if settings['web']['vhosts'][0]['decoy']['mode'] != 'http_upstream':
         yield
         return
+    origin_port = decoy_origin_port(settings['web']['vhosts'][0]['decoy'])
     directory = root/str(SITE_ROOT).lstrip('/')
     site_identity(directory)
     executable = root/'usr/sbin/nginx'; safe_path(executable)
@@ -4307,7 +4332,7 @@ def isolated_site_origin(root, settings, identity):
                         ('client_body','proxy','fastcgi','uwsgi','scgi'))
     source = ('worker_processes 1; pid /run/site-origin/nginx.pid; lock_file /run/site-origin/nginx.lock;\n'
               'error_log /run/site-origin/error.log crit;\nevents { worker_connections 256; }\n'
-              'http { access_log off;\n'+temporary+render_site_server()+'}\n')
+              'http { access_log off;\n'+temporary+render_site_server(port=origin_port)+'}\n')
     update_write(config,source.encode(),0o644)
     # A distinct numeric UID, no capabilities and the same private chroot keep
     # even a compromised candidate away from the trusted origin and host files.
@@ -4323,7 +4348,7 @@ def isolated_site_origin(root, settings, identity):
         while True:
             require(process.poll() is None, 'private site origin exited')
             try:
-                with socket.create_connection(('127.0.0.1',18081),timeout=.1): break
+                with socket.create_connection(('127.0.0.1',origin_port),timeout=.1): break
             except OSError:
                 require(time.monotonic()<deadline, 'private site origin readiness failed'); time.sleep(.05)
         yield
@@ -4585,6 +4610,9 @@ def main():
     elif command == 'decoy-mode':
         c=read_config(args[0]); managed_web_contract(c,c['general']['data_path'])
         print(c['web']['vhosts'][0]['decoy']['mode'])
+    elif command == 'decoy-port':
+        c=read_config(args[0]); managed_web_contract(c,c['general']['data_path'])
+        print(decoy_origin_port(c['web']['vhosts'][0]['decoy']))
     elif command == "semver":
         _, pre = semver(args[0])
         require(len(args) == 1 or (args[1] == "stable" and not pre))
@@ -4593,8 +4621,9 @@ def main():
     elif command == "nginx-plan":
         nginx_plan(*args)
     elif command == 'nginx-site-plan':
-        require(len(args)==5)
-        nginx_plan(*args[:4],site_digest=args[4])
+        require(len(args) in (5,6))
+        nginx_plan(*args[:4],site_digest=args[4],
+                   site_port=int(args[5]) if len(args)==6 else 18081)
     elif command == "nginx-uninstall-plan":
         nginx_plan(*args, uninstall=True)
     elif command == "nginx-keepalive-plan":
