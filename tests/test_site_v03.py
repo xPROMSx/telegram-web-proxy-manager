@@ -34,6 +34,26 @@ class SiteV03Tests(unittest.TestCase):
             with self.subTest(upstream=upstream),self.assertRaises(ValueError):
                 s.managed_web_contract(bad,'/var/lib/telemt')
 
+    def test_busy_default_origin_port_selects_free_loopback_without_touching_xray(self):
+        # Regression: a foreign Xray listener on 18081 must not block Fresh.
+        shell = """
+source ./telemt-web-manager.sh
+DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10 DATA=/var/lib/telemt
+ss() {
+    if [[ $* == *"sport = :18081"* ]]; then printf 'LISTEN foreign-xray\\n'; fi
+}
+select_site_port
+[[ $SITE_PORT == 18082 ]]
+generate_config 00000000000000000000000000000000
+"""
+        result = subprocess.run(['bash','-c',shell],cwd=ROOT,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
+        config=s.tomllib.loads(result.stdout.decode())
+        self.assertEqual(config['web']['vhosts'][0]['decoy']['upstream'],
+                         'http://127.0.0.1:18082')
+        self.assertEqual(s.managed_web_contract(config,'/var/lib/telemt'),
+                         ('proxy.example.com','direct','203.0.113.10'))
+
     def test_embedded_resources_are_verbatim_and_fail_before_generation_if_corrupt(self):
         values=s.site_resources()
         self.assertEqual(set(values),s.SITE_SOURCE_FILES)
