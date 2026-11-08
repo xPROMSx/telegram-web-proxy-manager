@@ -142,7 +142,7 @@ class LauncherMigration(unittest.TestCase):
                 for directory in (self.root / 'opt', self.root / 'bin')
                 for p in directory.rglob('*')}
 
-    def install(self, success=True, injection='', tag='v1.3.1'):
+    def install(self, success=True, injection='', tag='v1.3.2'):
         # No production bypass: inject errors into this fixture's Python interpreter.
         code = '''source "$1"; BOOTSTRAP_TMP=$2/source; INSTALL_DIR=$2/opt/telemt-web-manager
 LAUNCHER=$2/bin/telemt-web-manager; BOOTSTRAP_LOCK=$2/lock/manager.lock
@@ -168,7 +168,7 @@ MANAGER_STATE=$2/state; MANAGER_SYSTEMD_ROOT=$2/systemd
                              (0, 0, 0o755, 1))
             result = subprocess.run([str(path), '--help'], capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0)
-            self.assertIn(b'Telegram Web Proxy Manager 1.3.1', result.stdout)
+            self.assertIn(b'Telegram Web Proxy Manager 1.3.2', result.stdout)
             self.assertIn(b'Usage: telegram-web-proxy-manager', result.stdout)
         self.assertEqual(self.legacy.read_bytes(), self.canonical.read_bytes())
 
@@ -234,22 +234,22 @@ os.replace = fail_launcher
 
     def test_pre_rename_published_101_candidate_is_still_accepted(self):
         path = self.source / 'telemt-web-manager.sh'
-        self.assertEqual(path.read_text().count('SCRIPT_VERSION=1.3.1'), 1)
+        self.assertEqual(path.read_text().count('SCRIPT_VERSION=1.3.2'), 1)
         path.write_text(path.read_text().replace('# Telegram Web Proxy Manager.',
-            '# Telemt WEB Manager.').replace('SCRIPT_VERSION=1.3.1', 'SCRIPT_VERSION=1.0.1'))
+            '# Telemt WEB Manager.').replace('SCRIPT_VERSION=1.3.2', 'SCRIPT_VERSION=1.0.1'))
         helper = self.source / 'safety.py'
-        self.assertEqual(helper.read_text().count("UPDATE_MANAGER_VERSION = '1.3.1'"), 1)
-        helper.write_text(helper.read_text().replace("UPDATE_MANAGER_VERSION = '1.3.1'", "UPDATE_MANAGER_VERSION = '1.0.1'"))
+        self.assertEqual(helper.read_text().count("UPDATE_MANAGER_VERSION = '1.3.2'"), 1)
+        helper.write_text(helper.read_text().replace("UPDATE_MANAGER_VERSION = '1.3.2'", "UPDATE_MANAGER_VERSION = '1.0.1'"))
         self.install(tag='v1.0.1')
         self.assertEqual(self.legacy.read_bytes(), self.canonical.read_bytes())
         self.assertEqual((self.dest / 'telemt-web-manager.sh').read_bytes(), path.read_bytes())
 
     def legacy_pair(self):
         self.dest.mkdir(0o755); (self.dest / 'lib').mkdir(0o755)
-        self.assertEqual((ROOT / 'telemt-web-manager.sh').read_text().count('SCRIPT_VERSION=1.3.1'), 1)
+        self.assertEqual((ROOT / 'telemt-web-manager.sh').read_text().count('SCRIPT_VERSION=1.3.2'), 1)
         script = (ROOT / 'telemt-web-manager.sh').read_text().replace(
             '# Telegram Web Proxy Manager.', '# Telemt WEB Manager.').replace(
-            'SCRIPT_VERSION=1.3.1', 'SCRIPT_VERSION=1.0.1')
+            'SCRIPT_VERSION=1.3.2', 'SCRIPT_VERSION=1.0.1')
         (self.dest / 'telemt-web-manager.sh').write_text(script)
         (self.dest / 'telemt-web-manager.sh').chmod(0o755)
         (self.dest / 'lib/safety.py').write_bytes((ROOT / 'lib/safety.py').read_bytes())
@@ -314,8 +314,8 @@ class PublicBrand(unittest.TestCase):
             self.assertNotIn('Telemt WEB Manager', text, filename)
         shell = (ROOT / 'telemt-web-manager.sh').read_text()
         helper = (ROOT / 'lib/safety.py').read_text()
-        self.assertIn('readonly SCRIPT_VERSION=1.3.1', shell)
-        self.assertIn("UPDATE_MANAGER_VERSION = '1.3.1'", helper)
+        self.assertIn('readonly SCRIPT_VERSION=1.3.2', shell)
+        self.assertIn("UPDATE_MANAGER_VERSION = '1.3.2'", helper)
         self.assertEqual(helper.count("'User-Agent': f'telegram-web-proxy-manager/{UPDATE_MANAGER_VERSION}'"), 2)
         for filename in ('README.md', 'README.en.md'):
             text = (ROOT / filename).read_text()
