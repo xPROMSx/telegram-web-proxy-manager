@@ -20,10 +20,32 @@ curl() {
     for argument in "$@"; do
         if [[ $argument == https://* ]]; then url=$argument; fi
     done
-    [[ $url == "https://github.com/telemt/telemt/releases/download/$SUPPORTED_TELEMT_VERSION/telemt-$(uname -m)-linux-gnu.tar.gz" ]]
-    printf '%s\n' "$url" >"$SANDBOX/requested-url"
-    cp "$fixture_source" "$TMP/asset.tar.gz"
+    printf '%s\n' "$url" >>"$SANDBOX/requested-urls"
+    if [[ ${fixture_transport:-} == release-504 && $url == https://github.com/telemt/telemt/releases/download/* ]]; then
+        printf '504'
+        return 22
+    fi
+    if [[ $url == "https://github.com/telemt/telemt/releases/download/$SUPPORTED_TELEMT_VERSION/telemt-$(uname -m)-linux-gnu.tar.gz" ||
+          $url == https://api.github.com/repos/telemt/telemt/releases/assets/* ]]; then
+        printf '%s\n' "$url" >"$SANDBOX/requested-url"
+        cp "$fixture_source" "$TMP/asset.tar.gz"
+        return 0
+    fi
+    return 44
 }
+# Regression: a 504 from the official browser URL must use the official asset API
+# and still verify the exact pinned archive before any binary executes.
+fixture_transport=release-504
+rm -f "$SANDBOX/requested-urls" "$TMP/asset.tar.gz" "$TMP/telemt"
+set +e
+(set -Eeuo pipefail; download_candidate) >"$SANDBOX/fallback.log" 2>&1
+fallback_result=$?
+set -e
+if (( fallback_result )); then cat "$SANDBOX/fallback.log" >&2; exit 1; fi
+[[ $(cat "$SANDBOX/requested-url") == https://api.github.com/repos/telemt/telemt/releases/assets/* ]]
+[[ -f $TMP/telemt && -f $TMP/asset.tar.gz ]]
+printf 'ok - HTTP 504 uses official GitHub Releases asset API, verified against the production pin\n'
+fixture_transport=''
 assert_download_refused() {
     local label=$1 result
     rm -f "$SANDBOX/executed" "$TMP/telemt"
