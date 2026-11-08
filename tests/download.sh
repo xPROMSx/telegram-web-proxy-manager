@@ -21,7 +21,16 @@ curl() {
         if [[ $argument == https://* ]]; then url=$argument; fi
     done
     printf '%s\n' "$url" >>"$SANDBOX/requested-urls"
-    if [[ ${fixture_transport:-} == release-504 && $url == https://github.com/telemt/telemt/releases/download/* ]]; then
+    if [[ ${fixture_transport:-} == release-403 && $url == https://github.com/telemt/telemt/releases/download/* ]]; then
+        printf '403'
+        return 22
+    fi
+    if [[ ( ${fixture_transport:-} == release-504 || ${fixture_transport:-} == both-504 ) &&
+          $url == https://github.com/telemt/telemt/releases/download/* ]]; then
+        printf '504'
+        return 22
+    fi
+    if [[ ${fixture_transport:-} == both-504 && $url == https://api.github.com/repos/telemt/telemt/releases/assets/* ]]; then
         printf '504'
         return 22
     fi
@@ -45,6 +54,16 @@ if (( fallback_result )); then cat "$SANDBOX/fallback.log" >&2; exit 1; fi
 [[ $(cat "$SANDBOX/requested-url") == https://api.github.com/repos/telemt/telemt/releases/assets/* ]]
 [[ -f $TMP/telemt && -f $TMP/asset.tar.gz ]]
 printf 'ok - HTTP 504 uses official GitHub Releases asset API, verified against the production pin\n'
+fixture_transport=both-504
+rm -f "$SANDBOX/requested-urls" "$SANDBOX/executed"
+assert_download_refused 'both GitHub download routes returned HTTP 504'
+grep -Fq 'Cannot download Telemt from GitHub Releases' "$SANDBOX/refusal.log"
+[[ $(wc -l <"$SANDBOX/requested-urls") == 2 ]]
+fixture_transport=release-403
+rm -f "$SANDBOX/requested-urls" "$SANDBOX/executed"
+assert_download_refused 'GitHub HTTP 403 does not trigger API fallback'
+grep -Fq 'Cannot download Telemt from GitHub Releases (HTTP 403)' "$SANDBOX/refusal.log"
+[[ $(wc -l <"$SANDBOX/requested-urls") == 1 ]]
 fixture_transport=''
 assert_download_refused() {
     local label=$1 result

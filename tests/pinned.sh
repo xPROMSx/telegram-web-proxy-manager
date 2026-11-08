@@ -40,11 +40,11 @@ for ((depth=0; depth<8; depth++)); do
     curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 10 --max-time 60 --retry 2 \
         "https://api.github.com/repos/telemt/telemt/git/tags/$tag_sha" -o "$TMP/resolved.json"
 done
-python3 - "$TMP" "$SUPPORTED_TELEMT_VERSION" "$SUPPORTED_TELEMT_COMMIT" "$TELEMT_SHA256_X86_64" "$TELEMT_SHA256_AARCH64" <<'PY'
+python3 - "$TMP" "$SUPPORTED_TELEMT_VERSION" "$SUPPORTED_TELEMT_COMMIT" "$TELEMT_SHA256_X86_64" "$TELEMT_SHA256_AARCH64" "$TELEMT_ASSET_ID_X86_64" "$TELEMT_ASSET_ID_AARCH64" <<'PY'
 import json
 from pathlib import Path
 import sys
-root, version, commit, x86, arm = sys.argv[1:]
+root, version, commit, x86, arm, x86_id, arm_id = sys.argv[1:]
 r = json.loads((Path(root) / 'release.json').read_text())
 ref = json.loads((Path(root) / 'ref.json').read_text())
 resolved = json.loads((Path(root) / 'resolved.json').read_text())
@@ -56,11 +56,12 @@ assert resolved['object']['type'] == 'commit' and resolved['object']['sha'] == c
 assert resolved['tag'] == version
 assert resolved['verification']['verified'] is True and resolved['verification']['reason'] == 'valid'
 print('ok - official annotated tag GitHub verification: verified=true, reason=valid')
-for arch, digest in (('x86_64', x86), ('aarch64', arm)):
+for arch, digest, asset_id in (('x86_64', x86, x86_id), ('aarch64', arm, arm_id)):
     name = 'telemt-' + arch + '-linux-gnu.tar.gz'
     assets = [a for a in r['assets'] if a['name'] == name]
     assert len(assets) == 1
     assert assets[0]['digest'] == 'sha256:' + digest
+    assert assets[0]['id'] == int(asset_id)
     assert assets[0]['browser_download_url'] == 'https://github.com/telemt/telemt/releases/download/' + version + '/' + name
     print('ok - official pinned ' + name + ' SHA256 ' + digest)
 print('ok - official pinned release/tag commit ' + commit)

@@ -36,7 +36,7 @@ curl() {
 }
 sha256sum() {
     [[ $1 == "$TMP/asset.tar.gz" ]] || return 95
-    printf '%s  %s\n' "\${MOCK_DIGEST:-$TELEMT_SHA256_X86_64}" "$1"
+    printf '%s  %s\n' "${MOCK_DIGEST:-$TELEMT_SHA256_X86_64}" "$1"
 }
 helper() {
     [[ $1 == extract-binary ]] || return 94
