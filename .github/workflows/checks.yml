@@ -267,6 +267,43 @@ jobs:
       run: sudo bash tests/bootstrap.sh
     - name: sudo python3 tests/web_link_fixture.py
       run: sudo python3 tests/web_link_fixture.py
+  uninstall_standard:
+    name: Integration / Uninstall standard
+    needs:
+    - scope
+    if: needs.scope.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    - name: Exact checkout and production identities
+      env:
+        EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        git rev-parse HEAD
+
+        git hash-object telemt-web-manager.sh lib/safety.py install.sh
+
+        '
+    - name: Install test tools
+      run: sudo apt-get update && sudo apt-get install -y shellcheck jq nginx libnginx-mod-stream iptables nftables conntrack certbot passwd iproute2
+        util-linux curl python3 python3-yaml openssl ca-certificates
+    - name: Private official artifact directory
+      run: 'provenance="/var/tmp/twm-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+        sudo install -d -o root -g root -m 0700 "$provenance"
+
+        printf "TELEMT_UPDATE_ARTIFACTS=%s\n" "$provenance" >> "$GITHUB_ENV"
+
+        '
+    - name: Verify official provenance and download both architectures + baseline
+      env:
+        TELEMT_TEST_GITHUB_TOKEN: ${{ github.token }}
+      run: sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py "$TELEMT_UPDATE_ARTIFACTS"
     - name: Full Uninstall (standard profile)
       run: sudo env TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh
   lifecycle_includes:
@@ -479,6 +516,7 @@ jobs:
     - regression
     - telemt
     - lifecycle
+    - uninstall_standard
     - lifecycle_includes
     - nginx
     - system26

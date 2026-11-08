@@ -142,8 +142,13 @@
       "command": "sudo python3 tests/web_link_fixture.py"
     },
     {
+      "path": "tests/update_provenance.py",
+      "job": "uninstall_standard",
+      "command": "sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py \"$TELEMT_UPDATE_ARTIFACTS\""
+    },
+    {
       "path": "tests/uninstall.sh",
-      "job": "lifecycle",
+      "job": "uninstall_standard",
       "command": "sudo env TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui TELEMT_UPDATE_ARTIFACTS=\"$TELEMT_UPDATE_ARTIFACTS\" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh"
     },
     {

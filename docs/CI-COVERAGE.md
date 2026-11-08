@@ -19,7 +19,8 @@ a shared group. Exact-HEAD checkout and the final required gate remain unchanged
 | Plan / Scope; CI / Static | Required | Required |
 | CI / Regression | Policy skip | Root discovery, transactions, bootstrap barrier, offline shell contracts |
 | Integration / Telemt | Policy skip | Official provenance, baseline/download/staging/runtime and evidence parity |
-| Integration / Lifecycle | Policy skip | Fresh/rollback/account, bootstrap/signals, WEB-link PTY and full Uninstall with nginx-3x-ui |
+| Integration / Lifecycle | Policy skip | Fresh/rollback/account, bootstrap/signals and WEB-link PTY |
+| Integration / Uninstall standard | Policy skip | Full Uninstall with nginx-3x-ui |
 | Integration / Lifecycle includes | Policy skip | Full Uninstall with the generated pinned includes profile |
 | Integration / Nginx | Policy skip | ACME/renewal contracts, real Nginx and pinned 3x-ui profiles, including v2.1.7 with/without Vision (IPv4-only/dual-stack) |
 | System / Ubuntu 26.04 | Policy skip | Existing primary real QEMU suite |
@@ -29,13 +30,14 @@ a shared group. Exact-HEAD checkout and the final required gate remain unchanged
 
 All FULL suites start independently after Plan. Both QEMU suites run in parallel;
 Uninstall does not block them. Jobs needing official artifacts independently run
-the existing provenance verifier. Both Lifecycle jobs have their own runner,
-verified Telemt artifacts and temporary filesystem. They set
+the existing provenance verifier. Lifecycle, Uninstall standard and Lifecycle
+includes run on independent runners with separate checkouts and temporary state.
+Both Uninstall jobs verify their own official Telemt artifacts and set
 `TWM_TEST_NGINX_FIXTURE` explicitly, selecting one complete pass each without
-the default sequential second pass in `uninstall.sh`. Fresh/Bootstrap/WEB stay
-in the standard job; the includes job generates the same hash-checked upstream
-profile before Uninstall. No state is passed between jobs, and neither depends
-on the other. Both are required for FULL and policy-skipped for DOCS_ONLY.
+the default sequential second pass in `uninstall.sh`. Fresh/Bootstrap/WEB remain
+in Lifecycle; the includes job generates the same hash-checked upstream profile
+before Uninstall. No state is passed between jobs. All three are mandatory
+for FULL and policy-skipped for DOCS_ONLY.
 ARM no longer depends on a completed QEMU job:
 its image keeps the same userspace/loader/qemu-user contract without a boot kernel.
 The GitHub runner remains Ubuntu 24.04; primary Ubuntu 26.04 is a real guest.

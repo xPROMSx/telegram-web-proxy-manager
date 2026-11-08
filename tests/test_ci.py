@@ -76,8 +76,8 @@ class PlanTests(unittest.TestCase):
                      for j in ci_plan.REQUIRED}
             self.assertTrue(ci_plan.gate(mode, needs))
 
-    def test_both_lifecycle_profiles_are_mandatory_and_docs_only_skippable(self):
-        for job in ('lifecycle', 'lifecycle_includes'):
+    def test_lifecycle_and_both_uninstall_jobs_are_mandatory_and_docs_only_skippable(self):
+        for job in ('lifecycle', 'uninstall_standard', 'lifecycle_includes'):
             self.assertIn(job, ci_plan.HEAVY)
             needs = {name: {'result': 'success'} for name in ci_plan.REQUIRED}
             for result in ('failure', 'cancelled', 'skipped'):
@@ -134,7 +134,7 @@ class ManifestTests(unittest.TestCase):
             if defect == 'missing-job': del value['jobs']['lifecycle_includes']
             elif defect == 'serial': includes['needs'] = ['lifecycle']
             elif defect == 'selector':
-                step = value['jobs']['lifecycle']['steps'][-1]
+                step = value['jobs']['uninstall_standard']['steps'][-1]
                 step['run'] = step['run'].replace('TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui ', '')
             elif defect in ('wrong-profile', 'export'):
                 step = next(step for step in includes['steps'] if step.get('name') == 'Generate pinned includes profile')
@@ -143,6 +143,28 @@ class ManifestTests(unittest.TestCase):
                 includes['steps'] = [step for step in includes['steps'] if step.get('name') != 'Verify official provenance and download both architectures + baseline']
             elif defect == 'duplicate': includes['steps'].append(copy.deepcopy(includes['steps'][-1]))
             else: includes['steps'][0]['with']['ref'] = 'main'
+            path.write_text(yaml.safe_dump(value))
+            with self.subTest(defect=defect), self.assertRaises((AssertionError, KeyError)):
+                ci_manifest.check(self.root)
+
+    def test_standard_uninstall_is_independent_and_cannot_be_omitted(self):
+        path = self.root/'.github/workflows/checks.yml'
+        original = yaml.safe_load(path.read_text())
+        for defect in ('missing-job', 'serial', 'selector', 'provenance',
+                       'checkout', 'duplicate', 'inside-lifecycle'):
+            value = copy.deepcopy(original)
+            standard = value['jobs']['uninstall_standard']
+            if defect == 'missing-job': del value['jobs']['uninstall_standard']
+            elif defect == 'serial': standard['needs'] = ['lifecycle']
+            elif defect == 'selector':
+                standard['steps'][-1]['run'] = standard['steps'][-1]['run'].replace(
+                    'TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui ', '')
+            elif defect == 'provenance':
+                standard['steps'] = [step for step in standard['steps']
+                    if step.get('name') != 'Verify official provenance and download both architectures + baseline']
+            elif defect == 'checkout': standard['steps'][0]['with']['ref'] = 'main'
+            elif defect == 'duplicate': standard['steps'].append(copy.deepcopy(standard['steps'][-1]))
+            else: value['jobs']['lifecycle']['steps'].append(copy.deepcopy(standard['steps'][-1]))
             path.write_text(yaml.safe_dump(value))
             with self.subTest(defect=defect), self.assertRaises((AssertionError, KeyError)):
                 ci_manifest.check(self.root)
@@ -253,7 +275,7 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(command=command): self.assertIn(command, commands)
         self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision includes includes-ipv4;',
                       (ROOT/'tests/three-x-ui.sh').read_text())
-        for job in ('telemt', 'lifecycle', 'lifecycle_includes', 'system26', 'system24', 'arm'):
+        for job in ('telemt', 'lifecycle', 'uninstall_standard', 'lifecycle_includes', 'system26', 'system24', 'arm'):
             calls = '\n'.join(step.get('run','') for step in workflow['jobs'][job]['steps'])
             self.assertIn('sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py', calls)
 
