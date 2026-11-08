@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=1.3.1
+readonly SCRIPT_VERSION=1.3.2
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1
@@ -35,7 +35,7 @@ CONFIRM_UNINSTALL=0 DELETE_CERTIFICATE=0 CERT_CLEANUP_RUNNING=0 UNINSTALL_ENABLE
 CERT_ONLY=0 NGINX_ONLY=0 PLAN_MODE=web
 FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0 FRESH_GATE_CREATED=0
 INTERACTIVE_INSTALL=0 MENU_ACTION=0
-SITE_ROOT=/var/www/telemt-web-manager SITE_DIGEST='' FRESH_SITE=0
+SITE_ROOT=/var/www/telemt-web-manager SITE_DIGEST='' SITE_PORT=18081 FRESH_SITE=0
 # Invocation-only presentation. Never inherit or persist a language preference.
 UI_LANG=en UI_INTERACTIVE=0
 # Reviewed Ubuntu tools only; no user input is used as an apt package name.
@@ -516,7 +516,7 @@ host = "$DOMAIN"
 public_addr = "$PUBLIC_IP:443"
 [web.vhosts.decoy]
 mode = "http_upstream"
-upstream = "http://127.0.0.1:18081"
+upstream = "http://127.0.0.1:$SITE_PORT"
 [[web.vhosts.profiles]]
 user = "web-user"
 secret_mode = "dd"
@@ -635,11 +635,12 @@ wait_https_ready() {
 }
 
 path_health() {
-    local mode
+    local mode origin_port
     nginx_test && service_active && listener_ready && process_identity || return 1
     mode=$(helper decoy-mode "$CONFIG") || return 1
     if [[ $mode == http_upstream ]]; then
-        nginx_port_owned 18081 && http_ok http://127.0.0.1:18081/ || return 1
+        origin_port=$(helper decoy-port "$CONFIG") || return 1
+        nginx_port_owned "$origin_port" && http_ok "http://127.0.0.1:$origin_port/" || return 1
     fi
     http_ok -H "Host: $DOMAIN" http://127.0.0.1:18080/ || return 1
     # Traverse stream on :443 too: internal :7444 requires a PROXY preamble.
@@ -671,7 +672,7 @@ build_nginx_plan() {
     elif [[ $PLAN_MODE == keepalive ]]; then
         helper nginx-keepalive-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
     elif [[ -n $SITE_DIGEST ]]; then
-        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" || status=$?
+        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" "$SITE_PORT" || status=$?
     else
         helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
     fi
@@ -1004,6 +1005,16 @@ optimize_nginx_keepalive() {
     ui_ok 'Nginx upstream keepalive enabled. Telemt was not restarted.' 'Nginx upstream keepalive включён. Telemt не перезапускался.'
 }
 
+select_site_port() {
+    local port listeners
+    SITE_PORT=''
+    for port in {18081..18090}; do
+        listeners=$(ss -H -ltn "sport = :$port") || return 1
+        if [[ -z $listeners ]]; then SITE_PORT=$port; return 0; fi
+    done
+    return 1
+}
+
 install_manager() {
     if [[ -f $STATE/manifest.json ]]; then
         local requested_domain=$DOMAIN
@@ -1033,7 +1044,11 @@ install_manager() {
     fi
     [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || ui_die 'Existing Telemt unit found' 'Найден существующий unit Telemt; автоматическое подключение остановлено'
     [[ -d $(dirname "$SITE_ROOT") ]] || ui_die 'Site parent directory missing' 'Родительский каталог сайта отсутствует; требуется ручная проверка'
-    [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444 or sport = :18081') ]] || ui_die 'Private ports already occupied' 'Внутренние порты уже заняты; установка остановлена'
+    [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || ui_die 'Private ports 18080/7444 already occupied' 'Внутренние порты 18080/7444 уже заняты; установка остановлена'
+    select_site_port || ui_die 'No free local cover-site port in 18081-18090' 'Нет свободного порта сайта-прикрытия в диапазоне 18081-18090'
+    if [[ $SITE_PORT != 18081 ]]; then
+        ui_info "Selected local cover-site port: $SITE_PORT" "Выбран порт сайта-прикрытия: $SITE_PORT"
+    fi
     dns_preflight
     socks_probe || ui_die 'Telegram HTTPS through SOCKS failed' 'Проверка HTTPS Telegram через SOCKS не пройдена'
     nginx_test || ui_die 'Existing Nginx configuration invalid' 'Текущая конфигурация Nginx не прошла проверку'
@@ -1129,6 +1144,9 @@ load_installation() {
     helper config-info "$CONFIG" >"$TMP/config-info" || ui_die 'automatic update/migration not possible; manual review required' 'Автоматическое обновление или перенос состояния остановлены; требуется ручная проверка'
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Runtime/write paths require manual review; existing TOML was not changed' 'Рабочие пути или пути записи требуют ручной проверки; существующий TOML не изменён'
     SITE_DIGEST=$(helper site-bound "$CONFIG" "$DATA" "$NGINX_ROOT" "$SITE_ROOT") || ui_die 'Site ownership/hash differs; manual review required' 'Принадлежность или целостность сайта не подтверждена; требуется ручная проверка'
+    if [[ -n $SITE_DIGEST ]]; then
+        SITE_PORT=$(helper decoy-port "$CONFIG") || ui_die 'Invalid managed origin port' 'Недопустимый порт сайта-прикрытия'
+    fi
     installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
