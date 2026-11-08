@@ -133,9 +133,8 @@ and `docs/**` select DOCS_ONLY. AGENTS.md, CLAUDE.md, CONTRIBUTING.md and
 unknown/mixed paths select FULL. New commits cancel unfinished runs of the same
 PR; unique main-push groups preserve both running and pending main checks.
 Plan, Commit identity and Static are mandatory in both modes. FULL also runs
-Regression, Telemt/Nginx integration, both independent Lifecycle profile jobs,
-parallel Ubuntu 26.04/24.04 QEMU
-and ARM64; `CI / Required` rejects failures, cancellations, missing jobs and
+Regression, Telemt/Nginx integration, Lifecycle plus independent standard/includes
+Uninstall jobs, parallel Ubuntu 26.04/24.04 QEMU and ARM64; `CI / Required` rejects failures, cancellations, missing jobs and
 unexpected skips. Preserve exact checkout, pinned actions, read-only permissions,
 protected job names and scope policy. No live ACME or real Telegram client result
 is implied by local HTTP/Nginx or mocked Certbot tests.

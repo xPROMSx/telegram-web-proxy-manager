@@ -54,11 +54,15 @@ def check(root=ROOT):
         return {' '.join(line.split()) for step in jobs[job]['steps'] if 'run' in step
                 for line in step['run'].splitlines() if not line.lstrip().startswith('#')}
 
-    # One complete pass per independent runner; a missing selector would
-    # silently reintroduce the sequential second pass in uninstall.sh.
+    # Keep full Uninstall profiles on independent runners; Lifecycle itself
+    # must not execute either profile after the split.
     assert jobs['lifecycle']['name'] == 'Integration / Lifecycle'
+    assert jobs['uninstall_standard']['name'] == 'Integration / Uninstall standard'
     assert jobs['lifecycle_includes']['name'] == 'Integration / Lifecycle includes'
-    for job, selector in (('lifecycle', 'tests/fixtures/nginx-3x-ui'),
+    assert all('bash tests/uninstall.sh' not in step.get('run', '')
+               for step in jobs['lifecycle']['steps']), 'Lifecycle still runs Uninstall'
+    assert len(jobs['uninstall_standard']['steps']) == 6, 'standard Uninstall must run independently'
+    for job, selector in (('uninstall_standard', 'tests/fixtures/nginx-3x-ui'),
                           ('lifecycle_includes', '"$TWM_TEST_NGINX_FIXTURE"')):
         uninstall = ('sudo env TWM_TEST_NGINX_FIXTURE=' + selector +
                      ' TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS"'
@@ -74,7 +78,7 @@ def check(root=ROOT):
         'fixture="$RUNNER_TEMP/telemt-uninstall-includes"\n'
         'python3 tests/three_x_ui.py "$fixture" --script x-ui-latest.sh --profile includes\n'
         'printf \'TWM_TEST_NGINX_FIXTURE=%s\\n\' "$fixture" >> "$GITHUB_ENV"')
-    assert jobs['lifecycle_includes']['steps'][:5] == jobs['lifecycle']['steps'][:5], 'lifecycle prerequisites differ'
+    assert jobs['lifecycle_includes']['steps'][:5] == jobs['uninstall_standard']['steps'][:5] == jobs['lifecycle']['steps'][:5], 'lifecycle prerequisites differ'
 
     entries = manifest['entrypoints']
     reachable = set(jobs)
