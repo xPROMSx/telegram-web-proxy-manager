@@ -38,9 +38,9 @@ sha256sum() {
     [[ $1 == "$TMP/asset.tar.gz" ]] || return 95
     printf '%s  %s\n' "${MOCK_DIGEST:-$TELEMT_SHA256_X86_64}" "$1"
 }
-helper() {
-    [[ $1 == extract-binary ]] || return 94
-    printf '#!/bin/sh\n' > "$3"
+timeout() {
+    [[ $1 == 60 && $2 == python3 && $4 == extract-binary ]] || return 94
+    printf '#!/bin/sh\n' > "$6"
     printf executed > "$TEST_ROOT/extracted"
 }
 binary_version() { printf '%s\n' "$SUPPORTED_TELEMT_VERSION"; }

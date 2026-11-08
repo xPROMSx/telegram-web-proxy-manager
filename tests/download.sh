@@ -54,6 +54,16 @@ if (( fallback_result )); then cat "$SANDBOX/fallback.log" >&2; exit 1; fi
 [[ $(cat "$SANDBOX/requested-url") == https://api.github.com/repos/telemt/telemt/releases/assets/* ]]
 [[ -f $TMP/telemt && -f $TMP/asset.tar.gz ]]
 printf 'ok - HTTP 504 uses official GitHub Releases asset API, verified against the production pin\n'
+assert_download_refused() {
+    local label=$1 result
+    rm -f "$SANDBOX/executed" "$TMP/telemt"
+    set +e
+    (set -Eeuo pipefail; download_candidate) >"$SANDBOX/refusal.log" 2>&1
+    result=$?
+    set -e
+    [[ $result != 0 && ! -e $SANDBOX/executed ]]
+    printf 'ok - %s refused before candidate execution\n' "$label"
+}
 fixture_transport=both-504
 rm -f "$SANDBOX/requested-urls" "$SANDBOX/executed"
 assert_download_refused 'both GitHub download routes returned HTTP 504'
@@ -65,16 +75,6 @@ assert_download_refused 'GitHub HTTP 403 does not trigger API fallback'
 grep -Fq 'Cannot download Telemt from GitHub Releases (HTTP 403)' "$SANDBOX/refusal.log"
 [[ $(wc -l <"$SANDBOX/requested-urls") == 1 ]]
 fixture_transport=''
-assert_download_refused() {
-    local label=$1 result
-    rm -f "$SANDBOX/executed" "$TMP/telemt"
-    set +e
-    (set -Eeuo pipefail; download_candidate) >"$SANDBOX/refusal.log" 2>&1
-    result=$?
-    set -e
-    [[ $result != 0 && ! -e $SANDBOX/executed ]]
-    printf 'ok - %s refused before candidate execution\n' "$label"
-}
 printf corrupted >"$SANDBOX/corrupted.tar.gz"
 fixture_source="$SANDBOX/corrupted.tar.gz"
 assert_download_refused 'real SHA256 mismatch against immutable production pin'
