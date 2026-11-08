@@ -589,7 +589,12 @@ and include expansion cannot see them as listen/server_name/include/etc. Ordinar
 directive-name restrictions and map{} grammar are retained. Nested MIME blocks
 are refused. Every included source still participates in integrity snapshots.
 
-Fresh install verifies the pinned official asset, embedded digest, archive and exact
+Fresh install downloads the pinned official archive from GitHub Releases. On HTTP
+5xx it attempts the same pinned asset through GitHub's official release-asset
+REST API, using fixed release asset IDs and the same mandatory SHA256 check.
+If both routes fail, it reports the external download problem before any installation
+changes. Non-5xx failures and incorrect digests are rejected without fallback.
+Fresh install verifies the embedded digest, archive and exact
 binary version before constructing a private, usable compatibility filesystem under
 `$TMP/compat-data`: `state`, `public` and the same immutable `public/index.html`
 used in production. One parameterized TOML generator and one decoy writer create

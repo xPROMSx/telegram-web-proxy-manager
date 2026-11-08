@@ -13,6 +13,9 @@ export UPDATE_JOURNAL_SCHEMAS UPDATE_RECEIPT_SCHEMAS UPDATE_GATE_SCHEMAS
 readonly SUPPORTED_TELEMT_VERSION=3.5.16
 readonly SUPPORTED_TELEMT_COMMIT=84e5b827a6619fb2e09ad3d09f253cdffe04bc2f
 readonly TELEMT_SHA256_X86_64=e6f46b2f3becf29bfd555cec8a059e429f7c082c1af402499b3a7940cf8ebd34
+# Exact official GitHub Release Asset IDs for the pinned 3.5.16 archives.
+readonly TELEMT_ASSET_ID_X86_64=695266457
+readonly TELEMT_ASSET_ID_AARCH64=695266460
 readonly TELEMT_SHA256_AARCH64=1e1bc87f05923b9673cbbaf34a3e50f7fdcf7d496cd24efcdb34c278ed18a659
 BASE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HELPER="$BASE_DIR/lib/safety.py"
@@ -378,16 +381,27 @@ check_dependencies() {
 }
 
 download_candidate() {
-    local arch asset url digest actual
+    local arch asset url digest actual api_asset_id status
     arch=$(uname -m)
     case $arch in
-        x86_64) digest=$TELEMT_SHA256_X86_64;;
-        aarch64|arm64) arch=aarch64; digest=$TELEMT_SHA256_AARCH64;;
+        x86_64) digest=$TELEMT_SHA256_X86_64; api_asset_id=$TELEMT_ASSET_ID_X86_64;;
+        aarch64|arm64) arch=aarch64; digest=$TELEMT_SHA256_AARCH64; api_asset_id=$TELEMT_ASSET_ID_AARCH64;;
         *) ui_die 'Unsupported architecture' 'Архитектура процессора не поддерживается';;
     esac
     asset="telemt-$arch-linux-gnu.tar.gz"
     url="https://github.com/telemt/telemt/releases/download/$SUPPORTED_TELEMT_VERSION/$asset"
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --max-filesize 134217728 --retry 2 "$url" -o "$TMP/asset.tar.gz"
+    if status=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --max-filesize 134217728 --retry 2 --write-out '%{http_code}' "$url" -o "$TMP/asset.tar.gz" 2>/dev/null); then
+        :
+    elif [[ $status =~ ^5[0-9][0-9]$ ]]; then
+        ui_warn "GitHub Releases returned HTTP $status; trying the official GitHub asset API." "GitHub Releases вернул HTTP $status; пробуем официальный API GitHub."
+        rm -f -- "$TMP/asset.tar.gz"
+        url="https://api.github.com/repos/telemt/telemt/releases/assets/$api_asset_id"
+        if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLsS --connect-timeout 10 --max-time 180 --max-filesize 134217728 --retry 2 -H 'Accept: application/octet-stream' -H 'X-GitHub-Api-Version: 2022-11-28' "$url" -o "$TMP/asset.tar.gz" 2>/dev/null; then
+            ui_die "Cannot download Telemt from GitHub Releases (HTTP $status) or its official asset API; check GitHub availability and retry." "Не удалось скачать Telemt с GitHub Releases (HTTP $status) или через официальный API; проверьте доступность GitHub и повторите попытку."
+        fi
+    else
+        ui_die "Cannot download Telemt from GitHub Releases (HTTP ${status:-unknown}); check GitHub availability and retry." "Не удалось скачать Telemt с GitHub Releases (HTTP ${status:-неизвестен}); проверьте доступность GitHub и повторите попытку."
+    fi
     actual=$(sha256sum "$TMP/asset.tar.gz"); actual=${actual%% *}
     [[ $actual == "$digest" ]] || ui_die 'Pinned SHA256 mismatch; candidate will not execute' 'SHA256 не совпадает с закреплённым значением; кандидат не будет запущен'
     ui_ok "Verified Telemt $SUPPORTED_TELEMT_VERSION $asset SHA256: $actual; release commit: $SUPPORTED_TELEMT_COMMIT" "Проверен Telemt $SUPPORTED_TELEMT_VERSION, $asset, SHA256: $actual; commit релиза: $SUPPORTED_TELEMT_COMMIT"
