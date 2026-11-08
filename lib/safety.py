@@ -1003,7 +1003,8 @@ def port80_config(root):
 
 
 def decoy_origin_port(decoy):
-    require(type(decoy) is dict and decoy.get('mode') == 'http_upstream')
+    require(type(decoy) is dict and set(decoy) == {'mode','upstream'}
+            and decoy['mode'] == 'http_upstream', 'decoy contract changed')
     upstream = decoy.get('upstream')
     require(type(upstream) is str
             and re.fullmatch(r'http://127\.0\.0\.1:(1808[1-9]|18090)', upstream),

@@ -33,6 +33,10 @@ class SiteV03Tests(unittest.TestCase):
             allowed['web']['vhosts'][0]['decoy']['upstream']=f'http://127.0.0.1:{port}'
             self.assertEqual(s.managed_web_contract(allowed,'/var/lib/telemt'),
                              ('proxy.example.com','direct','203.0.113.10'))
+        unexpected=copy.deepcopy(config)
+        unexpected['web']['vhosts'][0]['decoy']['unexpected']='foreign'
+        with self.assertRaises(ValueError):
+            s.managed_web_contract(unexpected,'/var/lib/telemt')
         for upstream in ('http://0.0.0.0:18081','http://127.0.0.1:18091','https://127.0.0.1:18081',
                          'http://foreign.example/','http://127.0.0.1:18081/path'):
             bad=copy.deepcopy(config); bad['web']['vhosts'][0]['decoy']['upstream']=upstream
