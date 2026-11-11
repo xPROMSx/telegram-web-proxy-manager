@@ -189,8 +189,9 @@ do not change manifest/state schemas. Check, Update and Uninstall refuse modifie
 or foreign site contents. Bootstrap never generates or changes a site. Update
 uses a copy and a temporary, distinct unprivileged Nginx process inside its existing
 private namespace/chroot; preserve candidate isolation and all recovery controls.
-3X-UI Backup v3 recognition is not compatible with cached/new vhosts yet; a separate
-neighbor PR and verification are required before recommending a new TWPM release.
+The current 3X-UI AUTO NGINX recognizes the standard TWPM configurations; the owner
+confirmed this on a live server on 2026-11-11. 3x Backup does not replace backing up
+Telemt's own data.
 HTTP/WEB test success does not establish DPI resistance or IP-blocking protection.
 
 ## Validation and delivery
