@@ -503,7 +503,7 @@ bash tests/contracts.sh  # Strict config, writable paths, unit
 bash tests/locks.sh      # Shared/exclusive races, unsafe lock paths
 bash tests/acme.sh       # Certbot mocks, refusal, rollback, renewal/idempotence
 sudo bash tests/renewal.sh # Root-owned hook, standalone sockets, scheduler visibility
-bash tests/pinned.sh     # Official pin metadata, both asset digests, docs agreement
+bash tests/pinned.sh     # Official pin metadata, both asset digests
 bash tests/upstream.sh   # Real pinned binary config healthcheck; no process startup
 bash tests/staging.sh    # Real config healthcheck; lifecycle/path/journal transport mocked
 sudo bash tests/runtime.sh # Disposable runner: actual Telemt, isolated net namespace

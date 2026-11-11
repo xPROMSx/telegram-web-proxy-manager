@@ -213,7 +213,6 @@ shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
 python3 -m unittest discover -s tests -p 'test_ci*.py' -v
 python3 tests/ci_manifest.py
 python3 tests/ci_docs.py
-bash tests/pinned.sh --docs
 git diff --check
 ```
 

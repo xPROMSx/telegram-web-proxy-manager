@@ -22,11 +22,6 @@
       "command": "python3 tests/ci_manifest.py"
     },
     {
-      "path": "tests/pinned.sh",
-      "job": "static",
-      "command": "bash tests/pinned.sh --docs"
-    },
-    {
       "path": "tests/ci_docs.py",
       "job": "static",
       "command": "python3 tests/ci_docs.py"

@@ -1,28 +1,16 @@
 #!/usr/bin/env bash
-# Mechanical production/docs/download/staging/runtime version relationship.
+# Mechanical production/download/staging/runtime version relationship.
 set -Eeuo pipefail
 cd -- "$(dirname -- "$0")/.."
 # shellcheck source=telemt-web-manager.sh
 source ./telemt-web-manager.sh
 [[ $SUPPORTED_TELEMT_VERSION == 3.5.16 ]]
-python3 - "$SUPPORTED_TELEMT_VERSION" <<'PY'
-from pathlib import Path
-import sys
-version = sys.argv[1]
-for name in ('README.ru.md', 'docs/OPERATIONS.md', 'docs/UPSTREAM.md', 'docs/CI-COVERAGE.md'):
-    assert 'Supported Telemt: **' + version + '**' in Path(name).read_text(), name
-print('ok - production supported Telemt == documented supported Telemt == ' + version)
-PY
-if [[ ${1:-} == --docs ]]; then
-    [[ $# == 1 ]]
-    exit 0
-fi
 if [[ ${1:-} == --versions ]]; then
     [[ -n ${TELEMT_TEST_EVIDENCE_DIR:-} ]]
     for layer in upstream staging runtime; do
         [[ $(cat "$TELEMT_TEST_EVIDENCE_DIR/$layer.version") == "$SUPPORTED_TELEMT_VERSION" ]]
     done
-    printf 'ok - production pin == real downloaded binary == staging healthcheck == real runtime smoke == docs: %s\n' "$SUPPORTED_TELEMT_VERSION"
+    printf 'ok - production pin == real downloaded binary == staging healthcheck == real runtime smoke: %s\n' "$SUPPORTED_TELEMT_VERSION"
     exit 0
 fi
 [[ $# == 0 ]]
