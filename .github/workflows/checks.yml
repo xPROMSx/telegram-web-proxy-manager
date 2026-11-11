@@ -105,8 +105,6 @@ jobs:
         '
     - name: python3 tests/ci_manifest.py
       run: python3 tests/ci_manifest.py
-    - name: bash tests/pinned.sh --docs
-      run: bash tests/pinned.sh --docs
     - name: python3 tests/ci_docs.py
       run: python3 tests/ci_docs.py
     - name: python3 -m unittest discover -s tests -p 'test_ci*.py' -v

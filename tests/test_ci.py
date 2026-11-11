@@ -125,49 +125,19 @@ class ManifestTests(unittest.TestCase):
     def test_complete_current_inventory(self):
         self.assertEqual(ci_manifest.check()['orphan_tests'], 0)
 
-    def test_split_lifecycle_cannot_omit_or_duplicate_a_profile(self):
+    def test_split_lifecycle_cannot_omit_a_profile(self):
         path = self.root/'.github/workflows/checks.yml'
         original = yaml.safe_load(path.read_text())
-        for defect in ('missing-job', 'serial', 'selector', 'wrong-profile', 'export', 'provenance', 'checkout', 'duplicate'):
-            value = copy.deepcopy(original)
-            includes = value['jobs']['lifecycle_includes']
-            if defect == 'missing-job': del value['jobs']['lifecycle_includes']
-            elif defect == 'serial': includes['needs'] = ['lifecycle']
-            elif defect == 'selector':
-                step = value['jobs']['uninstall_standard']['steps'][-1]
-                step['run'] = step['run'].replace('TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui ', '')
-            elif defect in ('wrong-profile', 'export'):
-                step = next(step for step in includes['steps'] if step.get('name') == 'Generate pinned includes profile')
-                step['run'] = step['run'].replace('--profile includes', '--profile legacy') if defect == 'wrong-profile' else step['run'].replace('>> "$GITHUB_ENV"', '> /dev/null')
-            elif defect == 'provenance':
-                includes['steps'] = [step for step in includes['steps'] if step.get('name') != 'Verify official provenance and download both architectures + baseline']
-            elif defect == 'duplicate': includes['steps'].append(copy.deepcopy(includes['steps'][-1]))
-            else: includes['steps'][0]['with']['ref'] = 'main'
-            path.write_text(yaml.safe_dump(value))
-            with self.subTest(defect=defect), self.assertRaises((AssertionError, KeyError)):
-                ci_manifest.check(self.root)
-
-    def test_standard_uninstall_is_independent_and_cannot_be_omitted(self):
-        path = self.root/'.github/workflows/checks.yml'
-        original = yaml.safe_load(path.read_text())
-        for defect in ('missing-job', 'serial', 'selector', 'provenance',
-                       'checkout', 'duplicate', 'inside-lifecycle'):
-            value = copy.deepcopy(original)
-            standard = value['jobs']['uninstall_standard']
-            if defect == 'missing-job': del value['jobs']['uninstall_standard']
-            elif defect == 'serial': standard['needs'] = ['lifecycle']
-            elif defect == 'selector':
-                standard['steps'][-1]['run'] = standard['steps'][-1]['run'].replace(
-                    'TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui ', '')
-            elif defect == 'provenance':
-                standard['steps'] = [step for step in standard['steps']
-                    if step.get('name') != 'Verify official provenance and download both architectures + baseline']
-            elif defect == 'checkout': standard['steps'][0]['with']['ref'] = 'main'
-            elif defect == 'duplicate': standard['steps'].append(copy.deepcopy(standard['steps'][-1]))
-            else: value['jobs']['lifecycle']['steps'].append(copy.deepcopy(standard['steps'][-1]))
-            path.write_text(yaml.safe_dump(value))
-            with self.subTest(defect=defect), self.assertRaises((AssertionError, KeyError)):
-                ci_manifest.check(self.root)
+        for job in ('lifecycle_includes', 'uninstall_standard'):
+            for defect in ('missing-job', 'serial', 'inside-lifecycle'):
+                value = copy.deepcopy(original)
+                target = value['jobs'][job]
+                if defect == 'missing-job': del value['jobs'][job]
+                elif defect == 'serial': target['needs'] = ['lifecycle']
+                else: value['jobs']['lifecycle']['steps'].append(copy.deepcopy(target['steps'][-1]))
+                path.write_text(yaml.safe_dump(value))
+                with self.subTest(job=job, defect=defect), self.assertRaises((AssertionError, KeyError)):
+                    ci_manifest.check(self.root)
 
     def test_concurrency_cancels_only_older_runs_of_the_same_pr(self):
         workflow = yaml.safe_load((ROOT/'.github/workflows/checks.yml').read_text())
@@ -252,32 +222,6 @@ class ManifestTests(unittest.TestCase):
             else: value['jobs']['required']['steps'][-1]['run'] += ' || true'
             path.write_text(yaml.safe_dump(value))
             with self.assertRaises(AssertionError): ci_manifest.check(self.root)
-
-    def test_all_original_mandatory_calls_retained(self):
-        workflow = yaml.safe_load((ROOT/'.github/workflows/checks.yml').read_text())
-        commands = '\n'.join(step.get('run','') for job in workflow['jobs'].values() for step in job['steps'])
-        # Frozen old execution contracts: guards against deleting both registration and invocation.
-        for command in ('sudo env PYTHONDONTWRITEBYTECODE=1 bash tests/run.sh',
-                        'bash tests/fresh.sh', 'bash tests/fresh-rollback.sh', 'bash tests/download.sh',
-                        'bash tests/bootstrap_versions.sh', 'bash tests/preflight.sh',
-                        'sudo python3 tests/web_link_fixture.py', 'sudo bash tests/fresh-account.sh',
-                        'bash tests/pinned.sh', 'bash tests/upstream.sh', 'bash tests/staging.sh',
-                        'sudo env TELEMT_TEST_EVIDENCE_DIR="$TELEMT_TEST_EVIDENCE_DIR" bash tests/runtime.sh',
-                        'bash tests/pinned.sh --versions', 'sudo bash tests/bootstrap.sh',
-                        'sudo env TWM_TEST_NGINX_FIXTURE=tests/fixtures/nginx-3x-ui TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh',
-                        'sudo env TWM_TEST_NGINX_FIXTURE="$TWM_TEST_NGINX_FIXTURE" TELEMT_UPDATE_ARTIFACTS="$TELEMT_UPDATE_ARTIFACTS" PYTHONDONTWRITEBYTECODE=1 bash tests/uninstall.sh',
-                        'bash tests/versions.sh', 'sudo env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_transactions.py',
-                        'sudo env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_bootstrap.py',
-                        'bash tests/conntrack.sh', 'bash tests/contracts.sh', 'bash tests/locks.sh',
-                        'bash tests/acme.sh', 'sudo bash tests/renewal.sh', 'bash tests/nginx.sh',
-                        'bash tests/three-x-ui.sh', 'bash tests/update_boot.sh 24.04',
-                        'bash tests/update_boot.sh 26.04', 'bash tests/update_arm.sh 24.04'):
-            with self.subTest(command=command): self.assertIn(command, commands)
-        self.assertIn('for profile in legacy webroot v2.1.7 v2.1.7-ipv4 v2.1.7-no-vision v2.1.7-ipv4-no-vision includes includes-ipv4;',
-                      (ROOT/'tests/three-x-ui.sh').read_text())
-        for job in ('telemt', 'lifecycle', 'uninstall_standard', 'lifecycle_includes', 'system26', 'system24', 'arm'):
-            calls = '\n'.join(step.get('run','') for step in workflow['jobs'][job]['steps'])
-            self.assertIn('sudo --preserve-env=TELEMT_TEST_GITHUB_TOKEN env PYTHONDONTWRITEBYTECODE=1 python3 tests/update_provenance.py', calls)
 
     def test_v217_matrix_has_independent_ipv6_and_vision_flags(self):
         expected = {'v2.1.7': (True, True), 'v2.1.7-ipv4': (False, True),

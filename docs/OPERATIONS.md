@@ -503,7 +503,7 @@ bash tests/contracts.sh  # Strict config, writable paths, unit
 bash tests/locks.sh      # Shared/exclusive races, unsafe lock paths
 bash tests/acme.sh       # Certbot mocks, refusal, rollback, renewal/idempotence
 sudo bash tests/renewal.sh # Root-owned hook, standalone sockets, scheduler visibility
-bash tests/pinned.sh     # Official pin metadata, both asset digests, docs agreement
+bash tests/pinned.sh     # Official pin metadata, both asset digests
 bash tests/upstream.sh   # Real pinned binary config healthcheck; no process startup
 bash tests/staging.sh    # Real config healthcheck; lifecycle/path/journal transport mocked
 sudo bash tests/runtime.sh # Disposable runner: actual Telemt, isolated net namespace
@@ -809,11 +809,9 @@ complete; the exact candidate and results are recorded below.
 
 ## Co-located 3x-ui Backup/Restore
 
-Текущий распознаватель Backup v3 в 3X-UI исключает только исторический прямой
-TWPM vhost. Для keepalive и нового HTTP-origin совместимость не подтверждена:
-потребуется отдельный адресный PR в 3X-UI и проверка Backup/Restore. Backup 3X-UI
-не заменяет восстановление собственного DATA/recovery TWPM. До отдельной проверки
-не полагаться на совместное резервирование и не рекомендовать новый релиз TWPM.
+Актуальный 3X-UI AUTO NGINX распознаёт штатные конфигурации TWPM; владелец
+подтвердил это на живом сервере 2026-11-11. Backup 3x не заменяет резервное
+копирование данных самого Telemt и восстановление собственного DATA/recovery TWPM.
 Проекты не имеют общего lock или общего механизма аварийного восстановления.
 The common supported platforms remain Ubuntu 24.04 / 26.04, not Debian 13.
 
@@ -1048,12 +1046,9 @@ capabilities; его временные файлы ограничены private 
 TOML кандидата.
 Таймеры 150/45, алгоритм транзакции, DATA, LKG и recovery не меняются.
 
-**Граница с 3X-UI Backup v3:** его текущий строгий распознаватель понимает только
-исторический прямой vhost, а не keepalive или новый HTTP-origin. Совместимость
-не заявляется. Для отдельного исправления распознавателя зафиксированы точный
-`render_vhost(..., site_digest=...)`, приведённый локальный server, комментарий
-владения и собственный document root; никаких объектов в `/var/www/html` нет.
-Не рекомендовать новый релиз TWPM до проверки обоих отдельных PR.
+**3X-UI Backup:** актуальный 3X-UI AUTO NGINX распознаёт штатные конфигурации TWPM
+(подтверждено владельцем на живом сервере 2026-11-11). Backup 3x не заменяет
+резервное копирование данных самого Telemt.
 
 Обычные HTTP/HTTPS и авторизованные WEB-тесты не доказывают устойчивость к DPI,
 активному зондированию или блокировкам провайдера.

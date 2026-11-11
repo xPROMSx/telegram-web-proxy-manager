@@ -455,4 +455,4 @@ bound to the exact owned Nginx vhost and its existing manifest digest.
 Telemt 3.5.16 native `http_upstream` forwards method/path/status/headers and rewrites
 Host to the origin authority; relative redirects avoid leaking the local address.
 See [OPERATIONS.md](OPERATIONS.md#оригинальные-сайты-v03-текущий-контракт) for the
-exact owned Nginx template and the separate 3X-UI Backup v3 incompatibility.
+exact owned Nginx template.

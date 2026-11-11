@@ -412,7 +412,8 @@ Install; historical 3.5.12 → 3.5.13 Update/recovery fixtures remain static_dir
 No new workflow, matrix, framework or dependency is introduced. Real results must
 be reported for the exact tested revision; coverage descriptions alone are not PASS.
 No external Telegram client, production VPS, live ACME or DPI resistance is claimed.
-3X-UI Backup v3 compatibility requires a separate neighbor fix and acceptance.
+The current 3X-UI AUTO NGINX recognizes the standard TWPM configurations (confirmed by
+the owner on a live server on 2026-11-11); 3x Backup does not replace backing up Telemt's own data.
 
 ## Public rebrand and bootstrap transition (1.1.0)
 
