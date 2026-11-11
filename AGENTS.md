@@ -9,12 +9,15 @@ be used to infer current behavior.
 ## Threat model and simplicity
 
 - One administrator, one own Ubuntu VPS. Not a multi-user service.
+- The goal is: it works, and it is easy to maintain. Stability and reliability come from simplicity, not from layers of checks. Fewer lines beat more checks.
 - OWN data (created by this manager: state, receipts, journal, generations, and the Telemt configs and files the manager wrote) is validated strictly. Update and rollback depend on it. Do not weaken these checks.
 - FOREIGN data (3x-ui, other Nginx routes and vhosts, the administrator's certificates and hooks) must never block an operation. Recognize it by name or marker, then skip or exclude it.
 - A new check, guard or refusal is allowed only for a defect reproduced by a failing test (RED test) that is cited in the PR. "It could theoretically happen" is not a reason.
 - One failure = one specific message: which check, which file, which value. No generic text covering several checks.
 - If two PRs in a row changed the same function, STOP. Do not write a third patch. Report that the mechanism itself should be simplified and propose deleting it.
 - A diff that adds more lines than it removes needs an explanation in the report.
+- Before adding code, ask whether deleting or simplifying would do. Do not add a check on top of a check to fix a failure: look for a simpler mechanism. A PR that only removes redundant code is valid; removing an existing protection still needs the separate analysis described in the last bullet.
+- One source of truth. Do not create a second copy of a contract (rules, version lists, expected config text). If a second copy already exists, prefer removing it.
 - This section guides new and changed code. It does not authorize removing or relaxing any existing protection or refusal (for example the bounded Nginx profiles or the refusal on a modified generated site); those stay until a separate task that first explains what the check protected.
 
 ## Repository privacy and Git metadata
@@ -263,6 +266,8 @@ changed files and new commit metadata, and report only executed tests and actual
 exact-HEAD results. Keep public PR descriptions concise and free of private
 findings. Do not rewrite published history or claim unfinished hosted CI or live
 acceptance passed. Stop at the requested PR/audit boundary; no implicit merge.
+
+Every PR states its verification level: 0 CI only; 1 one command on a ready test server; 2 full test on a clean VPS (required before a release and for changes to Update, rollback, TLS or Nginx integration).
 
 ## Independent integration management
 
