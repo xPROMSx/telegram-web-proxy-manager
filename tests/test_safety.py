@@ -240,10 +240,14 @@ class ThreeXTopologyTests(unittest.TestCase):
         s.nginx_plan(self.root, "proxy.example.com", self.plan)
         return json.loads(self.plan.read_text())
 
-    def run_shell_plan(self, host, *, terminal=False, term='xterm-256color', no_color=False):
+    def run_shell_plan(self, host, *, terminal=False, term='xterm-256color', no_color=False,
+                       helper_body=None):
         script = '''source "$1/telemt-web-manager.sh"
 NGINX_ROOT=$2 DOMAIN=$3 TMP=$4
-nginx_plan
+'''
+        if helper_body is not None:
+            script += 'helper() { ' + helper_body + '; }\n'
+        script += '''nginx_plan
 printf 'INSTALL_CONTINUED\\n'
 '''
         env = dict(os.environ, TERM=term)
@@ -308,10 +312,21 @@ printf 'INSTALL_CONTINUED\\n'
         before = self.snapshot()
         code, output = self.run_shell_plan('proxy.example.com')
         self.assertEqual(code, 1)
-        self.assertRegex(output, rb'^Safety validation failed \(nginx_plan:[0-9]+\); manual review required \(no credentials displayed\)\.\nERROR: automatic nginx integration not possible\n$')
+        self.assertRegex(output, rb'^Safety validation failed \(nginx_plan:[0-9]+\); manual review required \(no credentials displayed\)\.\n$')
         self.assertNotIn(b'PRIVATE_', output)
         self.assertEqual(before, self.snapshot())
         self.assertFalse((Path(self.temp.name)/'nginx-plan.json').exists())
+
+    def test_shell_plan_retains_one_message_for_reported_and_silent_failures(self):
+        for body, expected in (
+                ("printf 'fixed helper refusal\\n' >&2; return 7", b'fixed helper refusal\n'),
+                ('return 7', b'ERROR: automatic nginx integration not possible\n')):
+            with self.subTest(body=body):
+                before = self.snapshot()
+                code, output = self.run_shell_plan('proxy.example.com', helper_body=body)
+                self.assertEqual((code, output), (7, expected))
+                self.assertNotIn(b'INSTALL_CONTINUED', output)
+                self.assertEqual(before, self.snapshot())
 
     def test_production_layout_preserves_routes_and_shared_http_files(self):
         before = self.snapshot()
