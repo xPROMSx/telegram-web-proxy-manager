@@ -192,4 +192,78 @@ uninstall_manager
                 if action=='uninstall': self.assertTrue(b'UNINSTALL' in output)
 
 
+class FreshRemnantMessages(unittest.TestCase):
+    def test_existing_install_paths_are_explained_in_both_languages(self):
+        cases = [('binary', 'BIN'), ('config', 'CONFIG'), ('unit', 'UNIT'),
+                 ('data', 'DATA'), ('config-dir', 'CONFIG_DIR'), ('site', 'SITE_ROOT'),
+                 ('state', 'STATE'), ('certificate-record', 'STATE/certificate.json'),
+                 ('hook', 'RENEW_HOOK'), ('system-unit', '/etc/systemd/system/telemt.service')]
+        for scenario, expected in cases:
+            for language in ('en', 'ru'):
+                with self.subTest(scenario=scenario, language=language), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    paths = dict(BIN=root/'bin', CONFIG_DIR=root/'config', CONFIG=root/'config/telemt.toml',
+                                 UNIT=root/'telemt.service', DATA=root/'data', STATE=root/'state',
+                                 SITE_ROOT=root/'site', RENEW_HOOK=root/'hook')
+                    key = dict(binary='BIN', config='CONFIG', unit='UNIT', data='DATA',
+                               **{'config-dir': 'CONFIG_DIR', 'site': 'SITE_ROOT', 'hook': 'RENEW_HOOK'}).get(scenario)
+                    if key:
+                        path = paths[key]
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        if scenario in ('data', 'config-dir', 'site'): path.mkdir()
+                        else: path.write_text('PRIVATE_REMNANT_CONTENT')
+                    if scenario in ('state', 'certificate-record'):
+                        paths['STATE'].mkdir(mode=0o700)
+                        path = paths['STATE']/('foreign' if scenario == 'state' else 'certificate.json')
+                        path.write_text('PRIVATE_REMNANT_CONTENT' if scenario == 'state' else
+                            '{"schema":1,"domain":"old.example.com","cert_name":"old.example.com",'
+                            '"renewal_kind":"standalone","acme_webroot":""}')
+                        path.chmod(0o600)
+                    before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+                    script = '''source ./telemt-web-manager.sh
+UI_INTERACTIVE=1 UI_LANG=$1 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
+getent() { return 1; }
+systemctl() { printf /etc/systemd/system/telemt.service; }
+'''+''.join(key+'='+str(value)+'\n' for key,value in paths.items())+'install_manager\n'
+                    result, output, _ = terminal(script, args=(language,))
+                    self.assertEqual(result, 1)
+                    expected_path = (str(paths['STATE']/'certificate.json') if expected == 'STATE/certificate.json'
+                                     else str(paths.get(expected, expected)))
+                    self.assertIn(expected_path.encode(), output)
+                    if scenario == 'certificate-record':
+                        self.assertEqual(output.decode().count('ERROR:') + output.decode().count('ОШИБКА:'), 1)
+                        for phrase in (('saved', 'certificate', 'irreversible', 'same domain', 'docs/OPERATIONS.md')
+                                       if language == 'en' else
+                                       ('сохранённая', 'сертификат', 'необратимо', 'тот же домен', 'docs/OPERATIONS.md')):
+                            self.assertIn(phrase.casefold(), output.decode().casefold())
+                        for forbidden in ('another server', 'другого сервера', '3x-ui', 'old.example.com'):
+                            self.assertNotIn(forbidden.encode(), output)
+                    else:
+                        for phrase in (('another server', '3x-ui', 'nothing', 'manually', "Let's Encrypt")
+                                   if language == 'en' else
+                                   ('другого сервера', '3x-ui', 'ничего', 'вручную', "Let's Encrypt")):
+                            self.assertIn(phrase.encode(), output)
+                    self.assertNotIn(b'PRIVATE_REMNANT_CONTENT', output)
+                    self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+
+    def test_partial_certbot_paths_are_explained_without_deleting_them(self):
+        for location in ('live', 'renewal', 'archive'):
+            for language in ('en', 'ru'):
+                with self.subTest(location=location, language=language), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory)/location/('proxy.example.com.conf' if location == 'renewal' else 'proxy.example.com')
+                    path.parent.mkdir()
+                    if location == 'renewal': path.write_text('PRIVATE_CERTIFICATE')
+                    else: path.mkdir()
+                    code = '''source ./telemt-web-manager.sh
+UI_INTERACTIVE=1 UI_LANG=$1 CERT_ROOT=$2 DOMAIN=proxy.example.com
+ensure_certificate
+'''
+                    result, output, _ = terminal(code, args=(language, directory))
+                    self.assertEqual(result, 1)
+                    self.assertIn(('/etc/letsencrypt/'+location).encode(), output)
+                    self.assertIn("Let's Encrypt".encode(), output)
+                    self.assertNotIn(b'PRIVATE_CERTIFICATE', output)
+                    self.assertTrue(path.exists())
+
+
 if __name__ == '__main__': unittest.main()

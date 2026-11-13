@@ -306,7 +306,11 @@ dependency_commands() {
                 iptables ip6tables nft conntrack getent useradd userdel groupdel \
                 awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm rmdir sleep stat tr uname wc
             if [[ $1 != --uninstall ]]; then
-                printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+                if [[ $1 == --install || $1 == --update ]]; then
+                    printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+                else
+                    printf '%s\n' ip mount iptables-save ip6tables-save
+                fi
             fi
             if [[ $1 == --uninstall ]]; then printf '%s\n' groupadd find iptables-save ip6tables-save; fi;;
         *) ui_die 'Unknown dependency action' 'Неизвестная операция проверки зависимостей';;
@@ -459,9 +463,16 @@ candidate_compatibility() {
 dns_preflight() {
     helper domain "$DOMAIN"
     helper ipv4 "$PUBLIC_IP"
-    dig +time=3 +tries=1 +short A "$DOMAIN" >"$TMP/dns-a"
-    dig +time=3 +tries=1 +short AAAA "$DOMAIN" >"$TMP/dns-aaaa"
+    dig +time=3 +tries=1 +short A "$DOMAIN" >"$TMP/dns-a" 2>"$TMP/dns-a.stderr" ||
+        ui_die 'DNS A query failed before installation' 'Не удалось выполнить запрос DNS A; установка не запускалась'
+    dig +time=3 +tries=1 +short AAAA "$DOMAIN" >"$TMP/dns-aaaa" 2>"$TMP/dns-aaaa.stderr" ||
+        ui_die 'DNS AAAA query failed before installation' 'Не удалось выполнить запрос DNS AAAA; установка не запускалась'
     helper dns "$TMP/dns-a" "$TMP/dns-aaaa" "$PUBLIC_IP" || ui_die 'DNS A/AAAA validation failed before installation' 'Проверка DNS A/AAAA не пройдена; установка не запускалась'
+}
+
+refuse_install_remnants() {
+    ui_die "Found files at: $1. They may be from another server, for example a restored 3x-ui backup. Telemt is not installed here by this manager; nothing was changed. Save a copy if needed, or remove these files manually. Do not delete a Let's Encrypt certificate unless necessary." \
+        "Найдены файлы: $1. Похоже, они остались с другого сервера, например из восстановленного бэкапа 3x-ui. Telemt здесь этим менеджером не установлен; менеджер ничего не менял. Если файлы нужны, сохраните копию, иначе их можно убрать вручную. Сертификат Let's Encrypt без необходимости не удаляйте."
 }
 
 socks_probe() {
@@ -490,6 +501,8 @@ unknown_dc_log_path = "$data_root/state/unknown-dc.txt"
 proxy_secret_path = "$data_root/state/proxy-secret"
 proxy_config_v4_cache_path = "$data_root/state/proxy-config-v4.txt"
 proxy_config_v6_cache_path = "$data_root/state/proxy-config-v6.txt"
+[general.links]
+show = []
 [general.modes]
 classic = false
 secure = true
@@ -673,9 +686,25 @@ recent_logs() {
         helper classify-journal
 }
 
-nginx_plan() {
-    build_nginx_plan "$TMP/nginx-plan.json" || ui_die 'automatic nginx integration not possible' 'Автоматическое подключение к Nginx остановлено; требуется ручная проверка'
-}
+nginx_plan() (
+    local status=0
+    # Capture only helper output so the domain-conflict renderer keeps its TTY.
+    eval "$(declare -f helper | sed '1s/helper/nginx_plan_helper/')"
+    helper() {
+        local result=0
+        nginx_plan_helper "$@" >"$TMP/nginx-plan.stdout" 2>"$TMP/nginx-plan.stderr" || result=$?
+        cat "$TMP/nginx-plan.stdout"
+        cat "$TMP/nginx-plan.stderr" >&2
+        return "$result"
+    }
+    build_nginx_plan "$TMP/nginx-plan.json" || status=$?
+    if (( status )); then
+        if [[ ! -s $TMP/nginx-plan.stdout && ! -s $TMP/nginx-plan.stderr ]]; then
+            ui_err 'ERROR: automatic nginx integration not possible' 'ОШИБКА: Автоматическое подключение к Nginx остановлено; требуется ручная проверка' >&2
+        fi
+        exit "$status"
+    fi
+)
 
 build_nginx_plan() {
     local status=0 red='' reset=''
@@ -686,9 +715,9 @@ build_nginx_plan() {
     elif [[ $PLAN_MODE == keepalive ]]; then
         helper nginx-keepalive-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
     elif [[ -n $SITE_DIGEST ]]; then
-        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" "$SITE_PORT" || status=$?
+        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" "$SITE_PORT" "$STATE/manifest.json" || status=$?
     else
-        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
+        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
     fi
     if (( status == 20 )); then
         # Only the helper's exact foreign server_name conflict uses this code.
@@ -737,7 +766,7 @@ ensure_certificate() {
         [[ ! -e $CERT_ROOT/live/$DOMAIN && ! -L $CERT_ROOT/live/$DOMAIN &&
            ! -e $CERT_ROOT/renewal/$DOMAIN.conf && ! -L $CERT_ROOT/renewal/$DOMAIN.conf &&
            ! -e $CERT_ROOT/archive/$DOMAIN && ! -L $CERT_ROOT/archive/$DOMAIN ]] ||
-            ui_die 'Existing Certbot lineage assets; preserve them and review recovery manually' 'Найдены существующие файлы сертификата Certbot; сохраните их и проверьте восстановление вручную'
+            refuse_install_remnants '/etc/letsencrypt/live/DOMAIN, /etc/letsencrypt/renewal/DOMAIN.conf, /etc/letsencrypt/archive/DOMAIN (DOMAIN is the requested domain / DOMAIN — запрошенный домен)'
         if [[ -t 0 && -z ${EMAIL:-} ]]; then read -r -p "$(ui_text 'ACME registration email: ' 'Email для регистрации ACME: ')" EMAIL; fi
         if [[ -t 0 && ${AGREE_TOS:-0} != 1 ]]; then
             local consent
@@ -798,13 +827,15 @@ renewal_scheduler_status() {
 }
 
 certificate_health_contract() {
-    validate_certificate
-    certificate_renewal_contract
+    if [[ ${1:-install} == install ]]; then validate_certificate
+    else validate_certificate identity; fi
+    certificate_renewal_contract 0 "${1:-install}"
     renewal_deploy_hook_contract
 }
 
 certificate_renewal_contract() {
-    local freshly_issued=${1:-0} kind expected='' sockets
+    local freshly_issued=${1:-0} kind expected='' sockets port_refusal=ui_die
+    [[ ${2:-install} == install ]] || port_refusal=ui_warn
     kind=$(helper renewal-kind "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT") ||
         ui_die 'Certificate renewal settings are unsupported; preserve Certbot assets and review docs/OPERATIONS.md' 'Настройки продления сертификата не поддерживаются. Сохраните файлы Certbot и обратитесь к docs/OPERATIONS.md'
     if [[ -e $STATE/certificate.json || -L $STATE/certificate.json ]]; then
@@ -830,7 +861,7 @@ certificate_renewal_contract() {
         # Any listener is outside the audited free-port standalone contract.
         sockets=$(ss -H -ltn 'sport = :80') || ui_die 'Standalone renewal port 80 inspection failed' 'Не удалось проверить порт 80 для продления в режиме standalone'
         [[ -z $sockets ]] ||
-            ui_die 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.' 'Для продления Certbot в режиме standalone нужен свободный TCP-порт 80. Сейчас он занят; проверьте схему продления вручную.'
+            "$port_refusal" 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.' 'Для продления Certbot в режиме standalone нужен свободный TCP-порт 80. Сейчас он занят; проверьте схему продления вручную.'
     fi
 }
 
@@ -937,6 +968,7 @@ print(address)
 prompt_install() {
     [[ -t 0 ]] || ui_die 'Non-interactive install requires --domain and --public-ip (see --help)' 'Для установки без диалога нужны --domain и --public-ip (см. --help)'
     read -r -p "$(ui_text 'WEB domain: ' 'Домен WEB-прокси: ')" DOMAIN
+    DOMAIN=${DOMAIN,,}
     local detected_ip
     if detected_ip=$(detect_public_ipv4); then
         ui_info "Detected public IPv4: $detected_ip" "Определён публичный IPv4: $detected_ip"
@@ -1043,20 +1075,22 @@ install_manager() {
     local path secret since
     for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$SITE_ROOT"; do
         helper safe-path "$path" || ui_die 'Unsafe install path' 'Небезопасный путь установки; операция остановлена'
-        [[ ! -e $path && ! -L $path ]] || ui_die 'Existing Telemt files found; automatic adoption not possible; manual review required' 'Найдены существующие файлы Telemt. Автоматическое подключение остановлено; требуется ручная проверка'
+        [[ ! -e $path && ! -L $path ]] || refuse_install_remnants "$path"
     done
     if [[ -e $STATE || -L $STATE ]]; then
-        helper certificate-only-state "$STATE" || ui_die 'Existing manager state is not certificate-only; adoption refused' 'Существующее состояние менеджера содержит не только сертификат; автоматическое подключение остановлено'
-        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || ui_die 'Preserved certificate ownership mismatch' 'Не совпадает принадлежность сохранённого сертификата; требуется ручная проверка'
+        helper certificate-only-state "$STATE" || refuse_install_remnants "$STATE"
+        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" 2>/dev/null ||
+            ui_die "This manager's saved certificate record at $STATE/certificate.json does not match this installation (different domain or record mismatch). Nothing changed. Domain change requires irreversible removal of the record, empty state and deploy-hook; for webroot, also its ACME vhost/webroot and old certificate/key (live, archive, renewal). A new certificate is needed, subject to Let's Encrypt limits. Follow docs/OPERATIONS.md, section 'Смена домена после удаления с сохранением сертификата'. Or install the same domain without deleting anything." \
+                "Сохранённая запись этого менеджера о прежнем сертификате $STATE/certificate.json не подходит к установке (другой домен или несовпадение записи). Изменений нет. При смене домена необратимо удаляются запись, пустой state и deploy-hook; для webroot также его ACME vhost/webroot и старый сертификат с закрытым ключом (live, archive, renewal). Для нового домена нужен новый сертификат с учётом лимитов Let's Encrypt. Шаги: docs/OPERATIONS.md, раздел 'Смена домена после удаления с сохранением сертификата'. Либо установите на тот же домен, ничего удалять не нужно."
     fi
     if [[ -e $RENEW_HOOK || -L $RENEW_HOOK ]]; then
-        [[ -f $STATE/certificate.json ]] || ui_die 'Existing deploy hook has no certificate ownership evidence' 'Для существующего deploy-hook не подтверждена принадлежность сертификата; требуется ручная проверка'
+        [[ -f $STATE/certificate.json ]] || refuse_install_remnants "$RENEW_HOOK"
         renewal_deploy_hook_contract
     fi
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         ui_die 'Existing telemt account/group needs manual review' 'Существующая учётная запись или группа telemt требует ручной проверки'
     fi
-    [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || ui_die 'Existing Telemt unit found' 'Найден существующий unit Telemt; автоматическое подключение остановлено'
+    [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || refuse_install_remnants '/etc/systemd/system/telemt.service, /usr/lib/systemd/system/telemt.service or /lib/systemd/system/telemt.service'
     [[ -d $(dirname "$SITE_ROOT") ]] || ui_die 'Site parent directory missing' 'Родительский каталог сайта отсутствует; требуется ручная проверка'
     [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || ui_die 'Private ports 18080/7444 already occupied' 'Внутренние порты 18080/7444 уже заняты; установка остановлена'
     select_site_port || ui_die 'No free local cover-site port in 18081-18090' 'Нет свободного порта сайта-прикрытия в диапазоне 18081-18090'
@@ -1143,6 +1177,7 @@ install_manager() {
 }
 
 load_installation() {
+    local operation=${1:-install}
     [[ -f $STATE/manifest.json && ! -L $STATE/manifest.json ]] || ui_die 'Unmanaged installation; automatic update/migration not possible; manual review required' 'Принадлежность установки менеджеру не подтверждена; автоматическое обновление остановлено, требуется ручная проверка'
     managed_permissions || ui_die 'Unsafe managed ownership/permissions or symlink; manual review required' 'Обнаружены небезопасные права, владелец или символическая ссылка; требуется ручная проверка'
     installed_release_identity >/dev/null || ui_die 'Invalid/missing installed release identity; manual review required' 'Идентификаторы установленного релиза отсутствуют или неверны; требуется ручная проверка'
@@ -1154,14 +1189,16 @@ load_installation() {
     actual=$(sha256sum "$UNIT"); expected=$(jq -er .unit_sha256 "$STATE/manifest.json")
     [[ ${actual%% *} == "$expected" ]] || ui_die 'Service changed; manual review required' 'Unit службы изменён; требуется ручная проверка'
     actual=$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf"); expected=$(jq -er .nginx_sha256 "$STATE/manifest.json")
-    [[ ${actual%% *} == "$expected" ]] || ui_die 'Nginx vhost changed; manual review required' 'Vhost Nginx изменён; требуется ручная проверка'
+    [[ ${actual%% *} == "$expected" ]] || ui_die "Nginx connection differs from the one created by this manager: /etc/nginx/conf.d/telemt-web-manager.conf. Nothing changed; manual review required. Keep Let's Encrypt certificates." "Подключение к Nginx отличается от созданного менеджером: /etc/nginx/conf.d/telemt-web-manager.conf. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните."
     helper config-info "$CONFIG" >"$TMP/config-info" || ui_die 'automatic update/migration not possible; manual review required' 'Автоматическое обновление или перенос состояния остановлены; требуется ручная проверка'
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Runtime/write paths require manual review; existing TOML was not changed' 'Рабочие пути или пути записи требуют ручной проверки; существующий TOML не изменён'
     SITE_DIGEST=$(helper site-bound "$CONFIG" "$DATA" "$NGINX_ROOT" "$SITE_ROOT") || ui_die 'Site ownership/hash differs; manual review required' 'Принадлежность или целостность сайта не подтверждена; требуется ручная проверка'
     if [[ -n $SITE_DIGEST ]]; then
         SITE_PORT=$(helper decoy-port "$CONFIG") || ui_die 'Invalid managed origin port' 'Недопустимый порт сайта-прикрытия'
     fi
-    installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
+    if [[ $operation != check && $operation != repair ]]; then
+        installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
+    fi
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
     [[ $(jq -r '.public_ip // ""' "$STATE/manifest.json") == "" ||
@@ -1169,17 +1206,17 @@ load_installation() {
     [[ $DOMAIN == "$(jq -er .domain "$STATE/manifest.json")" ]] || ui_die 'Domain changed; manual review required' 'Домен изменён; требуется ручная проверка'
     nginx_plan
     [[ $(jq '.edits | length' "$TMP/nginx-plan.json") == 0 ]] || ui_die 'Nginx integration incomplete; manual review required' 'Подключение к Nginx неполно; требуется ручная проверка'
-    certificate_health_contract
+    certificate_health_contract "$operation"
 }
 
 update_manager() {
-    load_installation
+    load_installation update
     path_health || ui_die 'Existing installation unhealthy; update refused' 'Установка не прошла проверку работоспособности; обновление остановлено'
     universal_update || ui_die 'Universal Update refused or rolled back; inspect private journal/backup evidence' 'Universal Update остановлен или отменён с восстановлением. Проверьте приватный журнал и резервную копию; может потребоваться ручное вмешательство'
 }
 
 check_manager() {
-    load_installation
+    load_installation check
     renewal_scheduler_status
     local failed=0 pid cert current
     current=$(installed_release_identity) || return 1
@@ -1193,7 +1230,10 @@ check_manager() {
     path_health && ui_ok 'Nginx/local decoy/local SNI+TLS/public HTTPS/SOCKS: OK' 'Nginx / локальный сайт-прикрытие / локальный SNI+TLS / публичный HTTPS / SOCKS: исправны' || failed=1
     cert="$CERT_ROOT/live/$DOMAIN/fullchain.pem"
     openssl x509 -in "$cert" -noout -enddate || failed=1
-    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || failed=1
+    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || {
+        ui_err 'Certificate expires within 7 days' 'Срок сертификата истекает менее чем через 7 дней; требуется продление'
+        failed=1
+    }
     recent_logs "$(( $(now) - 300 ))" || failed=1
     if (( failed )); then
         ui_err 'Check result: FAILED' 'Проверка не пройдена. Проверьте сообщения диагностики; может потребоваться ручная проверка.'
@@ -1202,7 +1242,7 @@ check_manager() {
 }
 
 repair_manager() {
-    load_installation
+    load_installation repair
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Config validation failed; no repair attempted' 'Конфигурация не прошла проверку; восстановление служб не запускалось'
     nginx_test || ui_die 'Nginx validation failed; no repair attempted' 'Nginx не прошёл проверку; восстановление служб не запускалось'
     backup_begin
@@ -1244,7 +1284,7 @@ uninstall_load() {
     cmp -s "$UNIT" "$TMP/expected-unit" || ui_die 'Unit differs from exact manager contract' 'Unit службы отличается от ожидаемого контракта менеджера; операция остановлена'
     if ! nginx_test || ! systemctl is-active --quiet nginx || ! nginx_runtime_identity; then ui_die 'Nginx identity/configuration requires review' 'Принадлежность или конфигурация Nginx требует ручной проверки'; fi
     validate_certificate identity
-    certificate_renewal_contract
+    certificate_renewal_contract 0 uninstall
     renewal_deploy_hook_contract
     PLAN_MODE=uninstall
     nginx_plan
@@ -1416,7 +1456,7 @@ main() {
             --install|--update|--check|--repair|--uninstall) [[ -z $action ]] || die 'Choose one action'; action=$1; shift;;
             --domain|--public-ip|--socks|--email)
                 (( $# >= 2 )) || die 'Missing option value'
-                case $1 in --domain) DOMAIN=$2;; --public-ip) PUBLIC_IP=$2;; --socks) SOCKS=$2;; --email) EMAIL=$2;; esac
+                case $1 in --domain) DOMAIN=${2,,};; --public-ip) PUBLIC_IP=$2;; --socks) SOCKS=$2;; --email) EMAIL=$2;; esac
                 shift 2;;
             --confirm-uninstall) CONFIRM_UNINSTALL=1; shift;;
             --delete-certificate) DELETE_CERTIFICATE=1; shift;;

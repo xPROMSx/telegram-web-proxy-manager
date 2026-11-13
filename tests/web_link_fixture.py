@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import pty
 import secrets
@@ -199,7 +200,8 @@ main
             result = subprocess.run(['python3', str(HELPER), 'web-link-validate', str(state), str(config)],
                                     capture_output=True, timeout=5)
             require(result.returncode != 0 and not result.stdout
-                    and result.stderr == b'Safety validation failed; manual review required (no credentials displayed).\n',
+                    and re.fullmatch(rb'Safety validation failed(?: \((?:(?:web_link_read|current_web_link|web_link_value):[0-9]+|symlink path requires manual review|unexpected path owner|unexpected path type)\))?; manual review required \(no credentials displayed\)\.\n', result.stderr)
+                    and token.encode() not in result.stderr,
                     'unsafe file validation: '+name)
             for language, refusal in [('1',b'No valid manager-owned WEB link is available.'),
                                       ('2','Проверенная WEB-ссылка этой установки недоступна'.encode())]:
