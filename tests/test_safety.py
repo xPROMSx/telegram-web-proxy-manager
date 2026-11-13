@@ -880,6 +880,8 @@ dns_preflight
                         s.nginx_plan(root, 'proxy.example.com', output, **context)
                     reason = str(installed.exception)
                     self.assertIn(expected, reason)
+                    if scenario in ('wrong-map', 'wrong-upstream'):
+                        self.assertIn('/etc/nginx/nginx.conf', reason)
                     self.assertIn('manual review', reason)
                     self.assertIn('ручная проверка', reason)
                     self.assertIn("Let's Encrypt", reason)

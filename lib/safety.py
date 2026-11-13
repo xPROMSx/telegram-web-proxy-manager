@@ -885,14 +885,14 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
                     'Неполный набор файлов менеджера в /etc/nginx и /etc/nginx/conf.d/telemt-web-manager.conf; возможно, с другого сервера (восстановленный бэкап 3x-ui). Проверка ничего не меняла; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
         valid = existing[0].args == [host, "twm_frontend"]
         if installed:
-            require(valid, "Manager domain mapping differs in /etc/nginx. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Маршрут домена менеджера в /etc/nginx отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+            require(valid, "Manager domain mapping differs in /etc/nginx/nginx.conf and included stream files. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Маршрут домена менеджера в /etc/nginx/nginx.conf и подключённых stream-файлах отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
         else:
             require(valid,
                     'Manager domain mapping differs in /etc/nginx; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
                     'Маршрут домена менеджера в /etc/nginx отличается; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
         valid = [n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]]
         if installed:
-            require(valid, "Manager upstream differs in /etc/nginx. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Подключение менеджера через upstream в /etc/nginx отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+            require(valid, "Manager upstream differs in /etc/nginx/nginx.conf and included stream files. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Подключение менеджера через upstream в /etc/nginx/nginx.conf и подключённых stream-файлах отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
         else:
             require(valid,
                     'Manager upstream differs in /etc/nginx; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
