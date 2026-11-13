@@ -678,6 +678,7 @@ class FreshInstallInputTests(unittest.TestCase):
 
     def test_cname_chain_accepts_only_the_single_expected_ipv4(self):
         for a in ('203.0.113.10\n', 'target.example.com.\n203.0.113.10\n',
+                  'edge_cache.example.com.\n203.0.113.10\n',
                   'First.Example.COM.\nlast.example.com.\n203.0.113.10\n'):
             for aaaa in ('', 'target.example.com.\nlast.example.com.\n'):
                 with self.subTest(a=a, aaaa=aaaa):

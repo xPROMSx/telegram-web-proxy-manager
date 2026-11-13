@@ -478,7 +478,6 @@ def dns_check(a_text, aaaa_text, expected):
                 address = ipaddress.ip_address(item)
             except ValueError:
                 # Both dig answers may contain CNAME targets, even without AAAA.
-                domain(item.removesuffix('.').lower())
                 continue
             yield address
     resolved = list(addresses(a_text))
