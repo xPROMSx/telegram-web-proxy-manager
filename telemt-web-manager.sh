@@ -464,6 +464,11 @@ dns_preflight() {
     helper dns "$TMP/dns-a" "$TMP/dns-aaaa" "$PUBLIC_IP" || ui_die 'DNS A/AAAA validation failed before installation' 'Проверка DNS A/AAAA не пройдена; установка не запускалась'
 }
 
+refuse_install_remnants() {
+    ui_die "Found files at: $1. They may be from another server, for example a restored 3x-ui backup. Telemt is not installed here by this manager; nothing was changed. Save a copy if needed, or remove these files manually. Do not delete a Let's Encrypt certificate unless necessary." \
+        "Найдены файлы: $1. Похоже, они остались с другого сервера, например из восстановленного бэкапа 3x-ui. Telemt здесь этим менеджером не установлен; менеджер ничего не менял. Если файлы нужны, сохраните копию, иначе их можно убрать вручную. Сертификат Let's Encrypt без необходимости не удаляйте."
+}
+
 socks_probe() {
     [[ -z $SOCKS || $SOCKS == direct ]] && return 0
     helper socks-address "$SOCKS" || return 1
@@ -490,6 +495,8 @@ unknown_dc_log_path = "$data_root/state/unknown-dc.txt"
 proxy_secret_path = "$data_root/state/proxy-secret"
 proxy_config_v4_cache_path = "$data_root/state/proxy-config-v4.txt"
 proxy_config_v6_cache_path = "$data_root/state/proxy-config-v6.txt"
+[general.links]
+show = []
 [general.modes]
 classic = false
 secure = true
@@ -737,7 +744,7 @@ ensure_certificate() {
         [[ ! -e $CERT_ROOT/live/$DOMAIN && ! -L $CERT_ROOT/live/$DOMAIN &&
            ! -e $CERT_ROOT/renewal/$DOMAIN.conf && ! -L $CERT_ROOT/renewal/$DOMAIN.conf &&
            ! -e $CERT_ROOT/archive/$DOMAIN && ! -L $CERT_ROOT/archive/$DOMAIN ]] ||
-            ui_die 'Existing Certbot lineage assets; preserve them and review recovery manually' 'Найдены существующие файлы сертификата Certbot; сохраните их и проверьте восстановление вручную'
+            refuse_install_remnants '/etc/letsencrypt/live/DOMAIN, /etc/letsencrypt/renewal/DOMAIN.conf, /etc/letsencrypt/archive/DOMAIN (DOMAIN is the requested domain / DOMAIN — запрошенный домен)'
         if [[ -t 0 && -z ${EMAIL:-} ]]; then read -r -p "$(ui_text 'ACME registration email: ' 'Email для регистрации ACME: ')" EMAIL; fi
         if [[ -t 0 && ${AGREE_TOS:-0} != 1 ]]; then
             local consent
@@ -937,6 +944,7 @@ print(address)
 prompt_install() {
     [[ -t 0 ]] || ui_die 'Non-interactive install requires --domain and --public-ip (see --help)' 'Для установки без диалога нужны --domain и --public-ip (см. --help)'
     read -r -p "$(ui_text 'WEB domain: ' 'Домен WEB-прокси: ')" DOMAIN
+    DOMAIN=${DOMAIN,,}
     local detected_ip
     if detected_ip=$(detect_public_ipv4); then
         ui_info "Detected public IPv4: $detected_ip" "Определён публичный IPv4: $detected_ip"
@@ -1043,20 +1051,20 @@ install_manager() {
     local path secret since
     for path in "$BIN" "$CONFIG" "$UNIT" "$DATA" "$CONFIG_DIR" "$SITE_ROOT"; do
         helper safe-path "$path" || ui_die 'Unsafe install path' 'Небезопасный путь установки; операция остановлена'
-        [[ ! -e $path && ! -L $path ]] || ui_die 'Existing Telemt files found; automatic adoption not possible; manual review required' 'Найдены существующие файлы Telemt. Автоматическое подключение остановлено; требуется ручная проверка'
+        [[ ! -e $path && ! -L $path ]] || refuse_install_remnants "$path"
     done
     if [[ -e $STATE || -L $STATE ]]; then
-        helper certificate-only-state "$STATE" || ui_die 'Existing manager state is not certificate-only; adoption refused' 'Существующее состояние менеджера содержит не только сертификат; автоматическое подключение остановлено'
-        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || ui_die 'Preserved certificate ownership mismatch' 'Не совпадает принадлежность сохранённого сертификата; требуется ручная проверка'
+        helper certificate-only-state "$STATE" || refuse_install_remnants "$STATE"
+        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || refuse_install_remnants "$STATE/certificate.json"
     fi
     if [[ -e $RENEW_HOOK || -L $RENEW_HOOK ]]; then
-        [[ -f $STATE/certificate.json ]] || ui_die 'Existing deploy hook has no certificate ownership evidence' 'Для существующего deploy-hook не подтверждена принадлежность сертификата; требуется ручная проверка'
+        [[ -f $STATE/certificate.json ]] || refuse_install_remnants "$RENEW_HOOK"
         renewal_deploy_hook_contract
     fi
     if getent passwd telemt >/dev/null || getent group telemt >/dev/null; then
         ui_die 'Existing telemt account/group needs manual review' 'Существующая учётная запись или группа telemt требует ручной проверки'
     fi
-    [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || ui_die 'Existing Telemt unit found' 'Найден существующий unit Telemt; автоматическое подключение остановлено'
+    [[ -z $(systemctl show telemt.service -p FragmentPath --value) ]] || refuse_install_remnants '/etc/systemd/system/telemt.service, /usr/lib/systemd/system/telemt.service or /lib/systemd/system/telemt.service'
     [[ -d $(dirname "$SITE_ROOT") ]] || ui_die 'Site parent directory missing' 'Родительский каталог сайта отсутствует; требуется ручная проверка'
     [[ -z $(ss -H -ltn 'sport = :18080 or sport = :7444') ]] || ui_die 'Private ports 18080/7444 already occupied' 'Внутренние порты 18080/7444 уже заняты; установка остановлена'
     select_site_port || ui_die 'No free local cover-site port in 18081-18090' 'Нет свободного порта сайта-прикрытия в диапазоне 18081-18090'
@@ -1416,7 +1424,7 @@ main() {
             --install|--update|--check|--repair|--uninstall) [[ -z $action ]] || die 'Choose one action'; action=$1; shift;;
             --domain|--public-ip|--socks|--email)
                 (( $# >= 2 )) || die 'Missing option value'
-                case $1 in --domain) DOMAIN=$2;; --public-ip) PUBLIC_IP=$2;; --socks) SOCKS=$2;; --email) EMAIL=$2;; esac
+                case $1 in --domain) DOMAIN=${2,,};; --public-ip) PUBLIC_IP=$2;; --socks) SOCKS=$2;; --email) EMAIL=$2;; esac
                 shift 2;;
             --confirm-uninstall) CONFIRM_UNINSTALL=1; shift;;
             --delete-certificate) DELETE_CERTIFICATE=1; shift;;

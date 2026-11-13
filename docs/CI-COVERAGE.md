@@ -482,3 +482,28 @@ output and real transaction-fixture success/equal-version/rollback/CRITICAL
 results. Filesystem journal authority is real; release/service/isolation and
 acceptance timing are fixture-controlled. Existing Update and lifecycle suites
 remain required. No workflow, matrix, framework or dependency is added.
+
+## Fresh install domains, remnant messages and startup links
+
+`test_public_ip.py` exercises mixed/uppercase domain input through the real prompt
+and CLI; the helper domain validator still refuses uppercase. New classes in
+`test_safety.py` cover CNAME chains in both dig answers, one matching IPv4,
+distinct missing/multiple/mismatching IPv4 and AAAA refusals, and exactly two
+DNS queries. DNS transport is mocked. Nginx remnant tests retain refusal and
+byte-identical fixtures while checking fixed bilingual reasons without secrets.
+Helper reasons remain hidden by the baseline CLI handler until the separate
+helper-refusal change is integrated; direct exception assertions prove the reasons.
+
+`test_ui.py` checks existing-file and partial Certbot refusals in both languages,
+including paths, backup/manual-review guidance and unchanged files. Services are
+mocked. Refusals inside `certificate_renewal_contract` are unchanged.
+
+Generated-config tests accept both the new `[general.links] show = []` and legacy
+configuration through `runtime-contract` without rewriting either file. Existing
+`runtime.sh` additionally runs official Telemt 3.5.16 with each configuration in
+an isolated network namespace: fresh service output must contain no WEB link,
+while the legacy positive control must start, serve HTTP and print a link.
+Captured stdout/stderr remain private; only fixed results are printed. This
+proves real strict parsing and startup behavior, not live journald, ACME or a
+Telegram client on a VPS. These additions use existing discovery/integration
+entrypoints; no new standalone test or CI job is introduced.

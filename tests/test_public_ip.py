@@ -102,6 +102,29 @@ main --install --domain proxy.example.com --public-ip 203.0.113.10
         self.assertIn('RESULT=proxy.example.com|203.0.113.10', output)
         self.assertEqual(calls, [])
 
+    def test_mixed_case_domain_prompt_and_cli_are_normalized(self):
+        for domain in ('Proxy.Example.COM', 'PROXY.EXAMPLE.COM'):
+            for cli in (False, True):
+                with self.subTest(domain=domain, cli=cli):
+                    script = 'source "$1"\n'
+                    if cli:
+                        script += '''preflight() { :; }; take_lock() { :; }; recover_update() { :; }
+install_manager() { helper domain "$DOMAIN"; printf '%s\\n' "$DOMAIN"; }
+main --install --domain "$2" --public-ip 203.0.113.10
+'''
+                        answer = b''
+                    else:
+                        script += '''detect_public_ipv4() { printf 203.0.113.10; }
+prompt_install
+helper domain "$DOMAIN"
+printf '%s\\n' "$DOMAIN"
+'''
+                        answer = (domain+'\n\nn\n').encode()
+                    result, output = terminal(['bash', '-c', script, 'fixture',
+                        str(ROOT/'telemt-web-manager.sh'), domain], answer, self.env)
+                    self.assertEqual(result, 0, output.decode())
+                    self.assertIn(b'proxy.example.com', output)
+
 
 if __name__ == '__main__':
     unittest.main()

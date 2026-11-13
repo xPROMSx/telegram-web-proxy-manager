@@ -670,5 +670,117 @@ class SecurityTests(unittest.TestCase):
                 s.safe_path(root/'target/file')
 
 
+class FreshInstallInputTests(unittest.TestCase):
+    def test_helper_domain_still_refuses_uppercase(self):
+        result = subprocess.run([sys.executable, str(ROOT/'lib/safety.py'), 'domain',
+                                 'Proxy.Example.com'], capture_output=True, timeout=5)
+        self.assertEqual((result.returncode, result.stdout), (1, b''))
+
+    def test_cname_chain_accepts_only_the_single_expected_ipv4(self):
+        for a in ('203.0.113.10\n', 'target.example.com.\n203.0.113.10\n',
+                  'First.Example.COM.\nlast.example.com.\n203.0.113.10\n'):
+            for aaaa in ('', 'target.example.com.\nlast.example.com.\n'):
+                with self.subTest(a=a, aaaa=aaaa):
+                    s.dns_check(a, aaaa, '203.0.113.10')
+
+    def test_dns_refusal_reasons_distinguish_the_existing_failures(self):
+        for a, aaaa, reason in (
+            ('target.example.com.\n', '', 'DNS A missing'),
+            ('target.example.com.\n203.0.113.11', '', 'DNS A points to another IPv4'),
+            ('203.0.113.10\n203.0.113.11', '', 'DNS A has multiple IPv4 addresses'),
+            ('203.0.113.10\n203.0.113.10', '', 'DNS A has multiple IPv4 addresses'),
+            ('203.0.113.10', 'target.example.com.\n2001:db8::1', 'DNS AAAA exists'),
+        ):
+            with self.subTest(a=a, aaaa=aaaa), self.assertRaisesRegex(ValueError, reason):
+                s.dns_check(a, aaaa, '203.0.113.10')
+
+    def test_cname_dns_preflight_keeps_two_existing_queries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code = '''source "$1"
+TMP=$2 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
+dig() {
+    printf '%s\\n' "$*" >>"$TMP/queries"
+    printf 'target.example.com.\\n'
+    if [[ $4 == A ]]; then printf '203.0.113.10\\n'; fi
+}
+dns_preflight
+'''
+            result = subprocess.run(['bash', '-c', code, 'fixture',
+                str(ROOT/'telemt-web-manager.sh'), directory], capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual((Path(directory)/'queries').read_text().splitlines(), [
+                '+time=3 +tries=1 +short A proxy.example.com',
+                '+time=3 +tries=1 +short AAAA proxy.example.com'])
+
+    def test_new_and_old_configs_pass_runtime_contract_without_rewriting(self):
+        import tomllib
+        result = subprocess.run(['bash', '-c', 'source "$1"; DOMAIN=proxy.example.com; '
+            'PUBLIC_IP=203.0.113.10; generate_config "$2"', 'fixture',
+            str(ROOT/'telemt-web-manager.sh'), '0123456789abcdef0123456789abcdef'],
+            capture_output=True, check=True, timeout=5)
+        self.assertEqual(tomllib.loads(result.stdout.decode())['general']['links'], {'show': []})
+        self.assertIn(b'[general.links]\nshow = []\n', result.stdout)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'config.toml'
+            for content in (result.stdout, result.stdout.replace(b'[general.links]\nshow = []\n', b'')):
+                path.write_bytes(content)
+                checked = subprocess.run([sys.executable, str(ROOT/'lib/safety.py'),
+                    'runtime-contract', str(path), '/var/lib/telemt'], capture_output=True, timeout=5)
+                self.assertEqual(checked.returncode, 0, checked.stderr.decode())
+                self.assertEqual(path.read_bytes(), content)
+
+    def test_nginx_remnant_reasons_name_fixed_paths_without_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)/'nginx'
+            shutil.copytree(ROOT/'tests/fixtures/nginx', root)
+            (root/'conf.d').mkdir()
+            vhost = root/'conf.d/telemt-web-manager.conf'
+            vhost.write_text('# PRIVATE_REMNANT tg://webproxy?secret=PRIVATE_SECRET\n')
+            before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            with self.assertRaises(ValueError) as caught:
+                s.nginx_plan(root, 'proxy.example.com', Path(directory)/'plan')
+            reason = str(caught.exception)
+            self.assertIn('/etc/nginx/conf.d/telemt-web-manager.conf', reason)
+            self.assertIn('другого сервера', reason)
+            self.assertIn('another server', reason)
+            self.assertNotIn('PRIVATE_', reason)
+            self.assertEqual(before, {p: p.read_bytes() for p in root.rglob('*') if p.is_file()})
+            self.assertFalse((Path(directory)/'plan').exists())
+
+    def test_partial_and_changed_nginx_remnants_keep_specific_reasons(self):
+        for scenario, expected in (
+            ('stream-only', '/etc/nginx'), ('wrong-map', '/etc/nginx'),
+            ('wrong-upstream', '/etc/nginx'), ('changed-vhost', '/etc/nginx/conf.d/telemt-web-manager.conf'),
+            ('orphan-include', '/etc/nginx/stream-sni.d/telemt-web-manager.conf')):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)/'nginx'
+                shutil.copytree(ROOT/'tests/fixtures/nginx', root)
+                (root/'conf.d').mkdir()
+                output = Path(directory)/'plan'
+                s.nginx_plan(root, 'proxy.example.com', output)
+                if scenario == 'orphan-include':
+                    path = root/'stream-sni.d/telemt-web-manager.conf'
+                    path.parent.mkdir(); path.write_text('PRIVATE_REMNANT')
+                else:
+                    for edit in json.loads(output.read_text())['edits']:
+                        if scenario != 'stream-only' or Path(edit['path']).name != 'telemt-web-manager.conf':
+                            Path(edit['path']).write_text(edit['content'])
+                    path = root/'conf.d/telemt-web-manager.conf' if scenario == 'changed-vhost' else root/'stream.conf'
+                    text = path.read_text()
+                    if scenario == 'wrong-map': text = text.replace('proxy.example.com twm_frontend;', 'proxy.example.com panel;')
+                    if scenario == 'wrong-upstream': text = text.replace('127.0.0.1:7444', '127.0.0.1:7445')
+                    if scenario == 'changed-vhost': text = text.replace('client_max_body_size 2m', 'client_max_body_size 3m')
+                    path.write_text(text)
+                output.unlink()
+                before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+                with self.assertRaises(ValueError) as caught:
+                    s.nginx_plan(root, 'proxy.example.com', output)
+                self.assertIn(expected, str(caught.exception))
+                self.assertIn('другого сервера', str(caught.exception))
+                self.assertNotIn('PRIVATE_REMNANT', str(caught.exception))
+                self.assertEqual(before, {p: p.read_bytes() for p in root.rglob('*') if p.is_file()})
+                self.assertFalse(output.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

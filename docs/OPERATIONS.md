@@ -15,6 +15,18 @@ its unchanged process-wide and per-IP limits (defaults 128 and 16). This is a
 session ceiling, not a throughput claim. Existing TOML, including profiles with
 eight sessions, is preserved by manager bootstrap, Install reruns and Update.
 
+## Secret WEB links in service logs
+
+For installations created before startup link suppression was added, the
+`telemt` service journal can contain the full secret WEB link, including after
+later restarts. Do not forward complete `journalctl` output to chats or support
+requests: anyone with this link can use the proxy. Updating the manager does not
+change an existing Telemt configuration.
+
+New installations disable startup link printing with `[general.links]` and
+`show = []`. Their service output does not contain the secret WEB link. Use the
+manager's terminal menu when you need to view your saved link.
+
 ## Nginx requirements
 
 The manager parses the include tree rather than doing regex substitutions.
