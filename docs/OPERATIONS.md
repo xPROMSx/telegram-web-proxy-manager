@@ -15,6 +15,18 @@ its unchanged process-wide and per-IP limits (defaults 128 and 16). This is a
 session ceiling, not a throughput claim. Existing TOML, including profiles with
 eight sessions, is preserved by manager bootstrap, Install reruns and Update.
 
+## Secret WEB links in service logs
+
+For installations created before startup link suppression was added, the
+`telemt` service journal can contain the full secret WEB link, including after
+later restarts. Do not forward complete `journalctl` output to chats or support
+requests: anyone with this link can use the proxy. Updating the manager does not
+change an existing Telemt configuration.
+
+New installations disable startup link printing with `[general.links]` and
+`show = []`. Their service output does not contain the secret WEB link. Use the
+manager's terminal menu when you need to view your saved link.
+
 ## Nginx requirements
 
 The manager parses the include tree rather than doing regex substitutions.
@@ -953,6 +965,65 @@ before/after removal; a failed activation restores the previous ACME vhost.
 Failure reports “Telemt uninstall succeeded. Certificate cleanup failed or
 requires manual review” and retains backup evidence; Telemt is not resurrected.
 
+
+## Смена домена после удаления с сохранением сертификата
+
+Этот путь предназначен только для состояния после успешного Uninstall с сохранением
+сертификата. Безопасная альтернатива: установить на тот же домен, ничего не удаляя.
+Закройте меню менеджера, сохраните снимок VPS и проверьте, что старый сертификат
+не используется другими службами. При несовпадении записи или отказе проверки
+остановитесь для ручной проверки, не удаляйте файлы для обхода отказа.
+
+**До выполнения команд:** необратимо удаляются deploy-hook
+`/etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager`, запись
+`/var/lib/telemt-web-manager/certificate.json` и затем пустой каталог
+`/var/lib/telemt-web-manager`. Для webroot также удаляются
+`/var/lib/telemt-web-manager-acme` с маркером и пустым каталогом challenges,
+`/etc/nginx/conf.d/telemt-web-manager-acme.conf` и старая линия сертификата вместе с закрытым ключом:
+`/etc/letsencrypt/live/OLD_DOMAIN`, `/etc/letsencrypt/archive/OLD_DOMAIN`,
+`/etc/letsencrypt/renewal/OLD_DOMAIN.conf`. OLD_DOMAIN означает прежний домен.
+Для standalone эти три объекта сертификата сохраняются и могут продлеваться
+Certbot. Backups, учётные записи Certbot и чужие сертификаты сохраняются.
+Для нового домена потребуется новый сертификат с учётом
+[лимитов Let's Encrypt](https://letsencrypt.org/docs/rate-limits/).
+
+Все команды блока выполнять **на сервере от root**, в отдельном Bash-подоболочном
+процессе, как показано. Проверки используют сохранённую запись, точный hook и
+существующий план очистки менеджера. `certificate-cleanup-plan` ничего не удаляет
+и отказывает при совместном использовании файлов. Для webroot только
+[Certbot delete](https://eff-certbot.readthedocs.io/en/stable/using.html#deleting-certificates)
+удаляет старую линию; вручную удалять live/archive/renewal нельзя.
+
+```bash
+(
+    set -e
+    source /opt/telemt-web-manager/telemt-web-manager.sh
+    TMP=$(mktemp -d /tmp/telemt-web-manager.XXXXXXXX)
+    trap cleanup EXIT
+    take_lock
+    DOMAIN=$(jq -er .domain "$STATE/certificate.json")
+    helper certificate-only-state "$STATE"
+    helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT"
+    validate_certificate identity
+    renewal_deploy_hook_contract
+    nginx_test
+    helper certificate-cleanup-plan "$TMP/certificate-cleanup.json" "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" "$RENEW_HOOK"
+    if [[ $(jq -er .renewal_kind "$STATE/certificate.json") == webroot ]]; then
+        certbot delete --non-interactive --cert-name "$DOMAIN"
+    fi
+    helper certificate-cleanup-remove "$TMP/certificate-cleanup.json"
+    nginx_test
+    nginx_reload
+)
+```
+
+Ожидается exit 0: запись, пустой state и hook отсутствуют; для webroot отсутствуют
+также перечисленные ACME-объекты и старая линия; Nginx прошёл проверку и перечитан.
+Не продолжайте после ненулевого кода. Затем на сервере от root запустите
+`bash /opt/telemt-web-manager/telemt-web-manager.sh`, выберите Install и укажите
+новый свободный домен с правильным DNS. Ожидается новая установка с отдельным
+сертификатом. Удаление одного certificate.json недостаточно: пустой state
+вызывает отказ, а после удаления пустого state остаётся отказ по hook.
 
 ## Оригинальные сайты v0.3: текущий контракт
 
