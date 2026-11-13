@@ -979,7 +979,7 @@ requires manual review” and retains backup evidence; Telemt is not resurrected
 `/var/lib/telemt-web-manager/certificate.json` и затем пустой каталог
 `/var/lib/telemt-web-manager`. Для webroot также удаляются
 `/var/lib/telemt-web-manager-acme` с маркером и пустым каталогом challenges,
-`/etc/nginx/conf.d/telemt-web-manager-acme.conf` и старая линия сертификата:
+`/etc/nginx/conf.d/telemt-web-manager-acme.conf` и старая линия сертификата вместе с закрытым ключом:
 `/etc/letsencrypt/live/OLD_DOMAIN`, `/etc/letsencrypt/archive/OLD_DOMAIN`,
 `/etc/letsencrypt/renewal/OLD_DOMAIN.conf`. OLD_DOMAIN означает прежний домен.
 Для standalone эти три объекта сертификата сохраняются и могут продлеваться
