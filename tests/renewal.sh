@@ -151,6 +151,7 @@ result=$?
 set -e
 [[ $result == 1 ]]
 grep -q 'notAfter=' "$sandbox/near-expiry.log"
+grep -q 'Certificate expires within 7 days' "$sandbox/near-expiry.log"
 grep -q 'Check result: FAILED' "$sandbox/near-expiry.log"
 for action in update_manager repair_manager; do "$action" >"$sandbox/near-expiry-action.log" 2>&1; done
 assert_rejected 'Install near-expiry certificate' certificate_health_contract

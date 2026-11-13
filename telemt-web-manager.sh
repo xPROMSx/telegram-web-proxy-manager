@@ -1202,7 +1202,10 @@ check_manager() {
     path_health && ui_ok 'Nginx/local decoy/local SNI+TLS/public HTTPS/SOCKS: OK' 'Nginx / локальный сайт-прикрытие / локальный SNI+TLS / публичный HTTPS / SOCKS: исправны' || failed=1
     cert="$CERT_ROOT/live/$DOMAIN/fullchain.pem"
     openssl x509 -in "$cert" -noout -enddate || failed=1
-    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || failed=1
+    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || {
+        ui_err 'Certificate expires within 7 days' 'Срок сертификата истекает менее чем через 7 дней; требуется продление'
+        failed=1
+    }
     recent_logs "$(( $(now) - 300 ))" || failed=1
     if (( failed )); then
         ui_err 'Check result: FAILED' 'Проверка не пройдена. Проверьте сообщения диагностики; может потребоваться ручная проверка.'
