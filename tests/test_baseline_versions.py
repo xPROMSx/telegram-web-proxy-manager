@@ -37,7 +37,33 @@ def bootstrap_validator():
     return namespace['recovery_receipt']
 
 
+def assert_bootstrap_accepts_baselines(baselines):
+    validate = bootstrap_validator()
+    for version, (commit, pins) in baselines.items():
+        for arch, (archive, binary) in pins.items():
+            value = dict(schema=1, origin='reviewed-baseline', repository=dict(s.UPSTREAM_REPOSITORY),
+                architecture=arch, installed_version=version, tag=version, tag_object_sha=None,
+                commit_sha=commit, tag_verification=None, release=None, asset=None, checksum_asset=None,
+                archive_sha256=archive, binary=dict(sha256=binary, size=123),
+                installed_at='2026-10-31T12:00:00Z', manager_version='1.1.2', transaction_id='1'*32,
+                generation_id='2'*32, trust_policy='embedded-reviewed-baseline-v1')
+            try:
+                validate(value)
+            except ValueError as error:
+                raise AssertionError(
+                    f'install.sh bootstrap rejected reviewed baseline {version} for {arch}') from error
+
+
 class BaselineVersions(unittest.TestCase):
+    def test_bootstrap_accepts_all_helper_reviewed_baselines(self):
+        assert_bootstrap_accepts_baselines(s.REVIEWED_BASELINES)
+
+    def test_bootstrap_baseline_check_reports_synthetic_drift(self):
+        for arch in ('x86_64', 'aarch64'):
+            with self.subTest(arch=arch), self.assertRaisesRegex(
+                    AssertionError, rf'install\.sh bootstrap rejected reviewed baseline 9\.9\.9 for {arch}'):
+                assert_bootstrap_accepts_baselines({'9.9.9': ('a'*40, {arch: ('b'*64, 'c'*64)})})
+
     def test_both_validators_accept_original_baselines_and_reject_crossed_pins(self):
         for validate in (s.UpdateReceipt.validate, bootstrap_validator()):
             for version in PINS:
