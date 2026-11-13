@@ -389,9 +389,13 @@ nginx_before=$(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort)
     openssl() { if [[ $1 == x509 ]]; then return 0; else command openssl "$@"; fi; }
     universal_update() { printf 'fixture Update engine delegation\n'; }
     install_manager
-    check_manager
+    (
+        installed_compatibility() { printf attempted >"$SANDBOX/unexpected-isolation"; return 1; }
+        check_manager
+        repair_manager
+        [[ ! -e $SANDBOX/unexpected-isolation ]]
+    )
     update_manager
-    repair_manager
 ) >"$SANDBOX/lifecycle-$http_format.log" 2>&1
 [[ $(find "$NGINX_ROOT" -type f -exec sha256sum {} + | sort) == "$nginx_before" ]]
 [[ $(sha256sum "$CONFIG") == "$toml_before" ]]
@@ -403,8 +407,20 @@ cp -p "$SANDBOX/origin-config" "$CONFIG"
 cp -a "$SANDBOX/origin-site" "$SITE_ROOT"
 rm -- "$DATA/public/index.html" "$DATA/public/cover.css"
 before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file")
+for action in check_manager repair_manager; do
+    set +e
+    # The identity callback is invoked indirectly by the sourced operation.
+    # shellcheck disable=SC2317,SC2329
+    (set -Eeuo pipefail; installed_release_identity() { return 1; }; "$action") >"$SANDBOX/identity-failure.log" 2>&1
+    result=$?
+    set -e
+    [[ $result != 0 ]]
+    grep -q 'Invalid/missing installed release identity' "$SANDBOX/identity-failure.log"
+    [[ $(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file") == "$before" ]]
+done
+printf 'ok - Check and Repair still refuse an invalid installed release identity without changes\n'
 set +e
-(set -Eeuo pipefail; installed_compatibility() { return 1; }; load_installation) >"$SANDBOX/isolation-failure.log" 2>&1
+(set -Eeuo pipefail; installed_compatibility() { return 1; }; update_manager) >"$SANDBOX/isolation-failure.log" 2>&1
 result=$?
 set -e
 [[ $result != 0 ]]

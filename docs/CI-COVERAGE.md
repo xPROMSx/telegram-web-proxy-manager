@@ -273,6 +273,18 @@ fresh-install redaction assertions remain and also forbid any `tg://` output.
 
 ## Menu dependency setup follow-up (0.1.4)
 
+`test_safety.py` checks fixed helper refusal reasons, caller locations, secret-safe
+malformed TOML/JSON errors and the unchanged Update readiness deadline reason.
+`test_dependencies.py` and `fresh.sh` verify Check/Repair skip installed isolation
+while retaining release identity checks; `update_transactions.py` rejects a changed
+installed binary against its unchanged receipt.
+`renewal.sh` covers standalone port warnings, unchanged Install refusals and
+near-expiry diagnostics with real certificates and mocked runtime transports.
+`uninstall.sh` removes a standalone deployment with occupied port 80;
+`update_transactions.py` checks one-day certificate acceptance, pre-stop expiry
+validation ordering and expired-certificate refusal. These fixtures do not prove
+live ACME renewal or VPS systemd/TLS acceptance.
+
 `test_dependencies.py` runs real main/menu/preflight dependency collection in PTYs
 with isolated command files, a mocked immutable platform and a mocked apt-get.
 It covers single confirmation, Y/y, decline/default, CLI even on TTY, redirected

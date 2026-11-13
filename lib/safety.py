@@ -40,9 +40,16 @@ class NginxDomainInUse(ValueError):
     """Exact foreign server_name collision; no configuration text is diagnostic."""
 
 
-def require(ok, message="automatic nginx integration not possible"):
+class SafetyRefusal(ValueError):
+    """A failed manager check with a fixed, credential-free reason."""
+
+
+def require(ok, message=None):
     if not ok:
-        raise ValueError(message)
+        if message is None:
+            caller = sys._getframe(1)
+            message = f'{caller.f_code.co_name}:{caller.f_lineno}'
+        raise SafetyRefusal(message)
 
 
 def semver(value):
@@ -4713,14 +4720,21 @@ def main():
 
 
 if __name__ == "__main__":
+    russian_refusal = len(sys.argv)>1 and sys.argv[1] in ('update-universal','update-recover','web-link-display') and presentation_language() == 'ru'
     try:
         sys.exit(main())
     except NginxDomainInUse:
         # Fixed protocol with the shell planner; never transmit exception text.
         sys.exit(20)
+    except SafetyRefusal as error:
+        if russian_refusal:
+            print(f"Проверка безопасности не пройдена ({error}). Автоматическое изменение остановлено; требуется ручная проверка. Секреты не показаны.", file=sys.stderr)
+        else:
+            print(f"Safety validation failed ({error}); manual review required (no credentials displayed).", file=sys.stderr)
+        sys.exit(1)
     except (ValueError, OSError, KeyError, TypeError, AttributeError, IndexError, tarfile.TarError, subprocess.SubprocessError):
         # Config parse errors may contain credentials. Never echo exception text.
-        if len(sys.argv)>1 and sys.argv[1] in ('update-universal','update-recover','web-link-display') and presentation_language() == 'ru':
+        if russian_refusal:
             print("Проверка безопасности не пройдена. Автоматическое изменение остановлено; требуется ручная проверка. Секреты не показаны.", file=sys.stderr)
         else:
             print("Safety validation failed; manual review required (no credentials displayed).", file=sys.stderr)
