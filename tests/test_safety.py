@@ -12,12 +12,63 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("safety", ROOT / "lib/safety.py")
 s = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = s
 spec.loader.exec_module(s)
+
+
+class HelperRefusalTests(unittest.TestCase):
+    def helper(self, *args, input=None):
+        return subprocess.run([sys.executable, str(ROOT/'lib/safety.py'), *args],
+                              input=input, capture_output=True, timeout=10)
+
+    def test_require_without_message_reports_exact_caller_location(self):
+        with self.assertRaises(s.SafetyRefusal) as caught:
+            line = sys._getframe().f_lineno + 1
+            s.require(False)
+        self.assertEqual(str(caught.exception),
+                         'test_require_without_message_reports_exact_caller_location:'+str(line))
+        result = self.helper('semver', '1.0.0-01')
+        self.assertEqual((result.returncode, result.stdout), (1, b''))
+        self.assertRegex(result.stderr, rb'^Safety validation failed \(semver:[0-9]+\); manual review required \(no credentials displayed\)\.\n$')
+
+    def test_require_message_and_domain_refusal_are_specific(self):
+        with self.assertRaises(s.SafetyRefusal) as caught:
+            s.require(False, 'fixed test reason')
+        self.assertEqual(str(caught.exception), 'fixed test reason')
+        result = self.helper('domain', 'Proxy.Example.com')
+        self.assertEqual((result.returncode, result.stdout), (1, b''))
+        self.assertEqual(result.stderr, b'Safety validation failed (invalid domain (use lowercase ASCII/punycode)); manual review required (no credentials displayed).\n')
+
+    def test_malformed_toml_and_json_keep_generic_secret_safe_refusal(self):
+        import tomllib
+        cases = [('config-info', 'private="PRIVATE_REFUSAL_MARKER"\nbroken=[', tomllib.loads),
+                 ('classify-journal', '{"private":"PRIVATE_REFUSAL_MARKER",', json.loads)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'broken.toml'
+            for command, raw, parser in cases:
+                with self.subTest(command=command):
+                    with self.assertRaises(ValueError) as caught: parser(raw)
+                    path.write_text(raw)
+                    result = (self.helper(command, str(path)) if command == 'config-info'
+                              else self.helper(command, input=raw.encode()))
+                    self.assertEqual((result.returncode, result.stdout), (1, b''))
+                    self.assertEqual(result.stderr, b'Safety validation failed; manual review required (no credentials displayed).\n')
+                    self.assertNotIn(b'PRIVATE_REFUSAL_MARKER', result.stderr)
+                    self.assertNotIn(str(caught.exception).encode(), result.stderr)
+
+    def test_accept_retains_fixed_readiness_deadline(self):
+        engine = object.__new__(s.UpdateEngine)
+        engine.systemd = Mock()
+        engine.systemd.show.return_value = {'ActiveState':'active', 'NRestarts':'0'}
+        engine.systemd.identity.side_effect = lambda receipt: s.require(False, 'running executable pathname mismatch')
+        with patch.object(s.time, 'monotonic', side_effect=[0, 91]):
+            with self.assertRaisesRegex(s.SafetyRefusal, '^Telemt identity/listener readiness deadline$'):
+                engine.accept({})
 
 
 class SafetyTests(unittest.TestCase):
@@ -226,14 +277,14 @@ printf 'INSTALL_CONTINUED\\n'
         self.assertEqual(before, self.snapshot())
         self.assertEqual(len(json.loads((Path(self.temp.name)/'nginx-plan.json').read_text())['edits']), 2)
 
-    def test_other_unsafe_plan_keeps_generic_secret_safe_refusal(self):
+    def test_other_unsafe_plan_names_check_without_disclosing_secrets(self):
         self.stream.write_text(self.stream.read_text().replace('$ssl_preread_server_name', '$remote_addr')
                                + '\n# PRIVATE_PASSWORD tg://webproxy?secret=PRIVATE_SECRET\n')
         before = self.snapshot()
         code, output = self.run_shell_plan('proxy.example.com')
         self.assertEqual(code, 1)
-        self.assertEqual(output, b'Safety validation failed; manual review required (no credentials displayed).\n'
-                                b'ERROR: automatic nginx integration not possible\n')
+        self.assertRegex(output, rb'^Safety validation failed \(nginx_plan:[0-9]+\); manual review required \(no credentials displayed\)\.\nERROR: automatic nginx integration not possible\n$')
+        self.assertNotIn(b'PRIVATE_', output)
         self.assertEqual(before, self.snapshot())
         self.assertFalse((Path(self.temp.name)/'nginx-plan.json').exists())
 
