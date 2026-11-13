@@ -459,8 +459,10 @@ candidate_compatibility() {
 dns_preflight() {
     helper domain "$DOMAIN"
     helper ipv4 "$PUBLIC_IP"
-    dig +time=3 +tries=1 +short A "$DOMAIN" >"$TMP/dns-a"
-    dig +time=3 +tries=1 +short AAAA "$DOMAIN" >"$TMP/dns-aaaa"
+    dig +time=3 +tries=1 +short A "$DOMAIN" >"$TMP/dns-a" 2>"$TMP/dns-a.stderr" ||
+        ui_die 'DNS A query failed before installation' 'Не удалось выполнить запрос DNS A; установка не запускалась'
+    dig +time=3 +tries=1 +short AAAA "$DOMAIN" >"$TMP/dns-aaaa" 2>"$TMP/dns-aaaa.stderr" ||
+        ui_die 'DNS AAAA query failed before installation' 'Не удалось выполнить запрос DNS AAAA; установка не запускалась'
     helper dns "$TMP/dns-a" "$TMP/dns-aaaa" "$PUBLIC_IP" || ui_die 'DNS A/AAAA validation failed before installation' 'Проверка DNS A/AAAA не пройдена; установка не запускалась'
 }
 
@@ -693,9 +695,9 @@ build_nginx_plan() {
     elif [[ $PLAN_MODE == keepalive ]]; then
         helper nginx-keepalive-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
     elif [[ -n $SITE_DIGEST ]]; then
-        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" "$SITE_PORT" || status=$?
+        helper nginx-site-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$SITE_DIGEST" "$SITE_PORT" "$STATE/manifest.json" || status=$?
     else
-        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" || status=$?
+        helper nginx-plan "$NGINX_ROOT" "$DOMAIN" "$1" "$ACME_ROOT" "$STATE/manifest.json" || status=$?
     fi
     if (( status == 20 )); then
         # Only the helper's exact foreign server_name conflict uses this code.
@@ -1055,7 +1057,9 @@ install_manager() {
     done
     if [[ -e $STATE || -L $STATE ]]; then
         helper certificate-only-state "$STATE" || refuse_install_remnants "$STATE"
-        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" || refuse_install_remnants "$STATE/certificate.json"
+        helper certificate-record-check "$STATE" "$DOMAIN" "$CERT_ROOT" "$ACME_ROOT" "$NGINX_ROOT" 2>/dev/null ||
+            ui_die "This manager's saved certificate record at $STATE/certificate.json does not match this installation (different domain or record mismatch). Nothing changed. Domain change requires irreversible removal of the record, empty state and deploy-hook; for webroot, also its ACME vhost/webroot and old certificate (live, archive, renewal). A new certificate is needed, subject to Let's Encrypt limits. Follow docs/OPERATIONS.md, section 'Смена домена после удаления с сохранением сертификата'. Or install the same domain without deleting anything." \
+                "Сохранённая запись этого менеджера о прежнем сертификате $STATE/certificate.json не подходит к установке (другой домен или несовпадение записи). Изменений нет. При смене домена необратимо удаляются запись, пустой state и deploy-hook; для webroot также его ACME vhost/webroot и старый сертификат (live, archive, renewal). Для нового домена нужен новый сертификат с учётом лимитов Let's Encrypt. Шаги: docs/OPERATIONS.md, раздел 'Смена домена после удаления с сохранением сертификата'. Либо установите на тот же домен, ничего удалять не нужно."
     fi
     if [[ -e $RENEW_HOOK || -L $RENEW_HOOK ]]; then
         [[ -f $STATE/certificate.json ]] || refuse_install_remnants "$RENEW_HOOK"
@@ -1162,7 +1166,7 @@ load_installation() {
     actual=$(sha256sum "$UNIT"); expected=$(jq -er .unit_sha256 "$STATE/manifest.json")
     [[ ${actual%% *} == "$expected" ]] || ui_die 'Service changed; manual review required' 'Unit службы изменён; требуется ручная проверка'
     actual=$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager.conf"); expected=$(jq -er .nginx_sha256 "$STATE/manifest.json")
-    [[ ${actual%% *} == "$expected" ]] || ui_die 'Nginx vhost changed; manual review required' 'Vhost Nginx изменён; требуется ручная проверка'
+    [[ ${actual%% *} == "$expected" ]] || ui_die "Nginx connection differs from the one created by this manager: /etc/nginx/conf.d/telemt-web-manager.conf. Nothing changed; manual review required. Keep Let's Encrypt certificates." "Подключение к Nginx отличается от созданного менеджером: /etc/nginx/conf.d/telemt-web-manager.conf. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните."
     helper config-info "$CONFIG" >"$TMP/config-info" || ui_die 'automatic update/migration not possible; manual review required' 'Автоматическое обновление или перенос состояния остановлены; требуется ручная проверка'
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Runtime/write paths require manual review; existing TOML was not changed' 'Рабочие пути или пути записи требуют ручной проверки; существующий TOML не изменён'
     SITE_DIGEST=$(helper site-bound "$CONFIG" "$DATA" "$NGINX_ROOT" "$SITE_ROOT") || ui_die 'Site ownership/hash differs; manual review required' 'Принадлежность или целостность сайта не подтверждена; требуется ручная проверка'

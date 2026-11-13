@@ -470,6 +470,10 @@ def ipv4(value):
 
 def dns_check(a_text, aaaa_text, expected):
     ipv4(expected)
+    require(not any(line.lstrip().startswith(';;') for line in a_text.splitlines()),
+            'DNS A query diagnostic; retry after checking DNS')
+    require(not any(line.lstrip().startswith(';;') for line in aaaa_text.splitlines()),
+            'DNS AAAA query diagnostic; retry after checking DNS')
     def addresses(text):
         for item in text.splitlines():
             item = item.strip()
@@ -751,7 +755,8 @@ def nginx_web_backend(http, vhost):
 
 
 def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme", uninstall=False,
-               keepalive=False, site_digest=None, site_port=18081):
+               keepalive=False, site_digest=None, site_port=18081, manifest=None):
+    installed = uninstall or keepalive or (manifest is not None and Path(manifest).is_file())
     domain(host)
     if site_digest is not None:
         require(type(site_port) is int and 18081 <= site_port <= 18090, 'unsupported origin port')
@@ -864,19 +869,35 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
                         ((443,7444,18080,origin_port) if site_digest or owned_site else (443,7444,18080)))
     edits = {}
     if existing or owned or vhost.exists():
-        require(len(existing) == len(owned) == 1 and vhost.exists(),
-                'Incomplete manager files in /etc/nginx and /etc/nginx/conf.d/telemt-web-manager.conf; possible files from another server (restored 3x-ui backup). This check changed nothing; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
-                'Неполный набор файлов менеджера в /etc/nginx и /etc/nginx/conf.d/telemt-web-manager.conf; возможно, с другого сервера (восстановленный бэкап 3x-ui). Проверка ничего не меняла; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
-        require(existing[0].args == [host, "twm_frontend"],
-                'Manager domain mapping differs in /etc/nginx; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
-                'Маршрут домена менеджера в /etc/nginx отличается; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
-        require([n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]],
-                'Manager upstream differs in /etc/nginx; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
-                'Upstream менеджера в /etc/nginx отличается; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
-        require(vhost.read_text() in (render_vhost(host), render_vhost(host, keepalive=False),
-                                     render_vhost(host,site_digest=owned_site,site_port=origin_port)),
-                'Manager vhost differs: /etc/nginx/conf.d/telemt-web-manager.conf; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
-                'Vhost менеджера отличается: /etc/nginx/conf.d/telemt-web-manager.conf; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
+        valid = len(existing) == len(owned) == 1 and vhost.exists()
+        if installed:
+            require(valid, "Incomplete manager Nginx files in /etc/nginx and /etc/nginx/conf.d/telemt-web-manager.conf. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Неполный набор файлов подключения менеджера к Nginx в /etc/nginx и /etc/nginx/conf.d/telemt-web-manager.conf. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+        else:
+            require(valid,
+                    'Incomplete manager files in /etc/nginx and /etc/nginx/conf.d/telemt-web-manager.conf; possible files from another server (restored 3x-ui backup). This check changed nothing; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
+                    'Неполный набор файлов менеджера в /etc/nginx и /etc/nginx/conf.d/telemt-web-manager.conf; возможно, с другого сервера (восстановленный бэкап 3x-ui). Проверка ничего не меняла; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
+        valid = existing[0].args == [host, "twm_frontend"]
+        if installed:
+            require(valid, "Manager domain mapping differs in /etc/nginx. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Маршрут домена менеджера в /etc/nginx отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+        else:
+            require(valid,
+                    'Manager domain mapping differs in /etc/nginx; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
+                    'Маршрут домена менеджера в /etc/nginx отличается; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
+        valid = [n.args for n in expand(owned[0].children)] == [["server", "127.0.0.1:7444"]]
+        if installed:
+            require(valid, "Manager upstream differs in /etc/nginx. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Подключение менеджера через upstream в /etc/nginx отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+        else:
+            require(valid,
+                    'Manager upstream differs in /etc/nginx; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
+                    'Upstream менеджера в /etc/nginx отличается; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
+        valid = vhost.read_text() in (render_vhost(host), render_vhost(host, keepalive=False),
+                                     render_vhost(host,site_digest=owned_site,site_port=origin_port))
+        if installed:
+            require(valid, "Manager vhost differs: /etc/nginx/conf.d/telemt-web-manager.conf. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Файл подключения менеджера /etc/nginx/conf.d/telemt-web-manager.conf отличается. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+        else:
+            require(valid,
+                    'Manager vhost differs: /etc/nginx/conf.d/telemt-web-manager.conf; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
+                    'Vhost менеджера отличается: /etc/nginx/conf.d/telemt-web-manager.conf; возможны файлы с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
         if site_digest: require(owned_site == site_digest, 'site creation cannot migrate an existing vhost')
         active = [n for n in expand(http.children) if n.path == vhost]
         require([n.args[0] for n in active] ==
@@ -887,9 +908,13 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
         if any(spans is None for spans in ranges.values()):
             require(include_contract, 'managed stream includes inactive')
     else:
-        require(not any(os.path.lexists(path) for path, _ in stream_files),
-                'Orphan manager files: /etc/nginx/stream-sni.d/telemt-web-manager.conf or /etc/nginx/stream-upstreams.d/telemt-web-manager.conf; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
-                'Остались файлы менеджера: /etc/nginx/stream-sni.d/telemt-web-manager.conf или /etc/nginx/stream-upstreams.d/telemt-web-manager.conf; возможно, с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
+        valid = not any(os.path.lexists(path) for path, _ in stream_files)
+        if installed:
+            require(valid, "Incomplete manager files: /etc/nginx/stream-sni.d/telemt-web-manager.conf or /etc/nginx/stream-upstreams.d/telemt-web-manager.conf. The Nginx connection differs from the one created by this manager. Nothing changed; manual review required. Keep Let's Encrypt certificates. / Неполное подключение менеджера: /etc/nginx/stream-sni.d/telemt-web-manager.conf или /etc/nginx/stream-upstreams.d/telemt-web-manager.conf. Подключение к Nginx отличается от созданного менеджером. Изменений нет; нужна ручная проверка. Сертификаты Let's Encrypt сохраните.")
+        else:
+            require(valid,
+                    'Orphan manager files: /etc/nginx/stream-sni.d/telemt-web-manager.conf or /etc/nginx/stream-upstreams.d/telemt-web-manager.conf; possible files from another server (3x-ui backup). No changes; save a copy or remove leftovers manually. Keep needed Let\'s Encrypt certificates. / '
+                    'Остались файлы менеджера: /etc/nginx/stream-sni.d/telemt-web-manager.conf или /etc/nginx/stream-upstreams.d/telemt-web-manager.conf; возможно, с другого сервера (бэкап 3x-ui). Изменений нет; сохраните копию или уберите остатки вручную. Нужные сертификаты Let\'s Encrypt сохраните.')
     if not (existing or owned or vhost.exists()) and include_contract:
         for path, literal in stream_files:
             safe_path(path)
@@ -3461,7 +3486,7 @@ class UpdateEngine:
         site_bound_identity(layout.config,str(layout.data),nginx,layout.path(SITE_ROOT))
         with tempfile.TemporaryDirectory(prefix='twm-ownership-') as directory:
             output=Path(directory)/'nginx-plan.json'
-            nginx_plan(nginx,host,output)
+            nginx_plan(nginx,host,output,manifest=layout.state/'manifest.json')
             require(update_json(output.read_bytes())['edits']==[], 'managed Nginx integration differs')
         certroot=layout.path('/etc/letsencrypt'); acme=layout.path('/var/lib/telemt-web-manager-acme')
         record=certificate_record_value(host,certroot,acme,nginx)
@@ -4638,11 +4663,12 @@ def main():
     elif command == "version-compare":
         print(version_compare(*args))
     elif command == "nginx-plan":
-        nginx_plan(*args)
+        nginx_plan(*args[:4], manifest=args[4] if len(args) > 4 else None)
     elif command == 'nginx-site-plan':
-        require(len(args) in (5,6))
+        require(len(args) in (5,6,7))
         nginx_plan(*args[:4],site_digest=args[4],
-                   site_port=int(args[5]) if len(args)==6 else 18081)
+                   site_port=int(args[5]) if len(args)>=6 else 18081,
+                   manifest=args[6] if len(args)==7 else None)
     elif command == "nginx-uninstall-plan":
         nginx_plan(*args, uninstall=True)
     elif command == "nginx-keepalive-plan":

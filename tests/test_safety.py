@@ -782,6 +782,49 @@ dns_preflight
                 self.assertEqual(before, {p: p.read_bytes() for p in root.rglob('*') if p.is_file()})
                 self.assertFalse(output.exists())
 
+                manifest = Path(directory)/'manifest.json'
+                manifest.write_text('{}')
+                for context in ({'uninstall': True}, {'keepalive': True}, {'manifest': manifest}):
+                    with self.subTest(context=context), self.assertRaises(ValueError) as installed:
+                        s.nginx_plan(root, 'proxy.example.com', output, **context)
+                    reason = str(installed.exception)
+                    self.assertIn(expected, reason)
+                    self.assertIn('manual review', reason)
+                    self.assertIn('ручная проверка', reason)
+                    self.assertIn("Let's Encrypt", reason)
+                    for forbidden in ('another server', 'другого сервера', '3x-ui',
+                                      'remove', 'delete', 'уберите', 'удалите', 'PRIVATE_REMNANT'):
+                        self.assertNotIn(forbidden, reason)
+                    self.assertEqual(before, {p: p.read_bytes() for p in root.rglob('*') if p.is_file()})
+                    self.assertFalse(output.exists())
+
+    def test_dns_diagnostics_refuse_but_cname_and_stderr_warning_are_supported(self):
+        for a, aaaa in (('203.0.113.10\n;; communications error', ''),
+                        ('203.0.113.10', ';; communications error: timed out'),
+                        ('203.0.113.10', 'target.example.com.\n;; no servers could be reached')):
+            with self.subTest(a=a, aaaa=aaaa), self.assertRaises(ValueError):
+                s.dns_check(a, aaaa, '203.0.113.10')
+        for failed in ('A', 'AAAA', 'none'):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory:
+                code = '''source "$1"
+TMP=$2 DOMAIN=proxy.example.com PUBLIC_IP=203.0.113.10
+dig() {
+    printf ';; PRIVATE_DNS_WARNING\\n' >&2
+    [[ $4 != "$FAILED" ]] || return 9
+    printf 'target.example.com.\\n'
+    if [[ $4 == A ]]; then printf '203.0.113.10\\n'; fi
+}
+FAILED=$3
+dns_preflight
+printf 'CONTINUED\\n'
+'''
+                result = subprocess.run(['bash', '-c', code, 'fixture',
+                    str(ROOT/'telemt-web-manager.sh'), directory, failed], capture_output=True, timeout=5)
+                self.assertEqual(result.returncode == 0, failed == 'none')
+                self.assertNotIn(b'PRIVATE_DNS_WARNING', result.stdout + result.stderr)
+                self.assertEqual(b'CONTINUED' in result.stdout, failed == 'none')
+                self.assertTrue((Path(directory)/'dns-a.stderr').exists())
+                self.assertEqual((Path(directory)/'dns-a.stderr').stat().st_mode & 0o077, 0)
 
 if __name__ == "__main__":
     unittest.main()
