@@ -39,6 +39,10 @@ for fixture_sockets in 'LISTEN 0 128 127.0.0.1:80 0.0.0.0:*' 'LISTEN 0 128 0.0.0
     'LISTEN 0 128 [::]:80 [::]:*' 'LISTEN 0 128 [::1]:80 [::]:*'; do
     assert_rejected "standalone listener $fixture_sockets" certificate_renewal_contract
     grep -q 'Standalone Certbot renewal requires free TCP port 80' "$sandbox/refusal.log"
+    for operation in check update repair uninstall; do
+        certificate_health_contract "$operation" >"$sandbox/warning.log" 2>&1
+        grep -q '^Standalone Certbot renewal requires free TCP port 80' "$sandbox/warning.log"
+    done
 done
 fixture_sockets=''
 ss() { return 1; }
@@ -82,7 +86,7 @@ chown 65534 "$RENEW_HOOK"
 assert_rejected 'deploy hook wrong owner' renewal_deploy_hook_contract
 reset_hook
 # Test the actual check orchestration with only unrelated runtime diagnostics mocked.
-load_installation() { certificate_health_contract; }
+load_installation() { certificate_health_contract "${1:-install}"; }
 binary_version() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; }
 installed_release_identity() { printf '%s' "$SUPPORTED_TELEMT_VERSION"; } # Provenance is a separate fixture boundary.
 listener_ready() { return 0; }
@@ -117,5 +121,46 @@ for action in check_manager update_manager repair_manager; do
 done
 reset_hook
 ss() { printf 'LISTEN 0 128 [::]:80 [::]:*'; }
-assert_rejected 'check standalone occupied port 80' check_manager
+check_manager >"$sandbox/check.log" 2>&1
+grep -q '^Standalone Certbot renewal requires free TCP port 80' "$sandbox/check.log"
+grep -q 'Check result: OK' "$sandbox/check.log"
 [[ ! -e $sandbox/service-mutation ]]
+# Unrelated service transports remain mocked; Repair validates generated TOML.
+CONFIG="$sandbox/telemt.toml" UNIT="$sandbox/telemt.service" BACKUP="$sandbox/backup"
+DATA="$sandbox/data" SITE_PORT=18081 PUBLIC_IP=192.0.2.1
+generate_config "$(openssl rand -hex 16)" >"$CONFIG"
+printf 'fixture unit\n' >"$UNIT"; mkdir "$BACKUP"
+backup_begin() { return 0; }
+backup_nginx_context() { return 0; }
+nginx_test() { return 0; }
+nginx_reload() { return 0; }
+restart_service() { printf restarted >"$sandbox/restarted"; }
+wait_ready() { return 0; }
+universal_update() { printf delegated >"$sandbox/delegated"; }
+for action in update_manager repair_manager; do
+    "$action" >"$sandbox/action.log" 2>&1
+    grep -q '^Standalone Certbot renewal requires free TCP port 80' "$sandbox/action.log"
+done
+[[ -f $sandbox/delegated && -f $sandbox/restarted ]]
+printf 'ok - Check, Update and Repair continue after standalone port-80 warnings\n'
+openssl req -x509 -key "$CERT_ROOT/live/$DOMAIN/privkey.pem" -days 1 -subj "/CN=$DOMAIN" \
+    -addext "subjectAltName=DNS:$DOMAIN" -out "$CERT_ROOT/live/$DOMAIN/fullchain.pem" >/dev/null 2>&1
+set +e
+(set -Eeuo pipefail; check_manager) >"$sandbox/near-expiry.log" 2>&1
+result=$?
+set -e
+[[ $result == 1 ]]
+grep -q 'notAfter=' "$sandbox/near-expiry.log"
+grep -q 'Check result: FAILED' "$sandbox/near-expiry.log"
+for action in update_manager repair_manager; do "$action" >"$sandbox/near-expiry-action.log" 2>&1; done
+assert_rejected 'Install near-expiry certificate' certificate_health_contract
+grep -q 'Certificate expires within 7 days' "$sandbox/refusal.log"
+# Real OpenSSL expiry failure models the existing verified HTTPS health boundary.
+openssl x509 -in "$CERT_ROOT/live/$DOMAIN/fullchain.pem" -signkey "$CERT_ROOT/live/$DOMAIN/privkey.pem" \
+    -days 0 -out "$sandbox/expired.pem" >/dev/null 2>&1
+cp "$sandbox/expired.pem" "$CERT_ROOT/live/$DOMAIN/fullchain.pem"
+rm "$sandbox/delegated"
+path_health() { openssl x509 -in "$CERT_ROOT/live/$DOMAIN/fullchain.pem" -noout -checkend 0 >/dev/null; }
+assert_rejected 'Update expired certificate before delegation' update_manager
+[[ ! -e $sandbox/delegated && ! -e $sandbox/service-mutation ]]
+printf 'ok - near-expiry Check completes FAILED; Update/Repair continue; expired Update refuses before delegation\n'

@@ -802,13 +802,15 @@ renewal_scheduler_status() {
 }
 
 certificate_health_contract() {
-    validate_certificate
-    certificate_renewal_contract
+    if [[ ${1:-install} == install ]]; then validate_certificate
+    else validate_certificate identity; fi
+    certificate_renewal_contract 0 "${1:-install}"
     renewal_deploy_hook_contract
 }
 
 certificate_renewal_contract() {
-    local freshly_issued=${1:-0} kind expected='' sockets
+    local freshly_issued=${1:-0} kind expected='' sockets port_refusal=ui_die
+    [[ ${2:-install} == install ]] || port_refusal=ui_warn
     kind=$(helper renewal-kind "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT") ||
         ui_die 'Certificate renewal settings are unsupported; preserve Certbot assets and review docs/OPERATIONS.md' 'Настройки продления сертификата не поддерживаются. Сохраните файлы Certbot и обратитесь к docs/OPERATIONS.md'
     if [[ -e $STATE/certificate.json || -L $STATE/certificate.json ]]; then
@@ -834,7 +836,7 @@ certificate_renewal_contract() {
         # Any listener is outside the audited free-port standalone contract.
         sockets=$(ss -H -ltn 'sport = :80') || ui_die 'Standalone renewal port 80 inspection failed' 'Не удалось проверить порт 80 для продления в режиме standalone'
         [[ -z $sockets ]] ||
-            ui_die 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.' 'Для продления Certbot в режиме standalone нужен свободный TCP-порт 80. Сейчас он занят; проверьте схему продления вручную.'
+            "$port_refusal" 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.' 'Для продления Certbot в режиме standalone нужен свободный TCP-порт 80. Сейчас он занят; проверьте схему продления вручную.'
     fi
 }
 
@@ -1176,11 +1178,11 @@ load_installation() {
     [[ $DOMAIN == "$(jq -er .domain "$STATE/manifest.json")" ]] || ui_die 'Domain changed; manual review required' 'Домен изменён; требуется ручная проверка'
     nginx_plan
     [[ $(jq '.edits | length' "$TMP/nginx-plan.json") == 0 ]] || ui_die 'Nginx integration incomplete; manual review required' 'Подключение к Nginx неполно; требуется ручная проверка'
-    certificate_health_contract
+    certificate_health_contract "$operation"
 }
 
 update_manager() {
-    load_installation
+    load_installation update
     path_health || ui_die 'Existing installation unhealthy; update refused' 'Установка не прошла проверку работоспособности; обновление остановлено'
     universal_update || ui_die 'Universal Update refused or rolled back; inspect private journal/backup evidence' 'Universal Update остановлен или отменён с восстановлением. Проверьте приватный журнал и резервную копию; может потребоваться ручное вмешательство'
 }
@@ -1251,7 +1253,7 @@ uninstall_load() {
     cmp -s "$UNIT" "$TMP/expected-unit" || ui_die 'Unit differs from exact manager contract' 'Unit службы отличается от ожидаемого контракта менеджера; операция остановлена'
     if ! nginx_test || ! systemctl is-active --quiet nginx || ! nginx_runtime_identity; then ui_die 'Nginx identity/configuration requires review' 'Принадлежность или конфигурация Nginx требует ручной проверки'; fi
     validate_certificate identity
-    certificate_renewal_contract
+    certificate_renewal_contract 0 uninstall
     renewal_deploy_hook_contract
     PLAN_MODE=uninstall
     nginx_plan

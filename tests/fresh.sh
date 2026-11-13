@@ -409,6 +409,8 @@ rm -- "$DATA/public/index.html" "$DATA/public/cover.css"
 before=$(sha256sum "$CONFIG" "$BIN" "$UNIT" "$RENEW_HOOK" "$STATE/manifest.json" "$STATE/web-link.txt" "$stream_file")
 for action in check_manager repair_manager; do
     set +e
+    # The identity callback is invoked indirectly by the sourced operation.
+    # shellcheck disable=SC2317,SC2329
     (set -Eeuo pipefail; installed_release_identity() { return 1; }; "$action") >"$SANDBOX/identity-failure.log" 2>&1
     result=$?
     set -e
