@@ -44,6 +44,31 @@ class HelperRefusalTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout), (1, b''))
         self.assertEqual(result.stderr, b'Safety validation failed (invalid domain (use lowercase ASCII/punycode)); manual review required (no credentials displayed).\n')
 
+    def test_safety_refusal_preserves_russian_presentation_scope(self):
+        from web_link_fixture import terminal
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)/'state'; state.mkdir(mode=0o755)
+            cases = [('update-universal', ['invalid'], 'update_command'),
+                     ('update-recover', ['invalid'], 'update_command'),
+                     ('web-link-display', [str(state), str(Path(directory)/'config')], 'current_web_link')]
+            for command, args, function in cases:
+                for language in ('ru', 'en'):
+                    with self.subTest(command=command, language=language):
+                        env = dict(os.environ, TWM_UI_LANGUAGE=language, TERM='dumb')
+                        code, output = terminal([sys.executable, str(ROOT/'lib/safety.py'), command, *args], env=env)
+                        self.assertEqual(code, 1)
+                        reason = function + r':[0-9]+'
+                        expected = (r'^Проверка безопасности не пройдена \(' + reason +
+                                    r'\)\. Автоматическое изменение остановлено; требуется ручная проверка\. Секреты не показаны\.\n$'
+                                    if language == 'ru' else
+                                    r'^Safety validation failed \(' + reason +
+                                    r'\); manual review required \(no credentials displayed\)\.\n$')
+                        self.assertRegex(output.decode(), expected)
+            code, output = terminal([sys.executable, str(ROOT/'lib/safety.py'), 'domain', 'Example.invalid'],
+                                    env=dict(os.environ, TWM_UI_LANGUAGE='ru', TERM='dumb'))
+            self.assertEqual(code, 1)
+            self.assertEqual(output, b'Safety validation failed (invalid domain (use lowercase ASCII/punycode)); manual review required (no credentials displayed).\n')
+
     def test_malformed_toml_and_json_keep_generic_secret_safe_refusal(self):
         import tomllib
         cases = [('config-info', 'private="PRIVATE_REFUSAL_MARKER"\nbroken=[', tomllib.loads),
