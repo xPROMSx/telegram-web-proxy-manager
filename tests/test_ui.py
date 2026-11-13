@@ -230,10 +230,19 @@ systemctl() { printf /etc/systemd/system/telemt.service; }
                     expected_path = (str(paths['STATE']/'certificate.json') if expected == 'STATE/certificate.json'
                                      else str(paths.get(expected, expected)))
                     self.assertIn(expected_path.encode(), output)
-                    for phrase in (('another server', '3x-ui', 'nothing', 'manually', "Let's Encrypt")
+                    if scenario == 'certificate-record':
+                        self.assertEqual(output.decode().count('ERROR:') + output.decode().count('ОШИБКА:'), 1)
+                        for phrase in (('saved', 'certificate', 'irreversible', 'same domain', 'docs/OPERATIONS.md')
+                                       if language == 'en' else
+                                       ('сохранённая', 'сертификат', 'необратимо', 'тот же домен', 'docs/OPERATIONS.md')):
+                            self.assertIn(phrase.casefold(), output.decode().casefold())
+                        for forbidden in ('another server', 'другого сервера', '3x-ui', 'old.example.com'):
+                            self.assertNotIn(forbidden.encode(), output)
+                    else:
+                        for phrase in (('another server', '3x-ui', 'nothing', 'manually', "Let's Encrypt")
                                    if language == 'en' else
                                    ('другого сервера', '3x-ui', 'ничего', 'вручную', "Let's Encrypt")):
-                        self.assertIn(phrase.encode(), output)
+                            self.assertIn(phrase.encode(), output)
                     self.assertNotIn(b'PRIVATE_REMNANT_CONTENT', output)
                     self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()})
 

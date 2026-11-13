@@ -257,7 +257,7 @@ runtime_refusals() {
         printf 'ok - runtime %s refusal: no deletion; DATA/static/Nginx/account/certificate intact; prior service restored\n' "$variation"
     done
 }
-for scenario in occupied-standalone preserve-standalone preserve-webroot preserve-legacy-http preserve-legacy-http-includes stopped expired delete delete-failure \
+for scenario in occupied-standalone change-domain-standalone change-domain-webroot preserve-standalone preserve-webroot preserve-legacy-http preserve-legacy-http-includes stopped expired delete delete-failure \
     failure-A failure-B failure-C failure-D failure-groupdel failure-legacy failure-live-uid signal legacy-preserve missing malformed schema vhost site-change site-extra stream unit dropin symlink mount account foreign-state foreign-lineage shared-files lock \
     runtime-churn runtime-churn-legacy runtime-churn-rollback runtime-refusals preserve-generation delete-generation failure-C-generation; do
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
@@ -288,7 +288,7 @@ for scenario in occupied-standalone preserve-standalone preserve-webroot preserv
         for directory in stream-sni.d stream-upstreams.d snippets/x-ui-auto-optional; do
             mkdir -p "$NGINX_ROOT/$directory"; chmod 0755 "$NGINX_ROOT/$directory"
         done
-    elif [[ $scenario == preserve-standalone || $scenario == occupied-standalone ]]; then kind=standalone; cp -r --preserve=mode tests/fixtures/nginx "$NGINX_ROOT";
+    elif [[ $scenario == preserve-standalone || $scenario == occupied-standalone || $scenario == change-domain-standalone ]]; then kind=standalone; cp -r --preserve=mode tests/fixtures/nginx "$NGINX_ROOT";
     else cp -r --preserve=mode "${TWM_TEST_NGINX_FIXTURE:-tests/fixtures/nginx-3x-ui}" "$NGINX_ROOT"; fi
     mkdir -p "$NGINX_ROOT/conf.d"
     set +e
@@ -386,6 +386,54 @@ for scenario in occupied-standalone preserve-standalone preserve-webroot preserv
             [[ $(cat "$case_dir/issuance") == issued ]]
             helper acme-state "$NGINX_ROOT" "$DOMAIN" "$ACME_ROOT"
             printf 'ok - deterministic ACTIVE runtime rewrite/create/atomic replace/nested create/delete; complete STOPPED backup incl final shutdown write; uninstall succeeds without retry/sleep\n';;
+        change-domain-*)
+            [[ $result == 0 && -f $STATE/certificate.json && -f $RENEW_HOOK && ! -e $BIN ]]
+            mkdir -p "$TMP"
+            saved_record=$(cat "$STATE/certificate.json")
+            old_domain=$DOMAIN
+            DOMAIN=new.example.com
+            assert_install_refused() {
+                local name=$1 expected=$2 rc=0
+                (set -Eeuo pipefail; install_manager) >"$case_dir/$name.log" 2>&1 || rc=$?
+                [[ $rc != 0 && ! -e $BIN ]]
+                grep -qF "$expected" "$case_dir/$name.log"
+            }
+            assert_install_refused different-domain "$STATE/certificate.json"
+            rm "$STATE/certificate.json"
+            assert_install_refused record-only "$STATE"
+            rmdir "$STATE"
+            assert_install_refused state-too "$RENEW_HOOK"
+            mkdir -m 0700 "$STATE"
+            printf '%s\n' "$saved_record" >"$STATE/certificate.json"
+            chmod 0600 "$STATE/certificate.json"
+            DOMAIN=$old_domain
+            # Execute the documented block; source is already loaded so the
+            # fixture service/NSS/issuance transports remain isolated.
+            python3 - <<'DOC' >"$case_dir/domain-change.sh"
+from pathlib import Path
+text = Path('docs/OPERATIONS.md').read_text().split('## Смена домена после удаления с сохранением сертификата\n', 1)[1]
+block = text.split('```bash\n', 1)[1].split('\n```', 1)[0]
+print(block.replace('    source /opt/telemt-web-manager/telemt-web-manager.sh\n', ''))
+DOC
+            # shellcheck disable=SC1091
+            source "$case_dir/domain-change.sh" >"$case_dir/domain-cleanup.log" 2>&1
+            [[ ! -e $STATE && ! -e $RENEW_HOOK ]]
+            if [[ $kind == webroot ]]; then
+                [[ ! -e $ACME_ROOT && ! -e $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf && ! -e $CERT_ROOT/live/$old_domain ]]
+            else
+                [[ -f $CERT_ROOT/live/$old_domain/fullchain.pem ]]
+            fi
+            cmp "$case_dir/before-foreign" <(foreign_snapshot)
+            DOMAIN=new.example.com
+            openssl req -x509 -key "$sandbox/key" -days 30 -subj /CN=new.example.com \
+                -addext subjectAltName=DNS:new.example.com -out "$sandbox/cert" >/dev/null 2>&1
+            mkdir -p "$TMP"
+            (set -Eeuo pipefail; trap cleanup EXIT; install_manager) >"$case_dir/new-domain.log" 2>&1
+            [[ -f $STATE/manifest.json && $(jq -r .domain "$STATE/manifest.json") == new.example.com ]]
+            [[ $(cat "$case_dir/issuance") == issuedissued ]]
+            printf 'ok - %s: record-only refuses at state; state removal refuses at hook; documented cleanup -> full other-domain install, one new mocked issuance\n' "$kind"
+            openssl req -x509 -key "$sandbox/key" -days 30 -subj /CN=proxy.example.com \
+                -addext subjectAltName=DNS:proxy.example.com -out "$sandbox/cert" >/dev/null 2>&1;;
         occupied-standalone|preserve-*|legacy-preserve|stopped|expired)
             [[ $result == 0 && ! -e $SITE_ROOT && ! -e $CONFIG_DIR && ! -e $DATA && ! -e $BIN && ! -e $UNIT && ! -e $STATE/manifest.json && ! -e $STATE/web-link.txt ]]
             [[ ! -e $FIXTURE_ACCOUNTS/passwd && ! -e $FIXTURE_ACCOUNTS/group && -f $STATE/certificate.json && -f $RENEW_HOOK ]]
