@@ -928,6 +928,13 @@ class Transactions(unittest.TestCase):
         self.assertEqual(f.engine.local_receipt()['installed_version'],'4.0.0')
         self.assertEqual(f.engine.tree.inventory(f.layout.data),before)
 
+    def test_local_receipt_refuses_changed_binary_with_unchanged_receipt(self):
+        f=self.fixture(); receipt=f.layout.receipt.read_bytes()
+        s.update_write(f.layout.binary,b'changed fixture executable',0o755)
+        with self.assertRaisesRegex(ValueError,'installed binary differs from receipt'):
+            f.engine.local_receipt()
+        self.assertEqual(f.layout.receipt.read_bytes(),receipt)
+
     def test_recovery_crash_after_old_started_does_not_revert_new_old_writes(self):
         f=self.fixture(fail_new=True); start=f.controller.start
         def crash_after_restored_start():

@@ -119,6 +119,18 @@ main "$@"
         result,_,trace=self.run_action(answer=b'1\nY\n')
         self.assertEqual(result,0); self.assertIn('action install ',trace)
 
+    def test_isolation_tools_only_required_for_install_and_update(self):
+        for action in ('--install','--update','--check','--repair','--uninstall'):
+            with self.subTest(action=action):
+                result=subprocess.run(['/bin/bash','-c','source "$1"; dependency_commands "$2"',
+                                       'fixture',str(ROOT/'telemt-web-manager.sh'),action],
+                                      capture_output=True,timeout=5)
+                self.assertEqual(result.returncode,0)
+                commands=set(result.stdout.decode().splitlines())
+                for tool in ('unshare','setpriv','chroot','ldd'):
+                    self.assertEqual(tool in commands,action in ('--install','--update'))
+                self.assertTrue({'iptables','ip6tables','nft','conntrack'} <= commands)
+
     def test_wc_inventory_covers_normal_actions_only(self):
         code='''source "$1"
 printf '%s\\n' "${TOOL_PACKAGES[wc]}"

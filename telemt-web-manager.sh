@@ -306,7 +306,11 @@ dependency_commands() {
                 iptables ip6tables nft conntrack getent useradd userdel groupdel \
                 awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm rmdir sleep stat tr uname wc
             if [[ $1 != --uninstall ]]; then
-                printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+                if [[ $1 == --install || $1 == --update ]]; then
+                    printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+                else
+                    printf '%s\n' ip mount iptables-save ip6tables-save
+                fi
             fi
             if [[ $1 == --uninstall ]]; then printf '%s\n' groupadd find iptables-save ip6tables-save; fi;;
         *) ui_die 'Unknown dependency action' 'Неизвестная операция проверки зависимостей';;
@@ -1143,6 +1147,7 @@ install_manager() {
 }
 
 load_installation() {
+    local operation=${1:-install}
     [[ -f $STATE/manifest.json && ! -L $STATE/manifest.json ]] || ui_die 'Unmanaged installation; automatic update/migration not possible; manual review required' 'Принадлежность установки менеджеру не подтверждена; автоматическое обновление остановлено, требуется ручная проверка'
     managed_permissions || ui_die 'Unsafe managed ownership/permissions or symlink; manual review required' 'Обнаружены небезопасные права, владелец или символическая ссылка; требуется ручная проверка'
     installed_release_identity >/dev/null || ui_die 'Invalid/missing installed release identity; manual review required' 'Идентификаторы установленного релиза отсутствуют или неверны; требуется ручная проверка'
@@ -1161,7 +1166,9 @@ load_installation() {
     if [[ -n $SITE_DIGEST ]]; then
         SITE_PORT=$(helper decoy-port "$CONFIG") || ui_die 'Invalid managed origin port' 'Недопустимый порт сайта-прикрытия'
     fi
-    installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
+    if [[ $operation != check && $operation != repair ]]; then
+        installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
+    fi
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
     [[ $(jq -r '.public_ip // ""' "$STATE/manifest.json") == "" ||
@@ -1179,7 +1186,7 @@ update_manager() {
 }
 
 check_manager() {
-    load_installation
+    load_installation check
     renewal_scheduler_status
     local failed=0 pid cert current
     current=$(installed_release_identity) || return 1
@@ -1202,7 +1209,7 @@ check_manager() {
 }
 
 repair_manager() {
-    load_installation
+    load_installation repair
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Config validation failed; no repair attempted' 'Конфигурация не прошла проверку; восстановление служб не запускалось'
     nginx_test || ui_die 'Nginx validation failed; no repair attempted' 'Nginx не прошёл проверку; восстановление служб не запускалось'
     backup_begin
