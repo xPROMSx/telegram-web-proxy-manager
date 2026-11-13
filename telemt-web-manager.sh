@@ -306,7 +306,11 @@ dependency_commands() {
                 iptables ip6tables nft conntrack getent useradd userdel groupdel \
                 awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm rmdir sleep stat tr uname wc
             if [[ $1 != --uninstall ]]; then
-                printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+                if [[ $1 == --install || $1 == --update ]]; then
+                    printf '%s\n' unshare setpriv chroot ip mount ldd iptables-save ip6tables-save
+                else
+                    printf '%s\n' ip mount iptables-save ip6tables-save
+                fi
             fi
             if [[ $1 == --uninstall ]]; then printf '%s\n' groupadd find iptables-save ip6tables-save; fi;;
         *) ui_die 'Unknown dependency action' 'Неизвестная операция проверки зависимостей';;
@@ -673,9 +677,25 @@ recent_logs() {
         helper classify-journal
 }
 
-nginx_plan() {
-    build_nginx_plan "$TMP/nginx-plan.json" || ui_die 'automatic nginx integration not possible' 'Автоматическое подключение к Nginx остановлено; требуется ручная проверка'
-}
+nginx_plan() (
+    local status=0
+    # Capture only helper output so the domain-conflict renderer keeps its TTY.
+    eval "$(declare -f helper | sed '1s/helper/nginx_plan_helper/')"
+    helper() {
+        local result=0
+        nginx_plan_helper "$@" >"$TMP/nginx-plan.stdout" 2>"$TMP/nginx-plan.stderr" || result=$?
+        cat "$TMP/nginx-plan.stdout"
+        cat "$TMP/nginx-plan.stderr" >&2
+        return "$result"
+    }
+    build_nginx_plan "$TMP/nginx-plan.json" || status=$?
+    if (( status )); then
+        if [[ ! -s $TMP/nginx-plan.stdout && ! -s $TMP/nginx-plan.stderr ]]; then
+            ui_err 'ERROR: automatic nginx integration not possible' 'ОШИБКА: Автоматическое подключение к Nginx остановлено; требуется ручная проверка' >&2
+        fi
+        exit "$status"
+    fi
+)
 
 build_nginx_plan() {
     local status=0 red='' reset=''
@@ -798,13 +818,15 @@ renewal_scheduler_status() {
 }
 
 certificate_health_contract() {
-    validate_certificate
-    certificate_renewal_contract
+    if [[ ${1:-install} == install ]]; then validate_certificate
+    else validate_certificate identity; fi
+    certificate_renewal_contract 0 "${1:-install}"
     renewal_deploy_hook_contract
 }
 
 certificate_renewal_contract() {
-    local freshly_issued=${1:-0} kind expected='' sockets
+    local freshly_issued=${1:-0} kind expected='' sockets port_refusal=ui_die
+    [[ ${2:-install} == install ]] || port_refusal=ui_warn
     kind=$(helper renewal-kind "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT") ||
         ui_die 'Certificate renewal settings are unsupported; preserve Certbot assets and review docs/OPERATIONS.md' 'Настройки продления сертификата не поддерживаются. Сохраните файлы Certbot и обратитесь к docs/OPERATIONS.md'
     if [[ -e $STATE/certificate.json || -L $STATE/certificate.json ]]; then
@@ -830,7 +852,7 @@ certificate_renewal_contract() {
         # Any listener is outside the audited free-port standalone contract.
         sockets=$(ss -H -ltn 'sport = :80') || ui_die 'Standalone renewal port 80 inspection failed' 'Не удалось проверить порт 80 для продления в режиме standalone'
         [[ -z $sockets ]] ||
-            ui_die 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.' 'Для продления Certbot в режиме standalone нужен свободный TCP-порт 80. Сейчас он занят; проверьте схему продления вручную.'
+            "$port_refusal" 'Standalone Certbot renewal requires free TCP port 80; port 80 is currently occupied. Review renewal strategy manually.' 'Для продления Certbot в режиме standalone нужен свободный TCP-порт 80. Сейчас он занят; проверьте схему продления вручную.'
     fi
 }
 
@@ -1143,6 +1165,7 @@ install_manager() {
 }
 
 load_installation() {
+    local operation=${1:-install}
     [[ -f $STATE/manifest.json && ! -L $STATE/manifest.json ]] || ui_die 'Unmanaged installation; automatic update/migration not possible; manual review required' 'Принадлежность установки менеджеру не подтверждена; автоматическое обновление остановлено, требуется ручная проверка'
     managed_permissions || ui_die 'Unsafe managed ownership/permissions or symlink; manual review required' 'Обнаружены небезопасные права, владелец или символическая ссылка; требуется ручная проверка'
     installed_release_identity >/dev/null || ui_die 'Invalid/missing installed release identity; manual review required' 'Идентификаторы установленного релиза отсутствуют или неверны; требуется ручная проверка'
@@ -1161,7 +1184,9 @@ load_installation() {
     if [[ -n $SITE_DIGEST ]]; then
         SITE_PORT=$(helper decoy-port "$CONFIG") || ui_die 'Invalid managed origin port' 'Недопустимый порт сайта-прикрытия'
     fi
-    installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
+    if [[ $operation != check && $operation != repair ]]; then
+        installed_compatibility || ui_die 'Installed compatibility/isolation validation failed; no changes made' 'Проверка совместимости или изоляции установленной версии не пройдена; изменений не внесено'
+    fi
     mapfile -t INFO <"$TMP/config-info"
     DOMAIN=${INFO[0]}; SOCKS=${INFO[1]}; PUBLIC_IP=${INFO[2]}
     [[ $(jq -r '.public_ip // ""' "$STATE/manifest.json") == "" ||
@@ -1169,17 +1194,17 @@ load_installation() {
     [[ $DOMAIN == "$(jq -er .domain "$STATE/manifest.json")" ]] || ui_die 'Domain changed; manual review required' 'Домен изменён; требуется ручная проверка'
     nginx_plan
     [[ $(jq '.edits | length' "$TMP/nginx-plan.json") == 0 ]] || ui_die 'Nginx integration incomplete; manual review required' 'Подключение к Nginx неполно; требуется ручная проверка'
-    certificate_health_contract
+    certificate_health_contract "$operation"
 }
 
 update_manager() {
-    load_installation
+    load_installation update
     path_health || ui_die 'Existing installation unhealthy; update refused' 'Установка не прошла проверку работоспособности; обновление остановлено'
     universal_update || ui_die 'Universal Update refused or rolled back; inspect private journal/backup evidence' 'Universal Update остановлен или отменён с восстановлением. Проверьте приватный журнал и резервную копию; может потребоваться ручное вмешательство'
 }
 
 check_manager() {
-    load_installation
+    load_installation check
     renewal_scheduler_status
     local failed=0 pid cert current
     current=$(installed_release_identity) || return 1
@@ -1193,7 +1218,10 @@ check_manager() {
     path_health && ui_ok 'Nginx/local decoy/local SNI+TLS/public HTTPS/SOCKS: OK' 'Nginx / локальный сайт-прикрытие / локальный SNI+TLS / публичный HTTPS / SOCKS: исправны' || failed=1
     cert="$CERT_ROOT/live/$DOMAIN/fullchain.pem"
     openssl x509 -in "$cert" -noout -enddate || failed=1
-    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || failed=1
+    openssl x509 -in "$cert" -noout -checkend 604800 >/dev/null || {
+        ui_err 'Certificate expires within 7 days' 'Срок сертификата истекает менее чем через 7 дней; требуется продление'
+        failed=1
+    }
     recent_logs "$(( $(now) - 300 ))" || failed=1
     if (( failed )); then
         ui_err 'Check result: FAILED' 'Проверка не пройдена. Проверьте сообщения диагностики; может потребоваться ручная проверка.'
@@ -1202,7 +1230,7 @@ check_manager() {
 }
 
 repair_manager() {
-    load_installation
+    load_installation repair
     helper runtime-contract "$CONFIG" "$DATA" || ui_die 'Config validation failed; no repair attempted' 'Конфигурация не прошла проверку; восстановление служб не запускалось'
     nginx_test || ui_die 'Nginx validation failed; no repair attempted' 'Nginx не прошёл проверку; восстановление служб не запускалось'
     backup_begin
@@ -1244,7 +1272,7 @@ uninstall_load() {
     cmp -s "$UNIT" "$TMP/expected-unit" || ui_die 'Unit differs from exact manager contract' 'Unit службы отличается от ожидаемого контракта менеджера; операция остановлена'
     if ! nginx_test || ! systemctl is-active --quiet nginx || ! nginx_runtime_identity; then ui_die 'Nginx identity/configuration requires review' 'Принадлежность или конфигурация Nginx требует ручной проверки'; fi
     validate_certificate identity
-    certificate_renewal_contract
+    certificate_renewal_contract 0 uninstall
     renewal_deploy_hook_contract
     PLAN_MODE=uninstall
     nginx_plan

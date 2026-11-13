@@ -128,9 +128,10 @@ firewall/UFW are untouched. SOCKS authentication and IPv6 upstream need manual r
 ## TLS / Certbot
 
 Manager-associated certificates are found in `/etc/letsencrypt/live/DOMAIN/`. Validation covers
-hostname, expiry beyond seven days, private key permissions, ownership, safe
+hostname, private key permissions, ownership, safe
 Certbot symlinks within archive/DOMAIN and matching public keys. HTTP probes check
-TLS trust. For new issuance, explicitly accept ACME terms with `--email` and `--agree-tos`.
+TLS trust. Install requires expiry beyond seven days. For new issuance, explicitly
+accept ACME terms with `--email` and `--agree-tos`.
 
 Free port 80 uses standalone HTTP-01 without stopping Nginx. If the port belongs
 to the same verified Nginx master/workers, webroot checks supported TCP/80
@@ -161,12 +162,16 @@ No new cron/timer is created. Installation and `--check` report enabled
 `certbot.timer` or `snap.certbot.renew.timer`. If neither is enabled, a WARNING
 asks you to verify cron/custom scheduling; this alone does not fail the check.
 
-Every managed installation load (`--check`, `--update`, `--repair`, install rerun)
-validates certificate paths, key/hostname/expiry, renewal settings and the
-manager deploy hook. Standalone requires actual TCP port 80 to remain free:
+Every managed installation load validates certificate paths, key/hostname,
+renewal settings and the manager deploy hook. Install, including a rerun, refuses
+near-expiry certificates; Check completes diagnostics but reports FAILED within
+seven days. Update checks that the current certificate has not expired before
+stopping the old service and during acceptance. Repair and Uninstall use identity
+checks without the seven-day gate. Standalone inspects actual TCP port 80:
 `ss -H -ltn 'sport = :80'` includes IPv4/IPv6, wildcard and loopback listeners.
-Any listener or socket-inspection failure causes refusal. This is deliberately
-conservative: [Certbot standalone](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)
+An occupied port refuses Install and warns without blocking Check, Update,
+Repair or Uninstall. Socket-inspection failure still refuses. This preserves the
+installation contract: [Certbot standalone](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)
 tries IPv6 and IPv4 and can continue if only one bind succeeds, which does not
 prove the challenge reaches that socket. Webroot instead requires its verified
 Nginx port-80 owner and persistent managed state; it does not require free port 80.
@@ -321,7 +326,7 @@ systemd sockets are inaccessible. A transient cgroup limits memory to 1 GiB,
 tasks to 4096, CPU to two cores and lifetime to 180 seconds; disk writes are
 limited to 4 MiB/s on the backing device and the actual cgroup limits are checked.
 Output and command deadlines are bounded.
-Read-only compatibility checks use separately marked private scratch. Normal
+Installed compatibility checks for Update and install reruns use separately marked private scratch. Normal
 completion reaps it; an exclusive recovery cleans only schema-validated scratch
 whose supervisor is dead, after stopping its derived private cgroup. Live or
 unmarked/unknown scratch refuses automatic cleanup and needs manual review.
@@ -432,6 +437,10 @@ including its cache. No Telemt data or recovery records are migrated.
 systemd state, SubState/NRestarts, identity/capabilities, listener, Nginx/HTTP/TLS,
 expiry, SOCKS and classifications from the last five minutes of logs. Raw journal
 lines are not printed. Root is required; private temporary diagnostics are deleted.
+Check and Repair verify installed release hashes and live service health without
+running the installed binary in an isolated compatibility check. Helper refusals
+name a fixed check or its function and line; other exceptions retain a generic
+message without configuration or exception text.
 Version reporting is local: manager, receipted installed Telemt and Install baseline
 3.5.16. A valid receipted newer version can pass objective health without baseline
 equality; no GitHub query is made. A pristine reviewed 3.5.12 or 3.5.16 can report receipt
@@ -796,6 +805,8 @@ offer additionally requires the immutable platform validation.
 Install/Update/Check/Repair retain the shared tool prerequisites; Uninstall also
 checks groupadd, find and IPv4/IPv6 save commands before mutation. Archive tar is
 retained from the prior declared prerequisites; safe extraction itself is Python.
+Check, Repair and Uninstall do not require unshare, setpriv, chroot or ldd;
+Install and Update retain these isolation prerequisites.
 Git and ShellCheck in the manual development example are not manager auto-install
 targets. Package names never come from user input or external release data.
 

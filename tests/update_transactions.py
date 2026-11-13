@@ -202,9 +202,9 @@ class Transactions(unittest.TestCase):
         s.update_write_json(f.layout.state/'manifest.json',dict(schema=1,domain=host,public_ip='203.0.113.10',
             unit_sha256=s.update_hash(unit)['sha256'],nginx_sha256=s.update_hash(nginx/'conf.d/telemt-web-manager.conf')['sha256'],acme_webroot=''))
         s.update_write(f.layout.state/'web-link.txt',b'fixture private link')
-        def rotate(number,subject=host):
+        def rotate(number,subject=host,days=30):
             archive=cert/'archive'/host
-            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','30',
+            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days',str(days),
                 '-subj','/CN='+subject,'-addext','subjectAltName=DNS:'+subject,
                 '-keyout',str(archive/f'privkey{number}.pem'),'-out',str(archive/f'cert{number}.pem')],
                 check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
@@ -349,6 +349,26 @@ class Transactions(unittest.TestCase):
             else:
                 f.rotate(2); link=cert/'live'/host/'fullchain.pem'; link.unlink(); link.symlink_to(cert/'archive'/host/'fullchain1.pem')
             with self.assertRaises(ValueError): f.engine.external_contract()
+
+    def test_certificate_expiry_boundary_is_checked_before_stop_old(self):
+        f=self.managed_host(); f.rotate(2,days=1)
+        events=[]; check=f.engine.external_contract; stop=f.controller.stop
+        def checked():
+            events.append('certificate')
+            check()
+        def stopped(**kwargs):
+            events.append('stop')
+            stop(**kwargs)
+        f.engine.external_contract=checked; f.controller.stop=stopped
+        f.engine.update()
+        self.assertLess(events.index('certificate'),events.index('stop'))
+        self.assertEqual(s.update_generation(f.layout)['installed_version'],'3.5.13')
+        host=s.update_json(s.update_read(f.layout.state/'manifest.json'))['domain']
+        cert=f.layout.path('/etc/letsencrypt/live')/host
+        expired=subprocess.check_output(['openssl','x509','-in',str(cert/'fullchain.pem'),
+            '-signkey',str(cert/'privkey.pem'),'-days','0'],stderr=subprocess.DEVNULL)
+        s.update_write((cert/'fullchain.pem').resolve(),expired,0o644)
+        with self.assertRaises(s.UpdateCommandFailed): f.engine.external_contract()
 
     def test_pre_stop_api_failure_preserves_running_old_without_stop(self):
         f=self.fixture(); stops=[]; stop=f.controller.stop
@@ -927,6 +947,13 @@ class Transactions(unittest.TestCase):
         before=f.engine.tree.inventory(f.layout.data)
         self.assertEqual(f.engine.local_receipt()['installed_version'],'4.0.0')
         self.assertEqual(f.engine.tree.inventory(f.layout.data),before)
+
+    def test_local_receipt_refuses_changed_binary_with_unchanged_receipt(self):
+        f=self.fixture(); receipt=f.layout.receipt.read_bytes()
+        s.update_write(f.layout.binary,b'changed fixture executable',0o755)
+        with self.assertRaisesRegex(ValueError,'installed binary differs from receipt'):
+            f.engine.local_receipt()
+        self.assertEqual(f.layout.receipt.read_bytes(),receipt)
 
     def test_recovery_crash_after_old_started_does_not_revert_new_old_writes(self):
         f=self.fixture(fail_new=True); start=f.controller.start
