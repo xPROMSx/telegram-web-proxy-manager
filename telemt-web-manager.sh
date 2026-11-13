@@ -677,9 +677,25 @@ recent_logs() {
         helper classify-journal
 }
 
-nginx_plan() {
-    build_nginx_plan "$TMP/nginx-plan.json" || ui_die 'automatic nginx integration not possible' 'Автоматическое подключение к Nginx остановлено; требуется ручная проверка'
-}
+nginx_plan() (
+    local status=0
+    # Capture only helper output so the domain-conflict renderer keeps its TTY.
+    eval "$(declare -f helper | sed '1s/helper/nginx_plan_helper/')"
+    helper() {
+        local result=0
+        nginx_plan_helper "$@" >"$TMP/nginx-plan.stdout" 2>"$TMP/nginx-plan.stderr" || result=$?
+        cat "$TMP/nginx-plan.stdout"
+        cat "$TMP/nginx-plan.stderr" >&2
+        return "$result"
+    }
+    build_nginx_plan "$TMP/nginx-plan.json" || status=$?
+    if (( status )); then
+        if [[ ! -s $TMP/nginx-plan.stdout && ! -s $TMP/nginx-plan.stderr ]]; then
+            ui_err 'ERROR: automatic nginx integration not possible' 'ОШИБКА: Автоматическое подключение к Nginx остановлено; требуется ручная проверка' >&2
+        fi
+        exit "$status"
+    fi
+)
 
 build_nginx_plan() {
     local status=0 red='' reset=''
