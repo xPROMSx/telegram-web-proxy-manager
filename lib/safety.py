@@ -2435,7 +2435,7 @@ class UpdateProgress:
 # helper with the older parser APIs; bootstrap continues to install one pair.
 UPDATE_SCHEMA = 1
 UPSTREAM_REPOSITORY = dict(id=1125007401, full_name='telemt/telemt')
-UPDATE_MANAGER_VERSION = '1.3.2'
+UPDATE_MANAGER_VERSION = '1.3.3'
 BASELINE_VERSION = '3.5.16'
 BASELINE_COMMIT = '84e5b827a6619fb2e09ad3d09f253cdffe04bc2f'
 BASELINE_HASHES = {
