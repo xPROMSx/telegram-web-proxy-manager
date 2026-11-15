@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=1.3.2
+readonly SCRIPT_VERSION=1.3.3
 # Parsed statically by the bootstrap; never execute a downloaded manager to inspect it.
 readonly UPDATE_JOURNAL_SCHEMAS=1
 readonly UPDATE_RECEIPT_SCHEMAS=1

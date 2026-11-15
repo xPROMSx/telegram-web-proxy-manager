@@ -233,14 +233,17 @@ approval or publish anything.
 ### Manager release versioning
 
 - The owner agrees the target manager version before preparing a release PR task.
-- Change the version in the release PR before merge and publication. Always
+- Before publication the version in main must equal the release version. Always
   synchronize `SCRIPT_VERSION` and `UPDATE_MANAGER_VERSION`, and update affected
   tests and current documentation together.
 - Before publication, run `bash tests/bootstrap_versions.sh --release-tag vX.Y.Z`
   with that target tag. A tag/source mismatch must fail.
-- Ordinary functional PRs do not bump the manager version without separately
-  agreed release preparation. Manager SemVer, the Fresh Install Telemt baseline
-  and the installed Telemt version are independent.
+- The version in main always shows the next release, so users who install from
+  main see a number that matches the code. The first PR after each release
+  raises the version to the next agreed number; later PRs keep it. If the target
+  changes, the owner agrees it and one PR updates every place together. Manager
+  SemVer, the Fresh Install Telemt baseline and the installed Telemt version are
+  independent.
 - Never rewrite published tags, historical versions or existing state records
   to make them match the current manager version.
 
