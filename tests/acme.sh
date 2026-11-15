@@ -87,7 +87,7 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
     }
     # Called indirectly by the production probe; never wait in fault-injection cases.
     # shellcheck disable=SC2317
-    sleep() { [[ $1 == 0.5 ]]; printf '%s\n' "$1" >>"$case_dir/sleeps"; }
+    sleep() { printf '%s\n' "$*" >>"$case_dir/sleeps"; }
     certbot() {
         [[ $* == *--non-interactive* && $* == *--cert-name* ]] || return 1
         if [[ $scenario == free ]]; then
@@ -179,7 +179,8 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
             [[ -z $(find "$ACME_ROOT" -type f -print) ]]
             if [[ $scenario == probe-fail ]]; then
                 [[ $(wc -l <"$case_dir/curl-calls") == 10 && $(wc -l <"$case_dir/sleeps") == 9 ]]
-                [[ $(grep -c -- '--connect-timeout 0.5 --max-time 0.5' "$case_dir/curl-calls") == 10 ]]
+                [[ $(grep -Fxc '0.5' "$case_dir/sleeps") == 9 ]]
+                [[ $(grep -Fc -- '--connect-timeout 0.5 --max-time 0.5' "$case_dir/curl-calls") == 10 ]]
                 [[ $(grep -c '^curl:' "$case_dir/manager.log") == 0 ]]
             elif [[ $scenario == probe-rollback-retry ]]; then
                 [[ -d $ACME_ROOT/.well-known/acme-challenge && ! -e $ACME_ROOT/.telemt-web-manager ]]
