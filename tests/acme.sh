@@ -180,7 +180,7 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
             if [[ $scenario == probe-fail ]]; then
                 [[ $(wc -l <"$case_dir/curl-calls") == 10 && $(wc -l <"$case_dir/sleeps") == 9 ]]
                 [[ $(grep -Fxc '0.5' "$case_dir/sleeps") == 9 ]]
-                [[ $(grep -Fc -- '--connect-timeout 0.5 --max-time 0.5' "$case_dir/curl-calls") == 10 ]]
+                [[ $(grep -Fc -- '--connect-timeout 1 --max-time 2' "$case_dir/curl-calls") == 10 ]]
                 [[ $(grep -c '^curl:' "$case_dir/manager.log") == 0 ]]
             elif [[ $scenario == probe-rollback-retry ]]; then
                 [[ -d $ACME_ROOT/.well-known/acme-challenge && ! -e $ACME_ROOT/.telemt-web-manager ]]

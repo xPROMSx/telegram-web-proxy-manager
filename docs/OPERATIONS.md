@@ -163,8 +163,9 @@ Nginx configuration from invalidating a standalone renewal strategy.
 After backup, a separate managed vhost serves `/.well-known/acme-challenge/`
 from a root-owned webroot; other requests get 404. `nginx -t` and reload precede
 a local challenge-file probe. Because reload is asynchronous, the probe tries up
-to ten times, with a 0.5-second request timeout and 0.5 seconds between failures
-(at most 9.5 seconds of requests and pauses, plus execution overhead). Each try
+to ten times, with a 2-second request timeout and 0.5 seconds between failures
+(a normal reload needs one or two tries; at most 24.5 seconds of requests and
+pauses if Nginx does not answer at all, plus execution overhead). Each try
 requires the exact token through the requested domain's Host on local HTTP/80;
 exhaustion refuses issuance with the ACME-specific error.
 Certbot runs `certonly --webroot --webroot-path`,

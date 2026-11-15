@@ -900,7 +900,7 @@ acme_probe() {
     printf '%s' "$token" >"$file"; chmod 0644 "$file"
     # Reload signals Nginx asynchronously: wait only for this HTTP-01 token.
     for ((attempt=0; attempt<10; attempt++)); do
-        if content=$(curl --noproxy '*' --proto '=http' -fsS --connect-timeout 0.5 --max-time 0.5 \
+        if content=$(curl --noproxy '*' --proto '=http' -fsS --connect-timeout 1 --max-time 2 \
             --resolve "$DOMAIN:80:127.0.0.1" "http://$DOMAIN/.well-known/acme-challenge/twm-$token" 2>/dev/null) &&
             [[ $content == "$token" ]]; then
             code=0; break
