@@ -9,7 +9,12 @@ trap 'rm -rf -- "$sandbox"' EXIT
 fixture=${1:-tests/fixtures/nginx-3x-ui}
 openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj /CN=proxy.example.com \
     -addext subjectAltName=DNS:proxy.example.com -keyout "$sandbox/key" -out "$sandbox/cert" >/dev/null 2>&1
-for scenario in free webroot foreign conflict invalid-nginx failed-certbot interrupted-certbot pending-config post-validation post-renewal foreign-existing probe-fail unsafe-webroot unowned-webroot; do
+failures=0
+for scenario in free webroot foreign conflict invalid-nginx failed-certbot interrupted-certbot pending-config post-validation post-renewal foreign-existing probe-fail unsafe-webroot unowned-webroot probe-reload-ready probe-rollback-retry probe-wrong-token probe-failed-token empty-webroot unowned-challenge-file unowned-link unowned-marker unowned-directory; do
+    # Run cases independently so both issuance regressions report RED before fixes.
+    set +e
+    (
+    set -Eeuo pipefail
     case_dir="$sandbox/$scenario"; mkdir "$case_dir"
     TMP="$case_dir/tmp" NGINX_ROOT="$case_dir/nginx" ACME_ROOT="$case_dir/acme"
     STATE="$case_dir/state" CERT_ROOT="$case_dir/certs" BACKUP_ROOT="$case_dir/backups"
@@ -38,6 +43,18 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
     elif [[ $scenario == unowned-webroot ]]; then
         mkdir "$ACME_ROOT"; printf keep >"$ACME_ROOT/keep"
     fi
+    case $scenario in
+        empty-webroot) mkdir "$ACME_ROOT";;
+        unowned-challenge-file|unowned-link|unowned-marker|unowned-directory)
+            mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
+            case $scenario in
+                unowned-challenge-file) printf keep >"$ACME_ROOT/.well-known/acme-challenge/keep";;
+                unowned-link) ln -s "$case_dir/absent" "$ACME_ROOT/.well-known/acme-challenge/link";;
+                unowned-marker) printf 'other.example.com\n' >"$ACME_ROOT/.telemt-web-manager";;
+                unowned-directory) mkdir "$ACME_ROOT/foreign";;
+            esac
+            cp -a "$ACME_ROOT" "$case_dir/original-acme";;
+    esac
     cp -r --preserve=mode "$NGINX_ROOT" "$case_dir/original"
     ss() { if [[ $scenario != free && $scenario != pending-config ]]; then printf occupied; fi; }
     nginx_runtime_identity() { return 0; }
@@ -48,7 +65,29 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
         case $1 in stop|disable|restart) printf forbidden >"$case_dir/forbidden-service-mutation"; return 1;; esac
         return 0
     }
-    acme_probe() { [[ $scenario != probe-fail && -d $ACME_ROOT/.well-known/acme-challenge ]]; }
+    probe_ready=0
+    curl() {
+        local url=${!#} attempt
+        printf '%s\n' "$*" >>"$case_dir/curl-calls"
+        attempt=$(wc -l <"$case_dir/curl-calls")
+        if [[ " $* " != *" --resolve $DOMAIN:80:127.0.0.1 "* ||
+              " $* " != *" --noproxy * "* || " $* " != *" --proto =http "* ||
+              " $* " != *' -fsS '* || " $* " == *' --insecure '* || " $* " == *' -k '* ||
+              $url != "http://$DOMAIN/.well-known/acme-challenge/twm-"* ]]; then
+            touch "$case_dir/invalid-curl"; return 2
+        fi
+        case $scenario in
+            probe-fail) printf 'curl: (22) HTTP 404\n' >&2; return 22;;
+            probe-reload-ready) if (( attempt <= 2 )); then return 22; fi;;
+            probe-rollback-retry) if (( ! probe_ready )); then return 22; fi;;
+            probe-wrong-token) printf wrong-token; return 0;;
+        esac
+        cat "$ACME_ROOT/.well-known/acme-challenge/${url##*/}"
+        [[ $scenario != probe-failed-token ]]
+    }
+    # Called indirectly by the production probe; never wait in fault-injection cases.
+    # shellcheck disable=SC2317
+    sleep() { printf '%s\n' "$*" >>"$case_dir/sleeps"; }
     certbot() {
         [[ $* == *--non-interactive* && $* == *--cert-name* ]] || return 1
         if [[ $scenario == free ]]; then
@@ -92,8 +131,11 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
         free)
             [[ $result == 0 && -f $case_dir/certbot-called ]]
             diff -r "$case_dir/original" "$NGINX_ROOT";;
-        webroot)
+        webroot|probe-reload-ready|empty-webroot)
             [[ $result == 0 && -f $NGINX_ROOT/conf.d/telemt-web-manager-acme.conf && -d $TMP ]]
+            if [[ $scenario == probe-reload-ready ]]; then
+                [[ $(wc -l <"$case_dir/curl-calls") == 3 && $(wc -l <"$case_dir/sleeps") == 2 ]]
+            fi
             helper renewal-contract "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT"
             before=$(sha256sum "$NGINX_ROOT/conf.d/telemt-web-manager-acme.conf")
             (ensure_certificate) >"$case_dir/repeated.log" 2>&1
@@ -131,11 +173,47 @@ for scenario in free webroot foreign conflict invalid-nginx failed-certbot inter
             if [[ $scenario != failed-certbot && $scenario != interrupted-certbot ]]; then [[ ! -e $case_dir/certbot-called ]]; fi
             if [[ $scenario == interrupted-certbot ]]; then [[ $result == 143 ]]; fi;;
     esac
+    case $scenario in
+        probe-fail|probe-rollback-retry|probe-wrong-token|probe-failed-token)
+            [[ $(grep -c '^ERROR: ACME webroot is not served correctly by local Nginx$' "$case_dir/manager.log") == 1 ]]
+            [[ -z $(find "$ACME_ROOT" -type f -print) ]]
+            if [[ $scenario == probe-fail ]]; then
+                [[ $(wc -l <"$case_dir/curl-calls") == 10 && $(wc -l <"$case_dir/sleeps") == 9 ]]
+                [[ $(grep -Fxc '0.5' "$case_dir/sleeps") == 9 ]]
+                [[ $(grep -Fc -- '--connect-timeout 1 --max-time 2' "$case_dir/curl-calls") == 10 ]]
+                [[ $(grep -c '^curl:' "$case_dir/manager.log") == 0 ]]
+            elif [[ $scenario == probe-rollback-retry ]]; then
+                [[ -d $ACME_ROOT/.well-known/acme-challenge && ! -e $ACME_ROOT/.telemt-web-manager ]]
+                probe_ready=1
+                set +e
+                (set -Eeuo pipefail; ensure_certificate) >"$case_dir/retry.log" 2>&1
+                result=$?
+                set -e
+                if (( result )); then
+                    grep -E '^ERROR:|^Safety validation' "$case_dir/retry.log" >&2 || true
+                fi
+                [[ $result == 0 && -f $case_dir/certbot-called ]]
+                [[ $(cat "$ACME_ROOT/.telemt-web-manager") == "$DOMAIN" ]]
+                helper renewal-contract "$CERT_ROOT" "$DOMAIN" "$ACME_ROOT"
+            fi;;
+        unowned-challenge-file|unowned-link|unowned-marker|unowned-directory)
+            grep -qx 'ERROR: Unmanaged ACME webroot' "$case_dir/manager.log"
+            diff -r --no-dereference "$case_dir/original-acme" "$ACME_ROOT";;
+    esac
     if [[ $scenario == unsafe-webroot ]]; then [[ $(cat "$case_dir/foreign-root/keep") == keep && -L $ACME_ROOT ]]; fi
     if [[ $scenario == unowned-webroot ]]; then [[ $(cat "$ACME_ROOT/keep") == keep ]]; fi
-    [[ ! -e $case_dir/forbidden-service-mutation ]]
+    [[ ! -e $case_dir/forbidden-service-mutation && ! -e $case_dir/invalid-curl ]]
+    [[ ! -d $ACME_ROOT || -z $(find "$ACME_ROOT" -name 'twm-*' -print) ]]
     printf 'ok - ACME %s\n' "$scenario"
+    )
+    case_result=$?
+    set -e
+    if (( case_result )); then
+        printf 'FAIL - ACME %s (exit %s)\n' "$scenario" "$case_result" >&2
+        failures=$((failures+1))
+    fi
 done
+(( failures == 0 )) || exit 1
 
 # Exercise Fresh -> site plan -> ACME plan on the current foreign HTTP bytes.
 # Keep orchestration mocks in this suite; nginx.sh independently runs the real

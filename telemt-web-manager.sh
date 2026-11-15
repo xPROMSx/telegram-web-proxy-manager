@@ -893,14 +893,20 @@ nginx_port_owned() {
 }
 
 acme_probe() {
-    local token file content code=0
+    local token file content attempt code=1
     token=$(openssl rand -hex 16)
     file="$ACME_ROOT/.well-known/acme-challenge/twm-$token"
     helper safe-path "$file" || return 1
     printf '%s' "$token" >"$file"; chmod 0644 "$file"
-    content=$(curl --noproxy '*' --proto '=http' -fsS --connect-timeout 5 --max-time 15 \
-        --resolve "$DOMAIN:80:127.0.0.1" "http://$DOMAIN/.well-known/acme-challenge/twm-$token") || code=1
-    [[ $content == "$token" ]] || code=1
+    # Reload signals Nginx asynchronously: wait only for this HTTP-01 token.
+    for ((attempt=0; attempt<10; attempt++)); do
+        if content=$(curl --noproxy '*' --proto '=http' -fsS --connect-timeout 1 --max-time 2 \
+            --resolve "$DOMAIN:80:127.0.0.1" "http://$DOMAIN/.well-known/acme-challenge/twm-$token" 2>/dev/null) &&
+            [[ $content == "$token" ]]; then
+            code=0; break
+        fi
+        if (( attempt < 9 )); then sleep 0.5; fi
+    done
     rm -f -- "$file"
     return "$code"
 }
@@ -922,8 +928,17 @@ issue_webroot_certificate() {
     nginx_plan
     helper safe-path "$ACME_ROOT" || ui_die 'Unsafe ACME webroot' 'Небезопасный каталог ACME webroot; операция остановлена'
     if [[ -e $ACME_ROOT ]]; then
-        [[ -f $ACME_ROOT/.telemt-web-manager && $(cat "$ACME_ROOT/.telemt-web-manager") == "$DOMAIN" ]] || ui_die 'Unmanaged ACME webroot' 'Принадлежность ACME webroot менеджеру не подтверждена; операция остановлена'
-        helper safe-path "$ACME_ROOT/.telemt-web-manager" || ui_die 'Unsafe ACME marker' 'Небезопасный маркер ACME; операция остановлена'
+        local unexpected
+        # Failed issuance may leave only these empty directories after rollback.
+        if [[ -d $ACME_ROOT && ! -e $ACME_ROOT/.telemt-web-manager ]] &&
+            unexpected=$(find "$ACME_ROOT" -mindepth 1 ! \( -type d \( \
+                -path "$ACME_ROOT/.well-known" -o -path "$ACME_ROOT/.well-known/acme-challenge" \) \) -print -quit) &&
+            [[ -z $unexpected ]]; then
+            :
+        else
+            [[ -f $ACME_ROOT/.telemt-web-manager && $(cat "$ACME_ROOT/.telemt-web-manager") == "$DOMAIN" ]] || ui_die 'Unmanaged ACME webroot' 'Принадлежность ACME webroot менеджеру не подтверждена; операция остановлена'
+            helper safe-path "$ACME_ROOT/.telemt-web-manager" || ui_die 'Unsafe ACME marker' 'Небезопасный маркер ACME; операция остановлена'
+        fi
     fi
     backup_begin
     backup_nginx_context
