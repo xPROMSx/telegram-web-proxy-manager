@@ -13,5 +13,7 @@ the site sources from the same exact manager commit, without additional download
 or a third installed component. A mechanical test verifies source/resource parity.
 
 Only local HTML/CSS is accepted; there are no scripts, forms, trackers or external
-resources. The built-in Service Status page is the default/fallback. Covers are
+resources. Fresh installs generate an original site; existing static-directory
+sites retain their previous pages, including Service Status where installed.
+Generation or validation failure stops installation without a fallback. Covers are
 ordinary decoy pages, not a claim of traffic invisibility or DPI bypass.
