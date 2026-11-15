@@ -7,10 +7,10 @@ Three self-contained HTML/CSS pages, copied unchanged from
 The companion repository is a read-only source reference, never a runtime source.
 
 `manifest.json` is bounded schema 1: each stable ID has a byte size and SHA256.
-The identical manifest and HTML bytes are embedded as `COVER_BUNDLE` in the canonical
+The current site generator and templates are embedded as `SITE_SOURCE_B85` in the canonical
 `lib/safety.py` helper. The existing atomic manager-pair bootstrap therefore ships
-the collection from the same exact manager commit, without additional downloads
-or a third installed component. A mechanical test verifies source/bundle parity.
+the site sources from the same exact manager commit, without additional downloads
+or a third installed component. A mechanical test verifies source/resource parity.
 
 Only local HTML/CSS is accepted; there are no scripts, forms, trackers or external
 resources. The built-in Service Status page is the default/fallback. Covers are

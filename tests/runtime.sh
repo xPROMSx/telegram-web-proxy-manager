@@ -155,6 +155,44 @@ PY
         die 'Pinned runtime has conntrack startup/retry/shutdown failure'
     fi
     printf 'ok - actual completed pinned log: NO conntrack reconciliation/retry/shutdown failure fragments\n'
+    assert_link_logging_contract() {
+        if grep -Fq 'tg://webproxy' "$fixture/stderr"; then
+            die 'Fresh configuration leaked a WEB link into captured service output'
+        fi
+        # Test fixture only: production never rewrites an installed TOML.
+        python3 - "$fixture/runtime.toml" "$fixture/legacy.toml" <<'PY_LINKS'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_bytes()
+block = b'[general.links]\nshow = []\n'
+assert source.count(block) == 1
+Path(sys.argv[2]).write_bytes(source.replace(block, b''))
+PY_LINKS
+        helper runtime-contract "$fixture/legacy.toml" "$fixture/data"
+        env -u RUST_LOG "$candidate" "$fixture/legacy.toml" >"$fixture/legacy-output" 2>&1 &
+        pid=$!
+        ready=0
+        for ((i=0; i<900; i++)); do
+            kill -0 "$pid" || die 'Legacy configuration exited before readiness'
+            if ss -H -ltnp 'sport = :18080' | grep -Fq "pid=$pid," &&
+               curl --noproxy '*' -fsS --max-time 2 -H 'Host: proxy.example.com' \
+                    http://127.0.0.1:18080/ -o "$fixture/legacy-body"; then ready=1; break; fi
+            sleep 0.1
+        done
+        (( ready )) || die 'Legacy configuration did not become ready'
+        cmp -s "$fixture/legacy-body" "$fixture/site/index.html"
+        kill -TERM "$pid"
+        for ((i=0; i<1800; i++)); do
+            if ! kill -0 "$pid" 2>/dev/null; then break; fi
+            sleep 0.1
+        done
+        if kill -0 "$pid" 2>/dev/null; then die 'Legacy configuration shutdown timed out'; fi
+        wait "$pid"
+        pid=''
+        grep -Fq 'tg://webproxy' "$fixture/legacy-output" || die 'Legacy link logging positive control failed'
+        printf 'ok - REAL Telemt 3.5.16: fresh links.show=[] suppresses WEB links; legacy configuration starts and logs links (private output withheld)\n'
+    }
+    assert_link_logging_contract
     nft list ruleset >"$fixture/nft-after"
     iptables-save >"$fixture/iptables-after"
     ip6tables-save >"$fixture/ip6tables-after"
