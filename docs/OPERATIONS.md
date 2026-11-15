@@ -162,12 +162,22 @@ Nginx configuration from invalidating a standalone renewal strategy.
 
 After backup, a separate managed vhost serves `/.well-known/acme-challenge/`
 from a root-owned webroot; other requests get 404. `nginx -t` and reload precede
-a local challenge-file probe. Certbot runs `certonly --webroot --webroot-path`,
+a local challenge-file probe. Because reload is asynchronous, the probe tries up
+to ten times, with a 0.5-second request timeout and 0.5 seconds between failures
+(at most 9.5 seconds of requests and pauses, plus execution overhead). Each try
+requires the exact token through the requested domain's Host on local HTTP/80;
+exhaustion refuses issuance with the ACME-specific error.
+Certbot runs `certonly --webroot --webroot-path`,
 records renewal settings, then certificate and renewal contracts are checked.
 Failure/signals restore ACME changes and reload valid previous configuration;
 existing vhosts are untouched. Only issuance followed by successful certificate and renewal validation commits
 the persistent vhost/webroot for renewal, even if later Telemt installation fails.
-Empty webroot directories may remain after failure; inspect backup/marker before retrying.
+Empty webroot directories may remain after failure. A retry accepts an unmarked
+empty root or only the empty `.well-known/acme-challenge` directory skeleton.
+Files, symlinks, other directories or another domain's marker still refuse;
+an existing marker for this domain retains its ownership checks. Nothing is
+deleted to make an unmarked root acceptable. A surviving Certbot lineage still
+requires the separate recovery procedure below.
 
 Check external reachability of 80/443 yourself; firewall rules remain unchanged.
 No new cron/timer is created. Installation and `--check` report enabled

@@ -179,6 +179,28 @@ run actual Nginx/TLS/HTTP with a Python origin, not a running Telemt; ACME conte
 serving there is real, issuance is not performed. SOCKS configuration syntax is
 checked by real Telemt healthcheck; actual SOCKS egress is not exercised by CI.
 
+## ACME reload readiness and failed-issuance retry
+
+`tests/acme.sh` runs the production token probe and webroot issuance functions
+with the real planner, filesystem rollback and certificate validation. Curl,
+delays, Nginx/service operations and Certbot issuance are mocked. The suite is
+already registered in `tests/suites.json` under `Integration / Nginx`.
+`probe-reload-ready` returns two HTTP 404 failures before the correct token;
+`probe-fail` checks ten failed requests, nine pauses, bounded curl timeouts,
+one specific error, no Certbot call and restored Nginx. Wrong-token and
+failed-curl-with-correct-token cases preserve the complete success condition.
+`probe-rollback-retry` first fails issuance, executes rollback, verifies the
+remaining unmarked directory skeleton, then successfully repeats installation.
+An empty unmarked root is accepted; a file inside the skeleton, symlink, foreign
+marker and unrelated empty directory refuse without changing those objects.
+Cases report independently so the original code exposes both issuance failures
+in one run; no scenario-selection variable or new framework is introduced.
+
+These tests prove bounded control flow without waiting in real time. They do
+not reproduce Nginx worker replacement, measure wall-clock reload readiness or
+perform live ACME issuance/renewal. `tests/nginx.sh` separately retains real
+Nginx/token serving coverage; neither suite proves live VPS acceptance.
+
 ## Owner live acceptance history
 
 CI does not prove complete end-to-end VPS behavior. Successful 0.1.2 live acceptance
