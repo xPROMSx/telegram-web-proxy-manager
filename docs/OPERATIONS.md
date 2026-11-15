@@ -71,9 +71,10 @@ and Upgrade headers allow reuse. The cache holds up to 32 idle connections per
 worker; it is not a client/concurrency limit. TLS, PROXY protocol, routing,
 timeouts, buffering and logging contracts are unchanged.
 
-Exactly two WEB vhost byte templates are recognized: the historical direct
-`proxy_pass http://127.0.0.1:18080` and the new cached backend. Each must still
-match its manifest `nginx_sha256`; manual edits are not adopted. Both work with
+Exactly three WEB vhost byte templates are recognized: the historical direct
+`proxy_pass http://127.0.0.1:18080`, the cached backend, and the cached backend
+with the original site server. Each must still match its manifest `nginx_sha256`;
+manual edits are not adopted. All work with
 inline and include-based stream integration and all lifecycle operations.
 Bootstrap only replaces manager files; Check, Repair, Update and CLI `--install`
 do not optimize an old vhost automatically.
@@ -902,7 +903,7 @@ the secret. Config, journals and backups also require secret-safe handling.
 ## Managed uninstall
 
 Managed uninstall was introduced in 0.1.2 as `--uninstall --confirm-uninstall`.
-Historically the 1.0.0 menu used Uninstall at 7 and Exit at 8; the current bilingual menu keeps Uninstall at 7 and Exit at 0.
+Historically the 1.0.0 menu used Uninstall at 7 and Exit at 8; the current bilingual menu keeps Uninstall at 6 and Exit at 0.
 The interactive confirmation is the exact word `UNINSTALL`;
 only then is certificate deletion offered with default N. `--delete-certificate`
 requires both uninstall and explicit confirmation. This removes Telemt, not the
