@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from test_nginx_dot import HOST, add_dot
+
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('transaction_safety',ROOT/'lib/safety.py')
 s=importlib.util.module_from_spec(spec); sys.modules[spec.name]=s; spec.loader.exec_module(s)
@@ -298,6 +300,55 @@ class Transactions(unittest.TestCase):
         path=nginx/'stream-sni.d/telemt-web-manager.conf'
         path.write_bytes(path.read_bytes()+b'# altered owned file\n')
         with self.assertRaises(ValueError): f.engine.immutable()
+
+    def test_dot_update_preserves_owned_hashes_and_foreign_bytes(self):
+        for includes in (False, True):
+            with self.subTest(includes=includes):
+                f = self.managed_host(includes=includes)
+                nginx = f.layout.path('/etc/nginx')
+                output = f.root / 'update-nginx-plan.json'
+                manifest = f.layout.state / 'manifest.json'
+                dot = add_dot(nginx)
+                self.assertEqual(f.engine.immutable(), f.controls)
+                dot.write_bytes(dot.read_bytes().replace(b'dot_conn 50', b'dot_conn 17'))
+                self.assertEqual(f.engine.immutable(), f.controls)
+                before = dot.read_bytes()
+
+                def nginx_ownership():
+                    s.nginx_plan(nginx, HOST, output, manifest=manifest)
+                    self.assertEqual(json.loads(output.read_text())['edits'], [])
+
+                with patch.object(f.engine, 'ownership', side_effect=nginx_ownership) as ownership:
+                    f.engine.update()
+                ownership.assert_called_once_with()
+                self.assertEqual(s.UpdateJournal(f.layout).read()['phase'], 'COMMITTED')
+                self.assertEqual(f.engine.immutable(), f.controls)
+                self.assertEqual(dot.read_bytes(), before)
+
+    def test_dot_certificate_cleanup_after_uninstall_preserves_foreign_include(self):
+        for includes in (False, True):
+            with self.subTest(includes=includes):
+                f = self.managed_host(includes=includes)
+                nginx = f.layout.path('/etc/nginx')
+                output = f.root / 'uninstall-nginx-plan.json'
+                s.nginx_plan(nginx, HOST, output, uninstall=True)
+                for edit in json.loads(output.read_text())['edits']:
+                    if edit['content'] is None:
+                        s.planned_unlink(str(output), edit['path'])
+                    else:
+                        Path(edit['path']).write_text(edit['content'])
+                dot = add_dot(nginx)
+                before = dot.read_bytes()
+                cert = f.layout.path('/etc/letsencrypt')
+                hook = cert / 'renewal-hooks/deploy/telemt-web-manager'
+                webroot = f.layout.path('/var/lib/telemt-web-manager-acme')
+                s.certificate_cleanup_plan(output, str(f.layout.state), HOST, str(cert), str(webroot),
+                                           str(nginx), str(hook))
+                plan = json.loads(output.read_text())
+                self.assertEqual({record['path'] for record in plan['objects']},
+                                 {str(hook), str(f.layout.state / 'certificate.json')})
+                self.assertIn(str(dot), plan['nginx_snapshot'])
+                self.assertEqual(dot.read_bytes(), before)
 
     def test_legacy_http_update_preserves_both_stream_formats(self):
         for includes in (False,True):
