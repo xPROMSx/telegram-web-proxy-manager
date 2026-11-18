@@ -52,10 +52,15 @@ server {
 ```
 
 `http` must directly include `conf.d/*.conf` through an absolute or relative path.
-One stream/map/router, exact SNI names, default route, upstream selector and
-loopback frontend are supported. Each named stream upstream must contain one
-plain loopback server; extra stream context directives or upstream options are
-refused. Existing routes are preserved. Optional
+The supported profile has one stream context, one SNI map and exactly one
+stream server listening on port 443. Exact SNI names, the default route,
+upstream selection and the loopback frontend are checked. Other stream servers,
+such as a separate DNS-over-TLS listener on 853, are accepted when their listen
+addresses are unambiguous and avoid reserved ports. TWPM preserves these
+servers, including those in a separate stream include. The stream-level
+`limit_conn_zone` directive is accepted. Other directives outside the supported
+stream profile and unsupported named upstream options are refused.
+Existing routes are preserved. Optional
 `hostnames;` may occur once before entries, which must still be exact names.
 Only the exact optional `set_real_ip_from unix:;` form is accepted; incoming PROXY
 protocol on public listeners is refused. Shared HTTP snippets may be included by

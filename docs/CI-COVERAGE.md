@@ -475,6 +475,21 @@ owned SNI include for the same verified TLS refusal/reload/acceptance contract a
 legacy. Its origin is a Python fixture; it does not prove real Telegram traffic,
 live ACME issuance or production systemd behavior.
 
+`test_nginx_dot.py` covers a foreign DoT server inline and in a separate stream
+include for both integration layouts. It checks fresh and repeat plans,
+the shared Check/Repair plan, ACME and keepalive plans, byte preservation on
+uninstall, and refusal of ambiguous routing, conflicting listeners and
+unsupported stream directives. `update_transactions.py` covers certificate
+cleanup and an Update transaction with the real Nginx planner and immutable
+hashes, using simulated releases and services. A DoT edit can change the
+staging snapshot without changing the owned hashes.
+
+`tests/nginx.sh` runs a real `nginx -t` with the DoT include, an ephemeral test
+certificate and a loopback port in the Ubuntu 24.04 Nginx job. It exercises TLS
+and connection-limit directive loading for that package. DNS-over-TLS traffic,
+enforcement of the connection limit and module availability across Ubuntu
+packages are outside this test.
+
 ## Fresh baseline 3.5.16 and retained 3.5.12 state
 
 The existing provenance verifier retains historical 3.5.12 and both 3.5.13 update

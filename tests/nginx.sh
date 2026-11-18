@@ -108,6 +108,17 @@ p.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'
              + p.read_text().replace('http {', f'http {{\n{temporary_paths}access_log {t}/logs/access.log;'))
 PY
 /usr/sbin/nginx -t -p "$test_dir/" -c "$test_dir/nginx/nginx.conf"
+if [[ $# == 0 ]]; then
+    mkdir "$test_dir/nginx/neighbor-services"
+    sed -e 's/listen 853 ssl;/listen 127.0.0.1:18530 ssl;/' \
+        -e "s|/etc/letsencrypt/live/panel\.example\.invalid/fullchain\.pem|$test_dir/panel.cert.pem|" \
+        -e "s|/etc/letsencrypt/live/panel\.example\.invalid/privkey\.pem|$test_dir/panel.key.pem|" \
+        tests/fixtures/nginx-dot.conf >"$test_dir/nginx/neighbor-services/dns.conf"
+    sed '/include stream\.conf;/a\    include neighbor-services/*.conf;' \
+        "$test_dir/nginx/nginx.conf" >"$test_dir/nginx/with-dot.conf"
+    /usr/sbin/nginx -t -p "$test_dir/" -c "$test_dir/nginx/with-dot.conf"
+    printf 'ok - real Nginx accepts a foreign DoT include with stream TLS and connection limiting\n'
+fi
 python3 "$root/tests/origin.py" >"$test_dir/origin.log" 2>&1 &
 origin_pid=$!
 /usr/sbin/nginx -p "$test_dir/" -c "$test_dir/nginx/nginx.conf" -g 'daemon off;' >"$test_dir/nginx.log" 2>&1 &

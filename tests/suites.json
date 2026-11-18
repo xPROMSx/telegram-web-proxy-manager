@@ -301,6 +301,7 @@
     "tests/fixtures/journal/telemt-3.5.10-live-warnings.jsonl",
     "tests/fixtures/nginx/nginx.conf",
     "tests/fixtures/nginx/stream.conf",
+    "tests/fixtures/nginx-dot.conf",
     "tests/fixtures/nginx-3x-ui/nginx.conf",
     "tests/fixtures/nginx-3x-ui/sites-enabled/80.conf",
     "tests/fixtures/nginx-3x-ui/sites-enabled/panel.conf",

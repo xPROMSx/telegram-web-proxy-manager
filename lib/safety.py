@@ -772,15 +772,19 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     streams, https = exact(nodes, "stream"), exact(nodes, "http")
     require(len(streams) == len(https) == 1)
     stream, http = streams[0], https[0]
-    require(all(n.args[0] in ("map", "upstream", "server", "map_hash_bucket_size")
+    require(all(n.args[0] in ("map", "upstream", "server", "map_hash_bucket_size", "limit_conn_zone")
                 for n in expand(stream.children)),
             "unknown stream context directive")
     buckets = exact(stream.children, "map_hash_bucket_size")
     require(not buckets or (len(buckets) == 1 and buckets[0].args == ["map_hash_bucket_size", "272"]
                             and buckets[0].children is None), "unknown stream hash bucket contract")
     maps = exact(stream.children, "map")
-    routers = exact(stream.children, "server")
-    require(len(maps) == len(routers) == 1)
+    require(len(maps) == 1)
+    ipv4_listens = (["443"], ["0.0.0.0:443"])
+    router_listens = (*ipv4_listens, ["[::]:443"])
+    routers = [server for server in exact(stream.children, "server")
+               if any(n.args[1:2] in router_listens for n in exact(server.children or (), "listen"))]
+    require(len(routers) == 1, f"expected one stream server listening on port 443 (found {len(routers)})")
     mapping, router = maps[0], routers[0]
     require(len(mapping.args) == 3 and mapping.args[1] == "$ssl_preread_server_name"
             and re.fullmatch(r"\$[a-zA-Z_][a-zA-Z_0-9]*", mapping.args[2]))
@@ -802,8 +806,8 @@ def nginx_plan(root, host, output, acme_root="/var/lib/telemt-web-manager-acme",
     # Existing IPv6 ingress does not enable IPv6 Telemt egress or permit an AAAA
     # record for the new WEB hostname. Never edit these existing listen lines.
     require(len(listens) in (1, 2) and len({tuple(x) for x in listens}) == len(listens))
-    require(sum(x in (["443"], ["0.0.0.0:443"]) for x in listens) == 1)
-    require(all(x in (["443"], ["0.0.0.0:443"], ["[::]:443"]) for x in listens))
+    require(sum(x in ipv4_listens for x in listens) == 1)
+    require(all(x in router_listens for x in listens))
     entries = list(expand(mapping.children))
     hostname_flags = [n for n in entries if n.args[0] == "hostnames"]
     require(not hostname_flags or (len(hostname_flags) == 1 and entries[0] == hostname_flags[0]
@@ -2435,7 +2439,7 @@ class UpdateProgress:
 # helper with the older parser APIs; bootstrap continues to install one pair.
 UPDATE_SCHEMA = 1
 UPSTREAM_REPOSITORY = dict(id=1125007401, full_name='telemt/telemt')
-UPDATE_MANAGER_VERSION = '1.3.3'
+UPDATE_MANAGER_VERSION = '1.3.4'
 BASELINE_VERSION = '3.5.16'
 BASELINE_COMMIT = '84e5b827a6619fb2e09ad3d09f253cdffe04bc2f'
 BASELINE_HASHES = {
