@@ -356,7 +356,7 @@ check_dependencies() {
             manual_dependency_command "${packages[@]}"
             ui_die 'Required dependencies missing; no packages installed' 'Необходимые зависимости отсутствуют; пакеты не устанавливались'
         fi
-        if ! read -r -p "$(ui_text 'Install missing packages now? [Y/n] ' 'Установить недостающие пакеты сейчас? [Y/n] ')" answer || [[ -n $answer && $answer != y && $answer != Y ]]; then
+        if ! IFS= read -r -p "$(ui_text 'Install missing packages now? [Y/n] ' 'Установить недостающие пакеты сейчас? [Y/n] ')" answer || [[ -n $answer && $answer != y && $answer != Y ]]; then
             ui_info 'Dependency installation declined.' 'Установка зависимостей отменена.' >&2
             manual_dependency_command "${packages[@]}"
             ui_die 'Run Telegram Web Proxy Manager again after installing the dependencies' 'Установите зависимости и запустите Telegram Web Proxy Manager снова'
@@ -769,7 +769,7 @@ ensure_certificate() {
         if [[ -t 0 && -z ${EMAIL:-} ]]; then read -r -p "$(ui_text 'ACME registration email: ' 'Email для регистрации ACME: ')" EMAIL; fi
         if [[ -t 0 && ${AGREE_TOS:-0} != 1 ]]; then
             local consent
-            if read -r -p "$(ui_text "Accept the current Let's Encrypt subscriber agreement? [Y/n] " "Принять действующие условия Let's Encrypt? [Y/n] ")" consent && [[ -z $consent || $consent == y || $consent == Y ]]; then AGREE_TOS=1; fi
+            if IFS= read -r -p "$(ui_text "Accept the current Let's Encrypt subscriber agreement? [Y/n] " "Принять действующие условия Let's Encrypt? [Y/n] ")" consent && [[ -z $consent || $consent == y || $consent == Y ]]; then AGREE_TOS=1; fi
         fi
         [[ -n ${EMAIL:-} ]] || ui_die 'New certificate needs --email and --agree-tos' 'Для нового сертификата нужны --email и --agree-tos'
         [[ ${AGREE_TOS:-0} == 1 ]] || ui_die 'Use --agree-tos to accept ACME subscriber terms' 'Для согласия с условиями ACME укажите --agree-tos'

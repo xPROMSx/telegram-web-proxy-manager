@@ -195,7 +195,8 @@ dependency_commands show-web-link
         for language in ('en', 'ru'):
             for answer, accepted, settings in ((b'\n', True, {}), (b'y\n', True, {}),
                     (b'Y\n', True, {}), (b'n\n', False, {}), (b'N\n', False, {}),
-                    (b'other\n', False, {}), (b'\x04', False, {}),
+                    (b'other\n', False, {}), (b' \n', False, {}),
+                    (b'\t\n', False, {}), (b' y \n', False, {}), (b'\x04', False, {}),
                     (b'y\x04\x04', False, {}), (b'', False, {'FIXTURE_READ_ERROR':'1'})):
                 with self.subTest(language=language, answer=answer, settings=settings):
                     (self.tools/'conntrack').write_text('unused')
