@@ -148,8 +148,9 @@ firewall/UFW are untouched. SOCKS authentication and IPv6 upstream need manual r
 Manager-associated certificates are found in `/etc/letsencrypt/live/DOMAIN/`. Validation covers
 hostname, private key permissions, ownership, safe
 Certbot symlinks within archive/DOMAIN and matching public keys. HTTP probes check
-TLS trust. Install requires expiry beyond seven days. For new issuance, explicitly
-accept ACME terms with `--email` and `--agree-tos`.
+TLS trust. Install requires expiry beyond seven days. For noninteractive new
+issuance, provide `--email` and explicitly accept ACME terms with `--agree-tos`.
+In the interactive prompt, Enter accepts the terms.
 
 Free port 80 uses standalone HTTP-01 without stopping Nginx. If the port belongs
 to the same verified Nginx master/workers, webroot checks supported TCP/80
@@ -793,9 +794,10 @@ suppresses the menu. See [manager bootstrap](#manager-bootstrap).
 ## Missing Ubuntu tools (0.1.4)
 
 After selecting a menu action, missing tool commands and their fixed Ubuntu
-packages are listed together. One `Install missing packages now? [y/N]` prompt
-allows only Y/y. With that confirmation, apt-get updates metadata and installs only
-the listed, deduplicated requested packages with `--no-install-recommends` and
+packages are listed together. One `Install missing packages now? [Y/n]` prompt
+accepts Enter or Y/y; other answers and read failures decline. With that
+confirmation, apt-get updates metadata and installs only the listed, deduplicated
+requested packages with `--no-install-recommends` and
 `DEBIAN_FRONTEND=noninteractive`; normal required package dependencies remain apt's
 responsibility. Executables are rechecked, including Python tomllib and conntrack
 on systemd's default PATH, before the selected action continues in the same process.

@@ -246,6 +246,47 @@ systemctl() { printf /etc/systemd/system/telemt.service; }
                     self.assertNotIn(b'PRIVATE_REMNANT_CONTENT', output)
                     self.assertEqual(before, {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()})
 
+    def test_certificate_terms_consent_and_read_failures(self):
+        code = """source ./telemt-web-manager.sh
+UI_INTERACTIVE=1 UI_LANG=$1 CERT_ROOT=$2 TMP=$2 DOMAIN=proxy.example.com EMAIL=operator@example.invalid
+AGREE_TOS=${FIXTURE_AGREE_TOS:-0}
+if [[ ${FIXTURE_READ_ERROR:-0} == 1 ]]; then
+    read() { printf %s "$3" >&2; printf -v consent '%s' y; return 1; }
+fi
+ss() { :; }
+helper() { printf 0; }
+certbot() { :; }
+validate_certificate() { :; }
+certificate_renewal_contract() { :; }
+write_certificate_state() { :; }
+renewal_scheduler_status() { :; }
+ensure_certificate
+printf 'ACCEPTED\\n'
+"""
+        for language in ('en', 'ru'):
+            for answer, accepted, settings in ((b'\n', True, {}), (b'y\n', True, {}),
+                    (b'Y\n', True, {}), (b'n\n', False, {}), (b'N\n', False, {}),
+                    (b'other\n', False, {}), (b' \n', False, {}),
+                    (b'\t\n', False, {}), (b' y \n', False, {}), (b'\x04', False, {}),
+                    (b'y\x04\x04', False, {}), (b'', False, {'FIXTURE_READ_ERROR':'1'})):
+                with self.subTest(language=language, answer=answer, settings=settings), tempfile.TemporaryDirectory() as directory:
+                    result, output, _ = terminal(code, answer, args=(language, directory), env=settings)
+                    prompt = ("Accept the current Let's Encrypt subscriber agreement? [Y/n]" if language == 'en' else
+                              "Принять действующие условия Let's Encrypt? [Y/n]")
+                    self.assertIn(prompt.encode(), output)
+                    self.assertEqual(result == 0, accepted)
+                    self.assertEqual(b'ACCEPTED' in output, accepted)
+            with self.subTest(language=language, noninteractive=True), tempfile.TemporaryDirectory() as directory:
+                result, output, _ = terminal(code, args=(language, directory), input_tty=False)
+                self.assertNotEqual(result, 0)
+                self.assertNotIn(b'ACCEPTED', output)
+                self.assertIn(b'--agree-tos', output)
+                self.assertNotIn(b'[Y/n]', output)
+                result, output, _ = terminal(code, args=(language, directory), input_tty=False,
+                                             env={'FIXTURE_AGREE_TOS':'1'})
+                self.assertEqual(result, 0)
+                self.assertIn(b'ACCEPTED', output)
+
     def test_partial_certbot_paths_are_explained_without_deleting_them(self):
         for location in ('live', 'renewal', 'archive'):
             for language in ('en', 'ru'):

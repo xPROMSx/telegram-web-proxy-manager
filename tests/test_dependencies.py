@@ -68,6 +68,12 @@ update_manager() { fixture_action update; }
 check_manager() { fixture_action check; }
 repair_manager() { fixture_action repair; }
 uninstall_manager() { fixture_action uninstall; }
+if [[ ${FIXTURE_READ_ERROR:-0} == 1 ]]; then
+    read() {
+        if [[ $* == *"Install missing packages now?"* || $* == *"Установить недостающие пакеты"* ]]; then printf %s "$3" >&2; printf -v answer '%s' y; return 1; fi
+        builtin read "$@"
+    }
+fi
 shift
 main "$@"
 '''
@@ -105,7 +111,7 @@ main "$@"
         result,text,trace = self.run_action()
         self.assertEqual(result,0)
         self.assertIn('conntrack -> package: conntrack',text)
-        self.assertEqual(text.count('Install missing packages now? [y/N]'),1)
+        self.assertEqual(text.count('Install missing packages now? [Y/n]'),1)
         self.assertLess(text.index('Packages to install:'),text.index('Install missing packages now?'))
         self.assertIn('apt update frontend=noninteractive',trace)
         self.assertIn('apt install -y --no-install-recommends conntrack frontend=noninteractive',trace)
@@ -149,7 +155,7 @@ dependency_commands show-web-link
         result,text,trace=self.run_action(missing=('wc',))
         self.assertEqual(result,0)
         self.assertIn('wc -> package: coreutils',text)
-        self.assertEqual(text.count('Install missing packages now? [y/N]'),1)
+        self.assertEqual(text.count('Install missing packages now? [Y/n]'),1)
         self.assertIn('apt install -y --no-install-recommends coreutils frontend=noninteractive',trace)
         self.assertTrue((self.tools/'wc').exists())
         self.assertIn('action install ',trace)
@@ -172,8 +178,8 @@ dependency_commands show-web-link
         self.assertNotIn('Install missing packages now?',text)
         self.assertNotIn('apt ',trace)
 
-    def test_decline_default_and_non_yes_never_install(self):
-        for answer in (b'N',b'',b'yes'):
+    def test_decline_and_non_yes_never_install(self):
+        for answer in (b'n',b'N',b'yes'):
             with self.subTest(answer=answer):
                 # Each case requires a fresh private tool inventory.
                 if not (self.tools/'conntrack').exists():
@@ -184,6 +190,30 @@ dependency_commands show-web-link
                 self.assertIn('Dependency installation declined.',text)
                 self.assertIn(MANUAL+' conntrack',text)
                 self.trace.unlink()
+
+    def test_consent_answers_and_read_failures(self):
+        for language in ('en', 'ru'):
+            for answer, accepted, settings in ((b'\n', True, {}), (b'y\n', True, {}),
+                    (b'Y\n', True, {}), (b'n\n', False, {}), (b'N\n', False, {}),
+                    (b'other\n', False, {}), (b' \n', False, {}),
+                    (b'\t\n', False, {}), (b' y \n', False, {}), (b'\x04', False, {}),
+                    (b'y\x04\x04', False, {}), (b'', False, {'FIXTURE_READ_ERROR':'1'})):
+                with self.subTest(language=language, answer=answer, settings=settings):
+                    (self.tools/'conntrack').write_text('unused')
+                    (self.tools/'conntrack').chmod(0o755)
+                    if self.trace.exists(): self.trace.unlink()
+                    (self.managed/'action').unlink(missing_ok=True)
+                    result, text, trace = self.run_action(answer=b'1\n'+answer, language=language, **settings)
+                    prompt = ('Install missing packages now? [Y/n]' if language == 'en' else
+                              'Установить недостающие пакеты сейчас? [Y/n]')
+                    self.assertIn(prompt, text)
+                    if accepted:
+                        self.assertEqual(result, 0)
+                        self.assertIn('apt install ', trace)
+                        self.assertIn('action install ', trace)
+                    else:
+                        self.refused(result, trace)
+                        self.assertNotIn('apt ', trace)
 
     def test_cli_install_check_update_never_prompt_even_on_tty(self):
         for action in ('--install','--check','--update'):
@@ -229,7 +259,7 @@ dependency_commands show-web-link
         for tool,package in [('dig','dnsutils'),('iptables','iptables'),('ip6tables','iptables'),('conntrack','conntrack')]:
             self.assertIn(tool+' -> package: '+package,text)
         self.assertIn('apt install -y --no-install-recommends dnsutils iptables conntrack frontend=noninteractive',trace)
-        self.assertEqual(text.count('Install missing packages now? [y/N]'),1)
+        self.assertEqual(text.count('Install missing packages now? [Y/n]'),1)
         self.assertLess(text.index('Packages to install:'),text.index('Install missing packages now?'))
 
     def test_platform_refuses_before_apt_and_action(self):
@@ -258,7 +288,7 @@ dependency_commands show-web-link
         self.assertEqual(result,0)
         self.assertIn('apt install -y --no-install-recommends passwd findutils iptables frontend=noninteractive',trace)
         self.assertIn('action uninstall ',trace)
-        self.assertEqual(text.count('Install missing packages now? [y/N]'),1)
+        self.assertEqual(text.count('Install missing packages now? [Y/n]'),1)
         self.assertLess(text.index('Packages to install:'),text.index('Install missing packages now?'))
 
     def test_no_missing_tools_never_apt_or_prompt(self):
